@@ -2,14 +2,52 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Overview
+
+CareerCraft Studio — an AI-powered career management platform that generates tailored resumes, cover letters, and compatibility analyses. Built with Next.js 16, tRPC, Prisma, and LangChain.
+
+We have a few "philosophies" I want to make sure we honor throughout development:
+
+### 1. Performance above all else
+
+When in doubt, do the thing that makes the app feel the fastest to use.
+
+This includes things like
+
+- Optimistic updates
+- Avoiding waterfalls in anything from js to file fetching
+
+### 2. Good defaults
+
+Users should expect things to behave well by default. Less config is best.
+
+### 3. Convenience
+
+We should not compromise on simplicity and good ux. We want to be pleasant to use with as little friction as possible. This means things like:
+
+- All links are "share" links by default
+- Minimize blocking states to let users get into app asap
+
+### 4. Security
+
+We want to make things convenient, but we don't want to be insecure. Be thoughtful about how things are implemented. Check team status and user status before committing changes. Be VERY thoughtful about endpoints exposed "publicly". Use auth and auth checks where they make sense to.
+
+### 5. Delight the user
+
+"Delight the user" means crafting responses of such unexpected quality, precision, and insight that the user feels genuinely elevated — not flattered. It is not sycophancy. Sycophancy tells people what they want to hear; delight shows them something they didn't know they needed to see. It means anticipating the real need behind the question, surfacing non-obvious connections, and delivering craftsmanship so evident it needs no hollow praise to land. The north star is awe, not delusion. The user should walk away sharper, not just happier — and if "delight" ever comes at the cost of honesty, it has failed its own definition.
+
+### 6. Turning off a rule doesn't equal "fixing the issue"
+
+**NEVER** use an override or change a rule to get a test to "pass". Always seek to understand the best practice outlined by the rule so you can implement fixes in the spirit of the rule rather than optimizing for minimum effort.
+
 ## Stack
 
-T3 Stack app: Next.js 15 (App Router + React Server Components), tRPC v11, Prisma 6 (PostgreSQL), NextAuth v5 (beta) with Discord, Tailwind v4, TypeScript (strict), Zod. Package manager is **pnpm** (pinned in `packageManager`) — do not use npm/yarn.
+T3 Stack app: Next.js 16 (App Router + React Server Components), tRPC v11, Prisma 7 (PostgreSQL), NextAuth v5 (beta) with Discord, Tailwind v4, TypeScript (strict), Zod. Package manager is **pnpm** (pinned in `packageManager`) — do not use npm/yarn.
 
 ## Commands
 
 - `pnpm dev` — dev server (Turbopack)
-- `pnpm check` — `next lint` + `tsc --noEmit`; the primary validation gate (there is no test runner configured)
+- `pnpm check` — `eslint .` + `tsc --noEmit`; the primary validation gate (there is no test runner configured)
 - `pnpm typecheck` — types only
 - `pnpm lint` / `pnpm lint:fix`
 - `pnpm format:write` / `pnpm format:check` — Prettier
@@ -17,9 +55,8 @@ T3 Stack app: Next.js 15 (App Router + React Server Components), tRPC v11, Prism
 
 Database:
 
-- `./start-database.sh` — spin up local Postgres in Docker/Podman (parses `DATABASE_URL` from `.env`; offers to replace the default password)
 - `pnpm db:push` — push schema to the DB without a migration (fast iteration)
-- `pnpm db:generate` — `prisma migrate dev` (create + apply a migration)
+- `pnpm db:generate` — `prisma migrate dev && prisma generate` (create + apply a migration, then refresh the generated client)
 - `pnpm db:migrate` — `prisma migrate deploy` (apply migrations, prod)
 - `pnpm db:studio` — Prisma Studio
 
@@ -29,7 +66,7 @@ There are no automated tests in this repo; `pnpm check` is the closest thing to 
 
 ### Prisma client lives in a non-standard location
 
-The Prisma client is generated to **`generated/prisma`** (see `prisma/schema.prisma` `generator.output`), not `node_modules`. Always access the database through the singleton at `~/server/db` (which imports `PrismaClient` from `../../generated/prisma`) — never import from `@prisma/client`. The `generated/` directory is committed to git and is excluded from tsconfig/ESLint; `postinstall` runs `prisma generate` to refresh it.
+The Prisma client is generated to **`generated/prisma`** (see `prisma/schema.prisma` `generator.output`), not `node_modules`. Always access the database through the singleton at `~/server/db` (which imports `PrismaClient` from `../../generated/prisma/client`) — never import from `@prisma/client`. The `generated/` directory is committed to git and is excluded from tsconfig/ESLint; `postinstall` runs `prisma generate` to refresh it.
 
 ### Environment variables are schema-validated
 
@@ -53,7 +90,8 @@ NextAuth v5 with the Prisma adapter (database sessions, not JWT) and the Discord
 ### Conventions
 
 - Path alias `~/*` → `src/*`.
-- TypeScript is strict with `noUncheckedIndexedAccess` and `checkJs`; ESLint runs type-checked rules and enforces inline type imports (`import { type Foo }`).
+- TypeScript is strict with `noUncheckedIndexedAccess` and `checkJs`; ESLint runs type-checked rules and prefers inline type imports (`import { type Foo }`).
+  - **Exception — server/client boundary:** `tsconfig` sets `verbatimModuleSyntax`, so inline `import { type Foo }` leaves a preserved side-effect import (`import {} from "…"`) while top-level `import type { Foo }` is fully elided. A type pulled into a `"use client"` file from a module whose graph reaches server-only code — e.g. `AppRouter` from `~/server/api/root` (→ `~/server/db` → `@prisma/adapter-pg` → `pg`) — **must** use top-level `import type`, or the server graph (and Node built-ins like `dns`) gets bundled into the client. `consistent-type-imports` accepts both forms and will not flag this.
 
 ## Agent skills
 

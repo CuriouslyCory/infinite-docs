@@ -1,0 +1,4 @@
+# Generated / build artifacts — not hand-edited, mirrors tsconfig & eslint excludes
+generated/
+.next/
+pnpm-lock.yaml
