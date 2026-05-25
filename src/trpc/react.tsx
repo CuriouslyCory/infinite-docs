@@ -7,6 +7,10 @@ import { type inferRouterInputs, type inferRouterOutputs } from "@trpc/server";
 import { useState } from "react";
 import SuperJSON from "superjson";
 
+// NOTE: must stay a top-level `import type` (not inline `import { type ... }`).
+// Under tsconfig's verbatimModuleSyntax, the inline form emits a side-effect
+// import that pulls the server graph (db.ts → @prisma/adapter-pg → pg → dns)
+// into this "use client" bundle. See CLAUDE.md "Conventions".
 import type { AppRouter } from "~/server/api/root";
 import { createQueryClient } from "./query-client";
 

@@ -56,7 +56,7 @@ T3 Stack app: Next.js 16 (App Router + React Server Components), tRPC v11, Prism
 Database:
 
 - `pnpm db:push` — push schema to the DB without a migration (fast iteration)
-- `pnpm db:generate` — `prisma migrate dev` (create + apply a migration)
+- `pnpm db:generate` — `prisma migrate dev && prisma generate` (create + apply a migration, then refresh the generated client)
 - `pnpm db:migrate` — `prisma migrate deploy` (apply migrations, prod)
 - `pnpm db:studio` — Prisma Studio
 
@@ -90,7 +90,8 @@ NextAuth v5 with the Prisma adapter (database sessions, not JWT) and the Discord
 ### Conventions
 
 - Path alias `~/*` → `src/*`.
-- TypeScript is strict with `noUncheckedIndexedAccess` and `checkJs`; ESLint runs type-checked rules and enforces inline type imports (`import { type Foo }`).
+- TypeScript is strict with `noUncheckedIndexedAccess` and `checkJs`; ESLint runs type-checked rules and prefers inline type imports (`import { type Foo }`).
+  - **Exception — server/client boundary:** `tsconfig` sets `verbatimModuleSyntax`, so inline `import { type Foo }` leaves a preserved side-effect import (`import {} from "…"`) while top-level `import type { Foo }` is fully elided. A type pulled into a `"use client"` file from a module whose graph reaches server-only code — e.g. `AppRouter` from `~/server/api/root` (→ `~/server/db` → `@prisma/adapter-pg` → `pg`) — **must** use top-level `import type`, or the server graph (and Node built-ins like `dns`) gets bundled into the client. `consistent-type-imports` accepts both forms and will not flag this.
 
 ## Agent skills
 
