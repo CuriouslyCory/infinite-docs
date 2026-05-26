@@ -62,6 +62,22 @@ model User {
     accounts      Account[]
     sessions      Session[]
     posts         Post[]
+    projects      Project[]
+}
+
+// Root container of one architecture graph (see CONTEXT.md).
+// Addressed by an unguessable capability-URL `slug`; owned by a single User.
+model Project {
+    id        String    @id @default(cuid())
+    title     String
+    slug      String    @unique
+    ownerId   String
+    owner     User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
+    @@index([ownerId])
 }
 
 model VerificationToken {

@@ -55,6 +55,7 @@ export const ModelName = {
   Account: 'Account',
   Session: 'Session',
   User: 'User',
+  Project: 'Project',
   VerificationToken: 'VerificationToken'
 } as const
 
@@ -123,6 +124,19 @@ export const UserScalarFieldEnum = {
 } as const
 
 export type UserScalarFieldEnum = (typeof UserScalarFieldEnum)[keyof typeof UserScalarFieldEnum]
+
+
+export const ProjectScalarFieldEnum = {
+  id: 'id',
+  title: 'title',
+  slug: 'slug',
+  ownerId: 'ownerId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+  deletedAt: 'deletedAt'
+} as const
+
+export type ProjectScalarFieldEnum = (typeof ProjectScalarFieldEnum)[keyof typeof ProjectScalarFieldEnum]
 
 
 export const VerificationTokenScalarFieldEnum = {

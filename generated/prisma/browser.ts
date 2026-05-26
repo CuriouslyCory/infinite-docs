@@ -38,6 +38,11 @@ export type Session = Prisma.SessionModel
  */
 export type User = Prisma.UserModel
 /**
+ * Model Project
+ * 
+ */
+export type Project = Prisma.ProjectModel
+/**
  * Model VerificationToken
  * 
  */
