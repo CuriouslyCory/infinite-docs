@@ -122,7 +122,9 @@ export const architectureRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
-        return await ctx.db.$transaction((tx) => updatePositions(tx, actor, input));
+        return await ctx.db.$transaction((tx) =>
+          updatePositions(tx, actor, input),
+        );
       } catch (error) {
         throw toTRPCError(error);
       }
