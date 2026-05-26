@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { api } from "~/trpc/server";
+import { HydrateClient, api } from "~/trpc/server";
 import { CanvasIsland } from "./_canvas";
 
 /**
@@ -33,23 +33,35 @@ export default async function ProjectPage({
     throw error;
   }
 
+  // Prefetch the root Canvas so the client island reads it from the hydration
+  // cache with no extra round trip (ADR-0004 names this route as that seam). The
+  // input MUST match the island's query key exactly — { slug, canvasNodeId: null }
+  // — or hydration misses and the island silently refetches (a waterfall).
+  void api.architecture.getCanvas.prefetch({ slug, canvasNodeId: null });
+
   return (
-    <main className="flex h-dvh flex-col bg-[#15162c] text-white">
-      <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
-        <Link
-          href="/"
-          className="text-sm text-white/60 no-underline transition hover:text-white"
-        >
-          ← Projects
-        </Link>
-        {/* Breadcrumb region. Display-only this slice; the real trail from the
-            getCanvas payload arrives with Descent in a later slice. No edit
-            affordance here — the Project route is read-shaped for everyone. */}
-        <span className="text-sm font-medium">{project.title}</span>
-      </header>
-      <div className="min-h-0 flex-1">
-        <CanvasIsland canvasScope="root" />
-      </div>
-    </main>
+    <HydrateClient>
+      <main className="flex h-dvh flex-col bg-[#15162c] text-white">
+        <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+          <Link
+            href="/"
+            className="text-sm text-white/60 no-underline transition hover:text-white"
+          >
+            ← Projects
+          </Link>
+          {/* Breadcrumb region. Display-only this slice; the real trail from the
+              getCanvas payload arrives with Descent in a later slice. No edit
+              affordance here — the Project route is read-shaped for everyone. */}
+          <span className="text-sm font-medium">{project.title}</span>
+        </header>
+        <div className="min-h-0 flex-1">
+          <CanvasIsland
+            canvasScope="root"
+            slug={slug}
+            projectId={project.id}
+          />
+        </div>
+      </main>
+    </HydrateClient>
   );
 }

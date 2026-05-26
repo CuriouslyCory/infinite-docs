@@ -49,6 +49,14 @@ export default tseslint.config(
               message:
                 "Client code must not import from ~/server (it leaks the Prisma/pg/node:dns graph into the browser bundle). Use ~/lib/types for domain types and ~/lib/schemas for Zod schemas. See docs/adr/0004.",
             },
+            {
+              // The generated Prisma client's server entry (client.ts) imports
+              // node:process/path/url, so importing it (incl. its enums) from a
+              // client module leaks the server graph — a leak `tsc` cannot see.
+              group: ["generated/**", "**/generated/**"],
+              message:
+                "Client code must not import the generated Prisma client (its server entry pulls node:dns/pg into the browser bundle). Import enums/Zod from ~/lib/schemas and domain types from ~/lib/types. See docs/adr/0004.",
+            },
           ],
         },
       ],

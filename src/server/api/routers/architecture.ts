@@ -9,7 +9,13 @@ import {
   getProjectBySlug,
   listProjects,
 } from "~/server/architecture/project.service";
-import { createProjectInput, getProjectBySlugInput } from "~/lib/schemas";
+import { createNode, getCanvas } from "~/server/architecture/node.service";
+import {
+  createNodeInput,
+  createProjectInput,
+  getCanvasInput,
+  getProjectBySlugInput,
+} from "~/lib/schemas";
 import { toTRPCError } from "~/server/architecture/trpc-errors";
 
 /**
@@ -47,6 +53,35 @@ export const architectureRouter = createTRPCRouter({
         : null;
       try {
         return await getProjectBySlug(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: the service resolves the project by `projectId` and
+  // enforces owner access. `protectedProcedure` is the transport gate (you must
+  // be signed in); the real authorization is in the service (ADR-0001).
+  createNode: protectedProcedure
+    .input(createNodeInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await createNode(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Public: the slug is the read capability, so a capability-URL viewer can read
+  // the Canvas without a session (ADR-0002).
+  getCanvas: publicProcedure
+    .input(getCanvasInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor | null = ctx.session?.user
+        ? { userId: ctx.session.user.id, via: "session" }
+        : null;
+      try {
+        return await getCanvas(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

@@ -34,9 +34,25 @@ interior **Canvas**. *(The graph data model and nesting land in a later mileston
 canonical now.)*
 
 ### Node
-The data-model representation of a Component: the stored graph vertex with `parentId` (its
-containing Component, or null at the **Project** root). Never surfaced to users by this name.
-*(Defined now; the `Node` model is implemented in a later milestone.)*
+The data-model representation of a Component: the stored graph vertex with
+`parentId` (its containing Component, or null at the **Project** root), plus
+`kind` (see **Component kind**), position (`posX`, `posY`), `documentation`, and a
+soft-delete column (`deletedAt`). Never surfaced to users by this name.
+*(The `Node` model, creation, and scoped read (**getCanvas**) are realized now;
+reparenting (`move`) with cycle prevention, cascading **soft-delete**, and
+**Connection**/**Edge** wiring land in later milestones.)*
+
+### Component kind (`NodeKind`)
+A Component's category, stored on its **Node** as `kind: NodeKind`. One of six
+values: `SERVICE`, `DATABASE`, `EXTERNAL_API`, `HOST`, `QUEUE`, and `GENERIC`
+(the default). The word in prose and the enum name in code are **kind** /
+`NodeKind` — never "type" (which collides with the canvas library's node-type
+registry key) or "category". **Kind is cosmetic:** it drives only the
+Component's icon and color and carries no behavioural or authorization meaning;
+two Components differing only in kind are otherwise identical. User-facing labels
+are *Service, Database, External API, Host, Queue, Generic*; the `EXTERNAL_API`
+value is shown as "External API". *(The `kind` field and its six values are
+realized now; later kinds, if any, are an additive change.)*
 
 ### Connection
 The user-facing link between two Components. Backed by an **Edge**. *(Defined now; implemented
@@ -51,8 +67,35 @@ inferred from its endpoints. *(Defined now; implemented in a later milestone.)*
 A **derived view, not a stored entity.** The Canvas of a Component `N` is
 `{ Nodes where parentId = N } ∪ { Edges where canvasNodeId = N }`. The Project root has its own
 top-level Canvas (the Nodes with `parentId = null`). Because it is derived, a Canvas is never
-written directly — you mutate Nodes and Edges, and the Canvas falls out. *(Defined now; the
-derivation is implemented in a later milestone.)*
+written directly — you mutate Nodes and Edges, and the Canvas falls out. *(The Node half of
+the derivation is realized now for the Project root via **getCanvas** (`{ Nodes where
+parentId = null }`); the Edge half and non-root scopes land with Connections and **Descent**.)*
+
+### getCanvas
+The single service read that materializes a **Canvas** for a given **Canvas
+scope** in one round trip. Its full result is
+`{ interiorNodes, interiorEdges, boundaryProxies, breadcrumbs }`, derived without
+a per-level query walk. Because a Canvas is a *derived view*, `getCanvas` returns
+the **Nodes** and **Edges** that fall out of the scope — it is the read half of
+the Component/Node split, so its result is named in **Node**/**Edge** terms in
+code and tests even though the feature is described to users as "the interior
+**Components**". *(Realized partially now — `getCanvas` returns `interiorNodes`
+for a scope; `interiorEdges`, `boundaryProxies`, and `breadcrumbs` land with
+Connections, boundary derivation (M3), and Descent respectively. See ADR-0001
+for the single-round-trip service contract and ADR-0004 for how the payload
+reaches the client island.)*
+
+### Canvas scope
+Which **Canvas** an operation is acting on. A Canvas has **no id of its own** (it
+is derived, not stored), so a scope is identified by the **Component whose
+interior Canvas it is**: the scope "is" a `Node`, and that Node's `id` is the
+`parentId` of the Components on it. The **Project root** is the scope with no such
+Component — represented as `parentId = null` in the data model and as the
+sentinel string `"root"` at the canvas-island boundary (ADR-0004 keys the island
+by scope so descending re-seeds the store). Use **scope** for this concept in
+prose and code; do not invent a `canvasId` (there is nothing to give an id to)
+and do not call it a "level", "context", or "view". *(The root scope is realized
+now; non-root scopes arrive with **Descent**.)*
 
 ### Descent
 The act of opening a Component to enter its interior **Canvas**, moving one level deeper into

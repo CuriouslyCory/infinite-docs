@@ -17,10 +17,29 @@ const Canvas = dynamic(() => import("./canvas"), {
   loading: () => <div className="h-full w-full bg-[#1b1c33]" aria-hidden />,
 });
 
-export function CanvasIsland({ canvasScope }: { canvasScope: string }) {
+export function CanvasIsland({
+  canvasScope,
+  slug,
+  projectId,
+}: {
+  canvasScope: string;
+  slug: string;
+  projectId: string;
+}) {
   // Key the lazily-loaded Canvas (which owns the ReactFlowProvider) so changing
   // the scope forces a full remount and a fresh store. The scope is "root" now;
   // Descent swaps in a canvasNodeId in a later slice, and the keyed remount
   // guarantees the child Canvas never inherits the parent's viewport or nodes.
-  return <Canvas key={canvasScope} scope={canvasScope} />;
+  //
+  // `slug` keys the capability read (getCanvas); `projectId` addresses the
+  // owner-only create. Both are plain scalars passed from the server route — not
+  // server modules — so no server graph crosses into this client island.
+  return (
+    <Canvas
+      key={canvasScope}
+      scope={canvasScope}
+      slug={slug}
+      projectId={projectId}
+    />
+  );
 }

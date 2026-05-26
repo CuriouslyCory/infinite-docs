@@ -76,8 +76,48 @@ model Project {
     createdAt DateTime  @default(now())
     updatedAt DateTime  @updatedAt
     deletedAt DateTime?
+    nodes     Node[]
 
     @@index([ownerId])
+}
+
+// Cosmetic category of a Component: drives only its icon/color, never behaviour
+// or authorization (see CONTEXT.md "Component kind"). Mirrored by the Zod enum
+// `nodeKind` in ~/lib/schemas, which is the client-safe source of truth; a
+// compile-time parity guard in the service layer keeps the two in lockstep.
+enum NodeKind {
+    GENERIC
+    SERVICE
+    DATABASE
+    EXTERNAL_API
+    HOST
+    QUEUE
+}
+
+// The data-model representation of a Component (see CONTEXT.md "Component / Node
+// split"); never surfaced to users by this name. Nests via `parentId`: null is
+// the Project's root Canvas, otherwise the id of the containing Component whose
+// interior Canvas this Node sits on. The FK cascades are the hard-delete
+// backstop only — the normal removal path is soft-delete via `deletedAt` (PRD).
+model Node {
+    id            String    @id @default(cuid())
+    projectId     String
+    project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    parentId      String?
+    parent        Node?     @relation("NodeChildren", fields: [parentId], references: [id], onDelete: Cascade)
+    children      Node[]    @relation("NodeChildren")
+    title         String
+    kind          NodeKind  @default(GENERIC)
+    posX          Float     @default(0)
+    posY          Float     @default(0)
+    documentation String    @default("")
+    metadata      Json?
+    createdAt     DateTime  @default(now())
+    updatedAt     DateTime  @updatedAt
+    deletedAt     DateTime?
+
+    @@index([projectId, parentId])
+    @@index([parentId])
 }
 
 model VerificationToken {

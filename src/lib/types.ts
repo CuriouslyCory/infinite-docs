@@ -14,3 +14,7 @@ import type { RouterOutputs } from "~/trpc/react";
 export type Project = RouterOutputs["architecture"]["getProjectBySlug"];
 export type ProjectListItem =
   RouterOutputs["architecture"]["listProjects"][number];
+
+/** A single Component as the Canvas read returns it (a data-layer Node). */
+export type CanvasNode =
+  RouterOutputs["architecture"]["getCanvas"]["interiorNodes"][number];

@@ -67,6 +67,11 @@ export type User = Prisma.UserModel
  */
 export type Project = Prisma.ProjectModel
 /**
+ * Model Node
+ * 
+ */
+export type Node = Prisma.NodeModel
+/**
  * Model VerificationToken
  * 
  */
