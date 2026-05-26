@@ -390,6 +390,7 @@ export const ModelName = {
   User: 'User',
   Project: 'Project',
   Node: 'Node',
+  Edge: 'Edge',
   VerificationToken: 'VerificationToken'
 } as const
 
@@ -406,7 +407,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "post" | "account" | "session" | "user" | "project" | "node" | "verificationToken"
+    modelProps: "post" | "account" | "session" | "user" | "project" | "node" | "edge" | "verificationToken"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -854,6 +855,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    Edge: {
+      payload: Prisma.$EdgePayload<ExtArgs>
+      fields: Prisma.EdgeFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.EdgeFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.EdgeFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload>
+        }
+        findFirst: {
+          args: Prisma.EdgeFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.EdgeFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload>
+        }
+        findMany: {
+          args: Prisma.EdgeFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload>[]
+        }
+        create: {
+          args: Prisma.EdgeCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload>
+        }
+        createMany: {
+          args: Prisma.EdgeCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.EdgeCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload>[]
+        }
+        delete: {
+          args: Prisma.EdgeDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload>
+        }
+        update: {
+          args: Prisma.EdgeUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload>
+        }
+        deleteMany: {
+          args: Prisma.EdgeDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.EdgeUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.EdgeUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload>[]
+        }
+        upsert: {
+          args: Prisma.EdgeUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$EdgePayload>
+        }
+        aggregate: {
+          args: Prisma.EdgeAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateEdge>
+        }
+        groupBy: {
+          args: Prisma.EdgeGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.EdgeGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.EdgeCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.EdgeCountAggregateOutputType> | number
+        }
+      }
+    }
     VerificationToken: {
       payload: Prisma.$VerificationTokenPayload<ExtArgs>
       fields: Prisma.VerificationTokenFieldRefs
@@ -1049,6 +1124,22 @@ export const NodeScalarFieldEnum = {
 export type NodeScalarFieldEnum = (typeof NodeScalarFieldEnum)[keyof typeof NodeScalarFieldEnum]
 
 
+export const EdgeScalarFieldEnum = {
+  id: 'id',
+  projectId: 'projectId',
+  canvasNodeId: 'canvasNodeId',
+  sourceId: 'sourceId',
+  targetId: 'targetId',
+  label: 'label',
+  direction: 'direction',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+  deletedAt: 'deletedAt'
+} as const
+
+export type EdgeScalarFieldEnum = (typeof EdgeScalarFieldEnum)[keyof typeof EdgeScalarFieldEnum]
+
+
 export const VerificationTokenScalarFieldEnum = {
   identifier: 'identifier',
   token: 'token',
@@ -1188,6 +1279,20 @@ export type JsonFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'J
 export type EnumQueryModeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'QueryMode'>
     
 
+
+/**
+ * Reference to a field of type 'EdgeDirection'
+ */
+export type EnumEdgeDirectionFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'EdgeDirection'>
+    
+
+
+/**
+ * Reference to a field of type 'EdgeDirection[]'
+ */
+export type ListEnumEdgeDirectionFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'EdgeDirection[]'>
+    
+
 /**
  * Batch Payload for updateMany & deleteMany & createMany
  */
@@ -1304,6 +1409,7 @@ export type GlobalOmitConfig = {
   user?: Prisma.UserOmit
   project?: Prisma.ProjectOmit
   node?: Prisma.NodeOmit
+  edge?: Prisma.EdgeOmit
   verificationToken?: Prisma.VerificationTokenOmit
 }
 

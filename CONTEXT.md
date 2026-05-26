@@ -38,9 +38,11 @@ The data-model representation of a Component: the stored graph vertex with
 `parentId` (its containing Component, or null at the **Project** root), plus
 `kind` (see **Component kind**), position (`posX`, `posY`), `documentation`, and a
 soft-delete column (`deletedAt`). Never surfaced to users by this name.
-*(The `Node` model, creation, and scoped read (**getCanvas**) are realized now;
-reparenting (`move`) with cycle prevention, cascading **soft-delete**, and
-**Connection**/**Edge** wiring land in later milestones.)*
+*(The `Node` model, creation, scoped read (**getCanvas**), inline rename
+(`updateNode`, title only for now), batch position writes (`updatePositions`),
+and **Connection**/**Edge** wiring (see **Edge**) are realized now; broader
+Component editing (`kind`, `documentation`), reparenting (`move`) with cycle
+prevention, and cascading **soft-delete** land in later milestones.)*
 
 ### Component kind (`NodeKind`)
 A Component's category, stored on its **Node** as `kind: NodeKind`. One of six
@@ -55,21 +57,49 @@ value is shown as "External API". *(The `kind` field and its six values are
 realized now; later kinds, if any, are an additive change.)*
 
 ### Connection
-The user-facing link between two Components. Backed by an **Edge**. *(Defined now; implemented
-in a later milestone.)*
+The user-facing link between two Components, drawn on a **Canvas** by connecting one to
+another. Carries an optional **label** (untrusted user content — stored verbatim, never
+interpreted; see the prompt-injection standing note) and a **direction** (see **Edge
+direction**). Backed by an **Edge**. *(Drawing, labeling, directing, and removing a Connection
+are realized now — see **Edge** for the same-Canvas, no-self-link, and no-duplicate-active
+rules; the refinement Connection that resolves a **boundary proxy** to a real Component (M5)
+lands later.)*
 
 ### Edge
-The data-model representation of a Connection. Scoped to the Canvas it is drawn on by an
-explicit `canvasNodeId` (the Component whose interior Canvas owns the Edge), rather than being
-inferred from its endpoints. *(Defined now; implemented in a later milestone.)*
+The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
+`targetId` (both **Nodes**), a `direction` (`EdgeDirection`, see **Edge direction**), an
+optional `label`, and a soft-delete column (`deletedAt`). Scoped to the Canvas it is drawn on
+by an **explicit `canvasNodeId`** (the Component whose interior Canvas owns the Edge; null = the
+**Project** root), rather than being inferred from its endpoints — endpoints can later span
+scope levels (the M5 refinement Connection), so scope is recorded, not derived (ADR-0005).
+Three invariants hold and are enforced **in the service, not the database** (ADR-0005): both
+endpoints sit on the **same Canvas** as the Edge, an Edge never links a Node to itself, and no
+two *active* (non-soft-deleted) Edges share the same source, target, and scope. Never surfaced
+to users by this name. *(The `Edge` model, `connectNodes`/`updateEdge`/`deleteEdge`, and the
+**getCanvas** `interiorEdges` read are realized now; partial-unique-index hardening of the
+de-dupe rule, and Connection undo, are later refinements.)*
+
+### Edge direction (`EdgeDirection`)
+A **Connection's** orientation, stored on its **Edge** as `direction: EdgeDirection`. One of
+three values: `NONE` (undirected), `FORWARD` (source → target, the default), and
+`BIDIRECTIONAL` (both ways). The word in prose is **direction** and the enum name in code is
+`EdgeDirection` — never "arrow" or "directionality". **Direction is cosmetic:** it drives only
+how the Connection is drawn (no arrowhead, one, or two) and never factors into de-duplication
+(two Connections are duplicates by source + target + scope alone, regardless of direction; see
+**Edge** and ADR-0005). User-facing labels are *Undirected, Directed, Bidirectional*. As with
+`NodeKind`, this Zod enum is the client-safe source of truth (`~/lib/schemas`), the Prisma
+`EdgeDirection` enum mirrors it, and a compile-time parity guard in the service layer fails the
+build if the two ever drift. *(All three values are realized now; later directions, if any, are
+an additive change.)*
 
 ### Canvas
 A **derived view, not a stored entity.** The Canvas of a Component `N` is
 `{ Nodes where parentId = N } ∪ { Edges where canvasNodeId = N }`. The Project root has its own
 top-level Canvas (the Nodes with `parentId = null`). Because it is derived, a Canvas is never
 written directly — you mutate Nodes and Edges, and the Canvas falls out. *(The Node half of
-the derivation is realized now for the Project root via **getCanvas** (`{ Nodes where
-parentId = null }`); the Edge half and non-root scopes land with Connections and **Descent**.)*
+the derivation is realized now via **getCanvas**, and the Edge half is realized now too
+(`{ Edges where canvasNodeId = N }`); navigating into non-root scopes still arrives with
+**Descent**.)*
 
 ### getCanvas
 The single service read that materializes a **Canvas** for a given **Canvas
@@ -80,10 +110,10 @@ the **Nodes** and **Edges** that fall out of the scope — it is the read half o
 the Component/Node split, so its result is named in **Node**/**Edge** terms in
 code and tests even though the feature is described to users as "the interior
 **Components**". *(Realized partially now — `getCanvas` returns `interiorNodes`
-for a scope; `interiorEdges`, `boundaryProxies`, and `breadcrumbs` land with
-Connections, boundary derivation (M3), and Descent respectively. See ADR-0001
-for the single-round-trip service contract and ADR-0004 for how the payload
-reaches the client island.)*
+and `interiorEdges` for a scope; `boundaryProxies` and `breadcrumbs` land with
+boundary derivation (M3) and Descent respectively. See ADR-0001 for the
+single-round-trip service contract, ADR-0004 for how the payload reaches the
+client island, and ADR-0005 for the explicit `canvasNodeId` Edge scope.)*
 
 ### Canvas scope
 Which **Canvas** an operation is acting on. A Canvas has **no id of its own** (it

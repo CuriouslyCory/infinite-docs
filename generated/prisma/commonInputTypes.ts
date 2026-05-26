@@ -284,6 +284,23 @@ export type JsonNullableWithAggregatesFilterBase<$PrismaModel = never> = {
   _max?: Prisma.NestedJsonNullableFilter<$PrismaModel>
 }
 
+export type EnumEdgeDirectionFilter<$PrismaModel = never> = {
+  equals?: $Enums.EdgeDirection | Prisma.EnumEdgeDirectionFieldRefInput<$PrismaModel>
+  in?: $Enums.EdgeDirection[] | Prisma.ListEnumEdgeDirectionFieldRefInput<$PrismaModel>
+  notIn?: $Enums.EdgeDirection[] | Prisma.ListEnumEdgeDirectionFieldRefInput<$PrismaModel>
+  not?: Prisma.NestedEnumEdgeDirectionFilter<$PrismaModel> | $Enums.EdgeDirection
+}
+
+export type EnumEdgeDirectionWithAggregatesFilter<$PrismaModel = never> = {
+  equals?: $Enums.EdgeDirection | Prisma.EnumEdgeDirectionFieldRefInput<$PrismaModel>
+  in?: $Enums.EdgeDirection[] | Prisma.ListEnumEdgeDirectionFieldRefInput<$PrismaModel>
+  notIn?: $Enums.EdgeDirection[] | Prisma.ListEnumEdgeDirectionFieldRefInput<$PrismaModel>
+  not?: Prisma.NestedEnumEdgeDirectionWithAggregatesFilter<$PrismaModel> | $Enums.EdgeDirection
+  _count?: Prisma.NestedIntFilter<$PrismaModel>
+  _min?: Prisma.NestedEnumEdgeDirectionFilter<$PrismaModel>
+  _max?: Prisma.NestedEnumEdgeDirectionFilter<$PrismaModel>
+}
+
 export type NestedIntFilter<$PrismaModel = never> = {
   equals?: number | Prisma.IntFieldRefInput<$PrismaModel>
   in?: number[] | Prisma.ListIntFieldRefInput<$PrismaModel>
@@ -527,6 +544,23 @@ export type NestedJsonNullableFilterBase<$PrismaModel = never> = {
   gt?: runtime.InputJsonValue | Prisma.JsonFieldRefInput<$PrismaModel>
   gte?: runtime.InputJsonValue | Prisma.JsonFieldRefInput<$PrismaModel>
   not?: runtime.InputJsonValue | Prisma.JsonFieldRefInput<$PrismaModel> | Prisma.JsonNullValueFilter
+}
+
+export type NestedEnumEdgeDirectionFilter<$PrismaModel = never> = {
+  equals?: $Enums.EdgeDirection | Prisma.EnumEdgeDirectionFieldRefInput<$PrismaModel>
+  in?: $Enums.EdgeDirection[] | Prisma.ListEnumEdgeDirectionFieldRefInput<$PrismaModel>
+  notIn?: $Enums.EdgeDirection[] | Prisma.ListEnumEdgeDirectionFieldRefInput<$PrismaModel>
+  not?: Prisma.NestedEnumEdgeDirectionFilter<$PrismaModel> | $Enums.EdgeDirection
+}
+
+export type NestedEnumEdgeDirectionWithAggregatesFilter<$PrismaModel = never> = {
+  equals?: $Enums.EdgeDirection | Prisma.EnumEdgeDirectionFieldRefInput<$PrismaModel>
+  in?: $Enums.EdgeDirection[] | Prisma.ListEnumEdgeDirectionFieldRefInput<$PrismaModel>
+  notIn?: $Enums.EdgeDirection[] | Prisma.ListEnumEdgeDirectionFieldRefInput<$PrismaModel>
+  not?: Prisma.NestedEnumEdgeDirectionWithAggregatesFilter<$PrismaModel> | $Enums.EdgeDirection
+  _count?: Prisma.NestedIntFilter<$PrismaModel>
+  _min?: Prisma.NestedEnumEdgeDirectionFilter<$PrismaModel>
+  _max?: Prisma.NestedEnumEdgeDirectionFilter<$PrismaModel>
 }
 
 

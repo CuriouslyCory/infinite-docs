@@ -72,6 +72,11 @@ export type Project = Prisma.ProjectModel
  */
 export type Node = Prisma.NodeModel
 /**
+ * Model Edge
+ * 
+ */
+export type Edge = Prisma.EdgeModel
+/**
  * Model VerificationToken
  * 
  */

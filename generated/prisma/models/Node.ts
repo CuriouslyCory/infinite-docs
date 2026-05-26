@@ -275,6 +275,9 @@ export type NodeWhereInput = {
   project?: Prisma.XOR<Prisma.ProjectScalarRelationFilter, Prisma.ProjectWhereInput>
   parent?: Prisma.XOR<Prisma.NodeNullableScalarRelationFilter, Prisma.NodeWhereInput> | null
   children?: Prisma.NodeListRelationFilter
+  edgesOnCanvas?: Prisma.EdgeListRelationFilter
+  outgoingEdges?: Prisma.EdgeListRelationFilter
+  incomingEdges?: Prisma.EdgeListRelationFilter
 }
 
 export type NodeOrderByWithRelationInput = {
@@ -293,6 +296,9 @@ export type NodeOrderByWithRelationInput = {
   project?: Prisma.ProjectOrderByWithRelationInput
   parent?: Prisma.NodeOrderByWithRelationInput
   children?: Prisma.NodeOrderByRelationAggregateInput
+  edgesOnCanvas?: Prisma.EdgeOrderByRelationAggregateInput
+  outgoingEdges?: Prisma.EdgeOrderByRelationAggregateInput
+  incomingEdges?: Prisma.EdgeOrderByRelationAggregateInput
 }
 
 export type NodeWhereUniqueInput = Prisma.AtLeast<{
@@ -314,6 +320,9 @@ export type NodeWhereUniqueInput = Prisma.AtLeast<{
   project?: Prisma.XOR<Prisma.ProjectScalarRelationFilter, Prisma.ProjectWhereInput>
   parent?: Prisma.XOR<Prisma.NodeNullableScalarRelationFilter, Prisma.NodeWhereInput> | null
   children?: Prisma.NodeListRelationFilter
+  edgesOnCanvas?: Prisma.EdgeListRelationFilter
+  outgoingEdges?: Prisma.EdgeListRelationFilter
+  incomingEdges?: Prisma.EdgeListRelationFilter
 }, "id">
 
 export type NodeOrderByWithAggregationInput = {
@@ -368,6 +377,9 @@ export type NodeCreateInput = {
   project: Prisma.ProjectCreateNestedOneWithoutNodesInput
   parent?: Prisma.NodeCreateNestedOneWithoutChildrenInput
   children?: Prisma.NodeCreateNestedManyWithoutParentInput
+  edgesOnCanvas?: Prisma.EdgeCreateNestedManyWithoutCanvasNodeInput
+  outgoingEdges?: Prisma.EdgeCreateNestedManyWithoutSourceInput
+  incomingEdges?: Prisma.EdgeCreateNestedManyWithoutTargetInput
 }
 
 export type NodeUncheckedCreateInput = {
@@ -384,6 +396,9 @@ export type NodeUncheckedCreateInput = {
   updatedAt?: Date | string
   deletedAt?: Date | string | null
   children?: Prisma.NodeUncheckedCreateNestedManyWithoutParentInput
+  edgesOnCanvas?: Prisma.EdgeUncheckedCreateNestedManyWithoutCanvasNodeInput
+  outgoingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutSourceInput
+  incomingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutTargetInput
 }
 
 export type NodeUpdateInput = {
@@ -400,6 +415,9 @@ export type NodeUpdateInput = {
   project?: Prisma.ProjectUpdateOneRequiredWithoutNodesNestedInput
   parent?: Prisma.NodeUpdateOneWithoutChildrenNestedInput
   children?: Prisma.NodeUpdateManyWithoutParentNestedInput
+  edgesOnCanvas?: Prisma.EdgeUpdateManyWithoutCanvasNodeNestedInput
+  outgoingEdges?: Prisma.EdgeUpdateManyWithoutSourceNestedInput
+  incomingEdges?: Prisma.EdgeUpdateManyWithoutTargetNestedInput
 }
 
 export type NodeUncheckedUpdateInput = {
@@ -416,6 +434,9 @@ export type NodeUncheckedUpdateInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   children?: Prisma.NodeUncheckedUpdateManyWithoutParentNestedInput
+  edgesOnCanvas?: Prisma.EdgeUncheckedUpdateManyWithoutCanvasNodeNestedInput
+  outgoingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutSourceNestedInput
+  incomingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutTargetNestedInput
 }
 
 export type NodeCreateManyInput = {
@@ -527,6 +548,11 @@ export type NodeMinOrderByAggregateInput = {
 export type NodeSumOrderByAggregateInput = {
   posX?: Prisma.SortOrder
   posY?: Prisma.SortOrder
+}
+
+export type NodeScalarRelationFilter = {
+  is?: Prisma.NodeWhereInput
+  isNot?: Prisma.NodeWhereInput
 }
 
 export type NodeCreateNestedManyWithoutProjectInput = {
@@ -641,6 +667,50 @@ export type NodeUncheckedUpdateManyWithoutParentNestedInput = {
   deleteMany?: Prisma.NodeScalarWhereInput | Prisma.NodeScalarWhereInput[]
 }
 
+export type NodeCreateNestedOneWithoutEdgesOnCanvasInput = {
+  create?: Prisma.XOR<Prisma.NodeCreateWithoutEdgesOnCanvasInput, Prisma.NodeUncheckedCreateWithoutEdgesOnCanvasInput>
+  connectOrCreate?: Prisma.NodeCreateOrConnectWithoutEdgesOnCanvasInput
+  connect?: Prisma.NodeWhereUniqueInput
+}
+
+export type NodeCreateNestedOneWithoutOutgoingEdgesInput = {
+  create?: Prisma.XOR<Prisma.NodeCreateWithoutOutgoingEdgesInput, Prisma.NodeUncheckedCreateWithoutOutgoingEdgesInput>
+  connectOrCreate?: Prisma.NodeCreateOrConnectWithoutOutgoingEdgesInput
+  connect?: Prisma.NodeWhereUniqueInput
+}
+
+export type NodeCreateNestedOneWithoutIncomingEdgesInput = {
+  create?: Prisma.XOR<Prisma.NodeCreateWithoutIncomingEdgesInput, Prisma.NodeUncheckedCreateWithoutIncomingEdgesInput>
+  connectOrCreate?: Prisma.NodeCreateOrConnectWithoutIncomingEdgesInput
+  connect?: Prisma.NodeWhereUniqueInput
+}
+
+export type NodeUpdateOneWithoutEdgesOnCanvasNestedInput = {
+  create?: Prisma.XOR<Prisma.NodeCreateWithoutEdgesOnCanvasInput, Prisma.NodeUncheckedCreateWithoutEdgesOnCanvasInput>
+  connectOrCreate?: Prisma.NodeCreateOrConnectWithoutEdgesOnCanvasInput
+  upsert?: Prisma.NodeUpsertWithoutEdgesOnCanvasInput
+  disconnect?: Prisma.NodeWhereInput | boolean
+  delete?: Prisma.NodeWhereInput | boolean
+  connect?: Prisma.NodeWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.NodeUpdateToOneWithWhereWithoutEdgesOnCanvasInput, Prisma.NodeUpdateWithoutEdgesOnCanvasInput>, Prisma.NodeUncheckedUpdateWithoutEdgesOnCanvasInput>
+}
+
+export type NodeUpdateOneRequiredWithoutOutgoingEdgesNestedInput = {
+  create?: Prisma.XOR<Prisma.NodeCreateWithoutOutgoingEdgesInput, Prisma.NodeUncheckedCreateWithoutOutgoingEdgesInput>
+  connectOrCreate?: Prisma.NodeCreateOrConnectWithoutOutgoingEdgesInput
+  upsert?: Prisma.NodeUpsertWithoutOutgoingEdgesInput
+  connect?: Prisma.NodeWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.NodeUpdateToOneWithWhereWithoutOutgoingEdgesInput, Prisma.NodeUpdateWithoutOutgoingEdgesInput>, Prisma.NodeUncheckedUpdateWithoutOutgoingEdgesInput>
+}
+
+export type NodeUpdateOneRequiredWithoutIncomingEdgesNestedInput = {
+  create?: Prisma.XOR<Prisma.NodeCreateWithoutIncomingEdgesInput, Prisma.NodeUncheckedCreateWithoutIncomingEdgesInput>
+  connectOrCreate?: Prisma.NodeCreateOrConnectWithoutIncomingEdgesInput
+  upsert?: Prisma.NodeUpsertWithoutIncomingEdgesInput
+  connect?: Prisma.NodeWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.NodeUpdateToOneWithWhereWithoutIncomingEdgesInput, Prisma.NodeUpdateWithoutIncomingEdgesInput>, Prisma.NodeUncheckedUpdateWithoutIncomingEdgesInput>
+}
+
 export type NodeCreateWithoutProjectInput = {
   id?: string
   title: string
@@ -654,6 +724,9 @@ export type NodeCreateWithoutProjectInput = {
   deletedAt?: Date | string | null
   parent?: Prisma.NodeCreateNestedOneWithoutChildrenInput
   children?: Prisma.NodeCreateNestedManyWithoutParentInput
+  edgesOnCanvas?: Prisma.EdgeCreateNestedManyWithoutCanvasNodeInput
+  outgoingEdges?: Prisma.EdgeCreateNestedManyWithoutSourceInput
+  incomingEdges?: Prisma.EdgeCreateNestedManyWithoutTargetInput
 }
 
 export type NodeUncheckedCreateWithoutProjectInput = {
@@ -669,6 +742,9 @@ export type NodeUncheckedCreateWithoutProjectInput = {
   updatedAt?: Date | string
   deletedAt?: Date | string | null
   children?: Prisma.NodeUncheckedCreateNestedManyWithoutParentInput
+  edgesOnCanvas?: Prisma.EdgeUncheckedCreateNestedManyWithoutCanvasNodeInput
+  outgoingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutSourceInput
+  incomingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutTargetInput
 }
 
 export type NodeCreateOrConnectWithoutProjectInput = {
@@ -728,6 +804,9 @@ export type NodeCreateWithoutChildrenInput = {
   deletedAt?: Date | string | null
   project: Prisma.ProjectCreateNestedOneWithoutNodesInput
   parent?: Prisma.NodeCreateNestedOneWithoutChildrenInput
+  edgesOnCanvas?: Prisma.EdgeCreateNestedManyWithoutCanvasNodeInput
+  outgoingEdges?: Prisma.EdgeCreateNestedManyWithoutSourceInput
+  incomingEdges?: Prisma.EdgeCreateNestedManyWithoutTargetInput
 }
 
 export type NodeUncheckedCreateWithoutChildrenInput = {
@@ -743,6 +822,9 @@ export type NodeUncheckedCreateWithoutChildrenInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  edgesOnCanvas?: Prisma.EdgeUncheckedCreateNestedManyWithoutCanvasNodeInput
+  outgoingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutSourceInput
+  incomingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutTargetInput
 }
 
 export type NodeCreateOrConnectWithoutChildrenInput = {
@@ -763,6 +845,9 @@ export type NodeCreateWithoutParentInput = {
   deletedAt?: Date | string | null
   project: Prisma.ProjectCreateNestedOneWithoutNodesInput
   children?: Prisma.NodeCreateNestedManyWithoutParentInput
+  edgesOnCanvas?: Prisma.EdgeCreateNestedManyWithoutCanvasNodeInput
+  outgoingEdges?: Prisma.EdgeCreateNestedManyWithoutSourceInput
+  incomingEdges?: Prisma.EdgeCreateNestedManyWithoutTargetInput
 }
 
 export type NodeUncheckedCreateWithoutParentInput = {
@@ -778,6 +863,9 @@ export type NodeUncheckedCreateWithoutParentInput = {
   updatedAt?: Date | string
   deletedAt?: Date | string | null
   children?: Prisma.NodeUncheckedCreateNestedManyWithoutParentInput
+  edgesOnCanvas?: Prisma.EdgeUncheckedCreateNestedManyWithoutCanvasNodeInput
+  outgoingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutSourceInput
+  incomingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutTargetInput
 }
 
 export type NodeCreateOrConnectWithoutParentInput = {
@@ -814,6 +902,9 @@ export type NodeUpdateWithoutChildrenInput = {
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   project?: Prisma.ProjectUpdateOneRequiredWithoutNodesNestedInput
   parent?: Prisma.NodeUpdateOneWithoutChildrenNestedInput
+  edgesOnCanvas?: Prisma.EdgeUpdateManyWithoutCanvasNodeNestedInput
+  outgoingEdges?: Prisma.EdgeUpdateManyWithoutSourceNestedInput
+  incomingEdges?: Prisma.EdgeUpdateManyWithoutTargetNestedInput
 }
 
 export type NodeUncheckedUpdateWithoutChildrenInput = {
@@ -829,6 +920,9 @@ export type NodeUncheckedUpdateWithoutChildrenInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  edgesOnCanvas?: Prisma.EdgeUncheckedUpdateManyWithoutCanvasNodeNestedInput
+  outgoingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutSourceNestedInput
+  incomingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutTargetNestedInput
 }
 
 export type NodeUpsertWithWhereUniqueWithoutParentInput = {
@@ -845,6 +939,270 @@ export type NodeUpdateWithWhereUniqueWithoutParentInput = {
 export type NodeUpdateManyWithWhereWithoutParentInput = {
   where: Prisma.NodeScalarWhereInput
   data: Prisma.XOR<Prisma.NodeUpdateManyMutationInput, Prisma.NodeUncheckedUpdateManyWithoutParentInput>
+}
+
+export type NodeCreateWithoutEdgesOnCanvasInput = {
+  id?: string
+  title: string
+  kind?: $Enums.NodeKind
+  posX?: number
+  posY?: number
+  documentation?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  deletedAt?: Date | string | null
+  project: Prisma.ProjectCreateNestedOneWithoutNodesInput
+  parent?: Prisma.NodeCreateNestedOneWithoutChildrenInput
+  children?: Prisma.NodeCreateNestedManyWithoutParentInput
+  outgoingEdges?: Prisma.EdgeCreateNestedManyWithoutSourceInput
+  incomingEdges?: Prisma.EdgeCreateNestedManyWithoutTargetInput
+}
+
+export type NodeUncheckedCreateWithoutEdgesOnCanvasInput = {
+  id?: string
+  projectId: string
+  parentId?: string | null
+  title: string
+  kind?: $Enums.NodeKind
+  posX?: number
+  posY?: number
+  documentation?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  deletedAt?: Date | string | null
+  children?: Prisma.NodeUncheckedCreateNestedManyWithoutParentInput
+  outgoingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutSourceInput
+  incomingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutTargetInput
+}
+
+export type NodeCreateOrConnectWithoutEdgesOnCanvasInput = {
+  where: Prisma.NodeWhereUniqueInput
+  create: Prisma.XOR<Prisma.NodeCreateWithoutEdgesOnCanvasInput, Prisma.NodeUncheckedCreateWithoutEdgesOnCanvasInput>
+}
+
+export type NodeCreateWithoutOutgoingEdgesInput = {
+  id?: string
+  title: string
+  kind?: $Enums.NodeKind
+  posX?: number
+  posY?: number
+  documentation?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  deletedAt?: Date | string | null
+  project: Prisma.ProjectCreateNestedOneWithoutNodesInput
+  parent?: Prisma.NodeCreateNestedOneWithoutChildrenInput
+  children?: Prisma.NodeCreateNestedManyWithoutParentInput
+  edgesOnCanvas?: Prisma.EdgeCreateNestedManyWithoutCanvasNodeInput
+  incomingEdges?: Prisma.EdgeCreateNestedManyWithoutTargetInput
+}
+
+export type NodeUncheckedCreateWithoutOutgoingEdgesInput = {
+  id?: string
+  projectId: string
+  parentId?: string | null
+  title: string
+  kind?: $Enums.NodeKind
+  posX?: number
+  posY?: number
+  documentation?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  deletedAt?: Date | string | null
+  children?: Prisma.NodeUncheckedCreateNestedManyWithoutParentInput
+  edgesOnCanvas?: Prisma.EdgeUncheckedCreateNestedManyWithoutCanvasNodeInput
+  incomingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutTargetInput
+}
+
+export type NodeCreateOrConnectWithoutOutgoingEdgesInput = {
+  where: Prisma.NodeWhereUniqueInput
+  create: Prisma.XOR<Prisma.NodeCreateWithoutOutgoingEdgesInput, Prisma.NodeUncheckedCreateWithoutOutgoingEdgesInput>
+}
+
+export type NodeCreateWithoutIncomingEdgesInput = {
+  id?: string
+  title: string
+  kind?: $Enums.NodeKind
+  posX?: number
+  posY?: number
+  documentation?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  deletedAt?: Date | string | null
+  project: Prisma.ProjectCreateNestedOneWithoutNodesInput
+  parent?: Prisma.NodeCreateNestedOneWithoutChildrenInput
+  children?: Prisma.NodeCreateNestedManyWithoutParentInput
+  edgesOnCanvas?: Prisma.EdgeCreateNestedManyWithoutCanvasNodeInput
+  outgoingEdges?: Prisma.EdgeCreateNestedManyWithoutSourceInput
+}
+
+export type NodeUncheckedCreateWithoutIncomingEdgesInput = {
+  id?: string
+  projectId: string
+  parentId?: string | null
+  title: string
+  kind?: $Enums.NodeKind
+  posX?: number
+  posY?: number
+  documentation?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  deletedAt?: Date | string | null
+  children?: Prisma.NodeUncheckedCreateNestedManyWithoutParentInput
+  edgesOnCanvas?: Prisma.EdgeUncheckedCreateNestedManyWithoutCanvasNodeInput
+  outgoingEdges?: Prisma.EdgeUncheckedCreateNestedManyWithoutSourceInput
+}
+
+export type NodeCreateOrConnectWithoutIncomingEdgesInput = {
+  where: Prisma.NodeWhereUniqueInput
+  create: Prisma.XOR<Prisma.NodeCreateWithoutIncomingEdgesInput, Prisma.NodeUncheckedCreateWithoutIncomingEdgesInput>
+}
+
+export type NodeUpsertWithoutEdgesOnCanvasInput = {
+  update: Prisma.XOR<Prisma.NodeUpdateWithoutEdgesOnCanvasInput, Prisma.NodeUncheckedUpdateWithoutEdgesOnCanvasInput>
+  create: Prisma.XOR<Prisma.NodeCreateWithoutEdgesOnCanvasInput, Prisma.NodeUncheckedCreateWithoutEdgesOnCanvasInput>
+  where?: Prisma.NodeWhereInput
+}
+
+export type NodeUpdateToOneWithWhereWithoutEdgesOnCanvasInput = {
+  where?: Prisma.NodeWhereInput
+  data: Prisma.XOR<Prisma.NodeUpdateWithoutEdgesOnCanvasInput, Prisma.NodeUncheckedUpdateWithoutEdgesOnCanvasInput>
+}
+
+export type NodeUpdateWithoutEdgesOnCanvasInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  kind?: Prisma.EnumNodeKindFieldUpdateOperationsInput | $Enums.NodeKind
+  posX?: Prisma.FloatFieldUpdateOperationsInput | number
+  posY?: Prisma.FloatFieldUpdateOperationsInput | number
+  documentation?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  project?: Prisma.ProjectUpdateOneRequiredWithoutNodesNestedInput
+  parent?: Prisma.NodeUpdateOneWithoutChildrenNestedInput
+  children?: Prisma.NodeUpdateManyWithoutParentNestedInput
+  outgoingEdges?: Prisma.EdgeUpdateManyWithoutSourceNestedInput
+  incomingEdges?: Prisma.EdgeUpdateManyWithoutTargetNestedInput
+}
+
+export type NodeUncheckedUpdateWithoutEdgesOnCanvasInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  projectId?: Prisma.StringFieldUpdateOperationsInput | string
+  parentId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  kind?: Prisma.EnumNodeKindFieldUpdateOperationsInput | $Enums.NodeKind
+  posX?: Prisma.FloatFieldUpdateOperationsInput | number
+  posY?: Prisma.FloatFieldUpdateOperationsInput | number
+  documentation?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  children?: Prisma.NodeUncheckedUpdateManyWithoutParentNestedInput
+  outgoingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutSourceNestedInput
+  incomingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutTargetNestedInput
+}
+
+export type NodeUpsertWithoutOutgoingEdgesInput = {
+  update: Prisma.XOR<Prisma.NodeUpdateWithoutOutgoingEdgesInput, Prisma.NodeUncheckedUpdateWithoutOutgoingEdgesInput>
+  create: Prisma.XOR<Prisma.NodeCreateWithoutOutgoingEdgesInput, Prisma.NodeUncheckedCreateWithoutOutgoingEdgesInput>
+  where?: Prisma.NodeWhereInput
+}
+
+export type NodeUpdateToOneWithWhereWithoutOutgoingEdgesInput = {
+  where?: Prisma.NodeWhereInput
+  data: Prisma.XOR<Prisma.NodeUpdateWithoutOutgoingEdgesInput, Prisma.NodeUncheckedUpdateWithoutOutgoingEdgesInput>
+}
+
+export type NodeUpdateWithoutOutgoingEdgesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  kind?: Prisma.EnumNodeKindFieldUpdateOperationsInput | $Enums.NodeKind
+  posX?: Prisma.FloatFieldUpdateOperationsInput | number
+  posY?: Prisma.FloatFieldUpdateOperationsInput | number
+  documentation?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  project?: Prisma.ProjectUpdateOneRequiredWithoutNodesNestedInput
+  parent?: Prisma.NodeUpdateOneWithoutChildrenNestedInput
+  children?: Prisma.NodeUpdateManyWithoutParentNestedInput
+  edgesOnCanvas?: Prisma.EdgeUpdateManyWithoutCanvasNodeNestedInput
+  incomingEdges?: Prisma.EdgeUpdateManyWithoutTargetNestedInput
+}
+
+export type NodeUncheckedUpdateWithoutOutgoingEdgesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  projectId?: Prisma.StringFieldUpdateOperationsInput | string
+  parentId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  kind?: Prisma.EnumNodeKindFieldUpdateOperationsInput | $Enums.NodeKind
+  posX?: Prisma.FloatFieldUpdateOperationsInput | number
+  posY?: Prisma.FloatFieldUpdateOperationsInput | number
+  documentation?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  children?: Prisma.NodeUncheckedUpdateManyWithoutParentNestedInput
+  edgesOnCanvas?: Prisma.EdgeUncheckedUpdateManyWithoutCanvasNodeNestedInput
+  incomingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutTargetNestedInput
+}
+
+export type NodeUpsertWithoutIncomingEdgesInput = {
+  update: Prisma.XOR<Prisma.NodeUpdateWithoutIncomingEdgesInput, Prisma.NodeUncheckedUpdateWithoutIncomingEdgesInput>
+  create: Prisma.XOR<Prisma.NodeCreateWithoutIncomingEdgesInput, Prisma.NodeUncheckedCreateWithoutIncomingEdgesInput>
+  where?: Prisma.NodeWhereInput
+}
+
+export type NodeUpdateToOneWithWhereWithoutIncomingEdgesInput = {
+  where?: Prisma.NodeWhereInput
+  data: Prisma.XOR<Prisma.NodeUpdateWithoutIncomingEdgesInput, Prisma.NodeUncheckedUpdateWithoutIncomingEdgesInput>
+}
+
+export type NodeUpdateWithoutIncomingEdgesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  kind?: Prisma.EnumNodeKindFieldUpdateOperationsInput | $Enums.NodeKind
+  posX?: Prisma.FloatFieldUpdateOperationsInput | number
+  posY?: Prisma.FloatFieldUpdateOperationsInput | number
+  documentation?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  project?: Prisma.ProjectUpdateOneRequiredWithoutNodesNestedInput
+  parent?: Prisma.NodeUpdateOneWithoutChildrenNestedInput
+  children?: Prisma.NodeUpdateManyWithoutParentNestedInput
+  edgesOnCanvas?: Prisma.EdgeUpdateManyWithoutCanvasNodeNestedInput
+  outgoingEdges?: Prisma.EdgeUpdateManyWithoutSourceNestedInput
+}
+
+export type NodeUncheckedUpdateWithoutIncomingEdgesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  projectId?: Prisma.StringFieldUpdateOperationsInput | string
+  parentId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  kind?: Prisma.EnumNodeKindFieldUpdateOperationsInput | $Enums.NodeKind
+  posX?: Prisma.FloatFieldUpdateOperationsInput | number
+  posY?: Prisma.FloatFieldUpdateOperationsInput | number
+  documentation?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  children?: Prisma.NodeUncheckedUpdateManyWithoutParentNestedInput
+  edgesOnCanvas?: Prisma.EdgeUncheckedUpdateManyWithoutCanvasNodeNestedInput
+  outgoingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutSourceNestedInput
 }
 
 export type NodeCreateManyProjectInput = {
@@ -874,6 +1232,9 @@ export type NodeUpdateWithoutProjectInput = {
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   parent?: Prisma.NodeUpdateOneWithoutChildrenNestedInput
   children?: Prisma.NodeUpdateManyWithoutParentNestedInput
+  edgesOnCanvas?: Prisma.EdgeUpdateManyWithoutCanvasNodeNestedInput
+  outgoingEdges?: Prisma.EdgeUpdateManyWithoutSourceNestedInput
+  incomingEdges?: Prisma.EdgeUpdateManyWithoutTargetNestedInput
 }
 
 export type NodeUncheckedUpdateWithoutProjectInput = {
@@ -889,6 +1250,9 @@ export type NodeUncheckedUpdateWithoutProjectInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   children?: Prisma.NodeUncheckedUpdateManyWithoutParentNestedInput
+  edgesOnCanvas?: Prisma.EdgeUncheckedUpdateManyWithoutCanvasNodeNestedInput
+  outgoingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutSourceNestedInput
+  incomingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutTargetNestedInput
 }
 
 export type NodeUncheckedUpdateManyWithoutProjectInput = {
@@ -932,6 +1296,9 @@ export type NodeUpdateWithoutParentInput = {
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   project?: Prisma.ProjectUpdateOneRequiredWithoutNodesNestedInput
   children?: Prisma.NodeUpdateManyWithoutParentNestedInput
+  edgesOnCanvas?: Prisma.EdgeUpdateManyWithoutCanvasNodeNestedInput
+  outgoingEdges?: Prisma.EdgeUpdateManyWithoutSourceNestedInput
+  incomingEdges?: Prisma.EdgeUpdateManyWithoutTargetNestedInput
 }
 
 export type NodeUncheckedUpdateWithoutParentInput = {
@@ -947,6 +1314,9 @@ export type NodeUncheckedUpdateWithoutParentInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   children?: Prisma.NodeUncheckedUpdateManyWithoutParentNestedInput
+  edgesOnCanvas?: Prisma.EdgeUncheckedUpdateManyWithoutCanvasNodeNestedInput
+  outgoingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutSourceNestedInput
+  incomingEdges?: Prisma.EdgeUncheckedUpdateManyWithoutTargetNestedInput
 }
 
 export type NodeUncheckedUpdateManyWithoutParentInput = {
@@ -970,10 +1340,16 @@ export type NodeUncheckedUpdateManyWithoutParentInput = {
 
 export type NodeCountOutputType = {
   children: number
+  edgesOnCanvas: number
+  outgoingEdges: number
+  incomingEdges: number
 }
 
 export type NodeCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   children?: boolean | NodeCountOutputTypeCountChildrenArgs
+  edgesOnCanvas?: boolean | NodeCountOutputTypeCountEdgesOnCanvasArgs
+  outgoingEdges?: boolean | NodeCountOutputTypeCountOutgoingEdgesArgs
+  incomingEdges?: boolean | NodeCountOutputTypeCountIncomingEdgesArgs
 }
 
 /**
@@ -993,6 +1369,27 @@ export type NodeCountOutputTypeCountChildrenArgs<ExtArgs extends runtime.Types.E
   where?: Prisma.NodeWhereInput
 }
 
+/**
+ * NodeCountOutputType without action
+ */
+export type NodeCountOutputTypeCountEdgesOnCanvasArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.EdgeWhereInput
+}
+
+/**
+ * NodeCountOutputType without action
+ */
+export type NodeCountOutputTypeCountOutgoingEdgesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.EdgeWhereInput
+}
+
+/**
+ * NodeCountOutputType without action
+ */
+export type NodeCountOutputTypeCountIncomingEdgesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.EdgeWhereInput
+}
+
 
 export type NodeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -1010,6 +1407,9 @@ export type NodeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = r
   project?: boolean | Prisma.ProjectDefaultArgs<ExtArgs>
   parent?: boolean | Prisma.Node$parentArgs<ExtArgs>
   children?: boolean | Prisma.Node$childrenArgs<ExtArgs>
+  edgesOnCanvas?: boolean | Prisma.Node$edgesOnCanvasArgs<ExtArgs>
+  outgoingEdges?: boolean | Prisma.Node$outgoingEdgesArgs<ExtArgs>
+  incomingEdges?: boolean | Prisma.Node$incomingEdgesArgs<ExtArgs>
   _count?: boolean | Prisma.NodeCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["node"]>
 
@@ -1067,6 +1467,9 @@ export type NodeInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
   project?: boolean | Prisma.ProjectDefaultArgs<ExtArgs>
   parent?: boolean | Prisma.Node$parentArgs<ExtArgs>
   children?: boolean | Prisma.Node$childrenArgs<ExtArgs>
+  edgesOnCanvas?: boolean | Prisma.Node$edgesOnCanvasArgs<ExtArgs>
+  outgoingEdges?: boolean | Prisma.Node$outgoingEdgesArgs<ExtArgs>
+  incomingEdges?: boolean | Prisma.Node$incomingEdgesArgs<ExtArgs>
   _count?: boolean | Prisma.NodeCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type NodeIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -1084,6 +1487,9 @@ export type $NodePayload<ExtArgs extends runtime.Types.Extensions.InternalArgs =
     project: Prisma.$ProjectPayload<ExtArgs>
     parent: Prisma.$NodePayload<ExtArgs> | null
     children: Prisma.$NodePayload<ExtArgs>[]
+    edgesOnCanvas: Prisma.$EdgePayload<ExtArgs>[]
+    outgoingEdges: Prisma.$EdgePayload<ExtArgs>[]
+    incomingEdges: Prisma.$EdgePayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -1495,6 +1901,9 @@ export interface Prisma__NodeClient<T, Null = never, ExtArgs extends runtime.Typ
   project<T extends Prisma.ProjectDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.ProjectDefaultArgs<ExtArgs>>): Prisma.Prisma__ProjectClient<runtime.Types.Result.GetResult<Prisma.$ProjectPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
   parent<T extends Prisma.Node$parentArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Node$parentArgs<ExtArgs>>): Prisma.Prisma__NodeClient<runtime.Types.Result.GetResult<Prisma.$NodePayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
   children<T extends Prisma.Node$childrenArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Node$childrenArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$NodePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  edgesOnCanvas<T extends Prisma.Node$edgesOnCanvasArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Node$edgesOnCanvasArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$EdgePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  outgoingEdges<T extends Prisma.Node$outgoingEdgesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Node$outgoingEdgesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$EdgePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  incomingEdges<T extends Prisma.Node$incomingEdgesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Node$incomingEdgesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$EdgePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1977,6 +2386,78 @@ export type Node$childrenArgs<ExtArgs extends runtime.Types.Extensions.InternalA
   take?: number
   skip?: number
   distinct?: Prisma.NodeScalarFieldEnum | Prisma.NodeScalarFieldEnum[]
+}
+
+/**
+ * Node.edgesOnCanvas
+ */
+export type Node$edgesOnCanvasArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the Edge
+   */
+  select?: Prisma.EdgeSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the Edge
+   */
+  omit?: Prisma.EdgeOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.EdgeInclude<ExtArgs> | null
+  where?: Prisma.EdgeWhereInput
+  orderBy?: Prisma.EdgeOrderByWithRelationInput | Prisma.EdgeOrderByWithRelationInput[]
+  cursor?: Prisma.EdgeWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.EdgeScalarFieldEnum | Prisma.EdgeScalarFieldEnum[]
+}
+
+/**
+ * Node.outgoingEdges
+ */
+export type Node$outgoingEdgesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the Edge
+   */
+  select?: Prisma.EdgeSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the Edge
+   */
+  omit?: Prisma.EdgeOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.EdgeInclude<ExtArgs> | null
+  where?: Prisma.EdgeWhereInput
+  orderBy?: Prisma.EdgeOrderByWithRelationInput | Prisma.EdgeOrderByWithRelationInput[]
+  cursor?: Prisma.EdgeWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.EdgeScalarFieldEnum | Prisma.EdgeScalarFieldEnum[]
+}
+
+/**
+ * Node.incomingEdges
+ */
+export type Node$incomingEdgesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the Edge
+   */
+  select?: Prisma.EdgeSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the Edge
+   */
+  omit?: Prisma.EdgeOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.EdgeInclude<ExtArgs> | null
+  where?: Prisma.EdgeWhereInput
+  orderBy?: Prisma.EdgeOrderByWithRelationInput | Prisma.EdgeOrderByWithRelationInput[]
+  cursor?: Prisma.EdgeWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.EdgeScalarFieldEnum | Prisma.EdgeScalarFieldEnum[]
 }
 
 /**

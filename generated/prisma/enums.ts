@@ -19,3 +19,12 @@ export const NodeKind = {
 } as const
 
 export type NodeKind = (typeof NodeKind)[keyof typeof NodeKind]
+
+
+export const EdgeDirection = {
+  NONE: 'NONE',
+  FORWARD: 'FORWARD',
+  BIDIRECTIONAL: 'BIDIRECTIONAL'
+} as const
+
+export type EdgeDirection = (typeof EdgeDirection)[keyof typeof EdgeDirection]

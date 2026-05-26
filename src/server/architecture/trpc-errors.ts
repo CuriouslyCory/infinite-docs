@@ -26,6 +26,18 @@ export function toTRPCError(error: unknown): TRPCError {
           message: error.message,
           cause: error,
         });
+      case "CONFLICT":
+        return new TRPCError({
+          code: "CONFLICT",
+          message: error.message,
+          cause: error,
+        });
+      case "BAD_REQUEST":
+        return new TRPCError({
+          code: "BAD_REQUEST",
+          message: error.message,
+          cause: error,
+        });
     }
   }
   return new TRPCError({ code: "INTERNAL_SERVER_ERROR", cause: error });
