@@ -9,10 +9,7 @@ import {
   getProjectBySlug,
   listProjects,
 } from "~/server/architecture/project.service";
-import {
-  createProjectInput,
-  getProjectBySlugInput,
-} from "~/server/architecture/schemas";
+import { createProjectInput, getProjectBySlugInput } from "~/lib/schemas";
 import { toTRPCError } from "~/server/architecture/trpc-errors";
 
 /**

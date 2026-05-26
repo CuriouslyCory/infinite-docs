@@ -6,7 +6,7 @@ import {
   getProjectBySlugInput,
   type CreateProjectInput,
   type GetProjectBySlugInput,
-} from "./schemas";
+} from "~/lib/schemas";
 import { generateSlug } from "./slug";
 
 const MAX_SLUG_ATTEMPTS = 3;

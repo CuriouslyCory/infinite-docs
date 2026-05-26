@@ -1,0 +1,55 @@
+import { TRPCError } from "@trpc/server";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+
+import { api } from "~/trpc/server";
+import { CanvasIsland } from "./_canvas";
+
+/**
+ * The Project route: the capability-URL slug as a path segment, landing on the
+ * Project's top-level Canvas. Reachable WITHOUT a session — possession of the
+ * unguessable slug is the read grant (ADR-0002). This is a server component
+ * shell; the interactive Canvas is mounted beneath it as an SSR-disabled
+ * client island (ADR-0004).
+ */
+export default async function ProjectPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+
+  let project;
+  try {
+    project = await api.architecture.getProjectBySlug({ slug });
+  } catch (error) {
+    // A missing OR soft-deleted project both surface as NOT_FOUND, and we
+    // render the same 404 — never revealing whether a slug exists-but-forbidden
+    // (ADR-0002). Any other error propagates to the error boundary, so a DB
+    // outage is not disguised as "project doesn't exist".
+    if (error instanceof TRPCError && error.code === "NOT_FOUND") {
+      notFound();
+    }
+    throw error;
+  }
+
+  return (
+    <main className="flex h-dvh flex-col bg-[#15162c] text-white">
+      <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+        <Link
+          href="/"
+          className="text-sm text-white/60 no-underline transition hover:text-white"
+        >
+          ← Projects
+        </Link>
+        {/* Breadcrumb region. Display-only this slice; the real trail from the
+            getCanvas payload arrives with Descent in a later slice. No edit
+            affordance here — the Project route is read-shaped for everyone. */}
+        <span className="text-sm font-medium">{project.title}</span>
+      </header>
+      <div className="min-h-0 flex-1">
+        <CanvasIsland canvasScope="root" />
+      </div>
+    </main>
+  );
+}

@@ -1,0 +1,26 @@
+"use client";
+
+import dynamic from "next/dynamic";
+
+/**
+ * Client wrapper for the Canvas island. Its only jobs: load the canvas with
+ * `ssr: false` (the diagramming library is not server-renderable, and
+ * `ssr: false` is disallowed inside a server component), and key the canvas by
+ * its scope so the React Flow store fully re-seeds when the scope changes.
+ *
+ * `@xyflow/react` is imported only inside `./canvas`, behind this lazy
+ * boundary, so it never enters the server render path or the page's first-load
+ * bundle. See docs/adr/0004.
+ */
+const Canvas = dynamic(() => import("./canvas"), {
+  ssr: false,
+  loading: () => <div className="h-full w-full bg-[#1b1c33]" aria-hidden />,
+});
+
+export function CanvasIsland({ canvasScope }: { canvasScope: string }) {
+  // Key the lazily-loaded Canvas (which owns the ReactFlowProvider) so changing
+  // the scope forces a full remount and a fresh store. The scope is "root" now;
+  // Descent swaps in a canvasNodeId in a later slice, and the keyed remount
+  // guarantees the child Canvas never inherits the parent's viewport or nodes.
+  return <Canvas key={canvasScope} scope={canvasScope} />;
+}

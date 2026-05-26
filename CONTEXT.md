@@ -76,6 +76,14 @@ An unguessable, per-Project URL segment (`slug @unique`) that, by mere possessio
 the permission. **Mutations are never granted by the slug**; writes require the signed-in owner.
 Anyone with the link can read; only the owner can change. *(See ADR-0002.)*
 
+### Project route
+The web address at which a Project opens — its **capability-URL slug** as a path segment —
+landing on the Project's top-level **Canvas**. The route is a server component that resolves the
+Project by slug (read access per ADR-0002), so it is reachable without sign-in; the **Canvas** is
+mounted beneath it as a client-only island (ADR-0004). A missing or soft-deleted slug renders an
+indistinguishable not-found. *(The empty top-level Canvas route lands in this milestone; routing
+into interior Canvases via **Descent** is a later milestone.)*
+
 ### Actor
 The resolved identity of whoever is calling a service function:
 `{ userId, scopes?, via?: "session" | "token" }`. Constructed at the edge (a tRPC procedure
