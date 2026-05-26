@@ -47,7 +47,9 @@ void _prismaKindIsZodKind;
 /**
  * Creates a Component (a Node) on a Canvas scope within a Project. The scope is
  * `parentId`: null is the Project's root Canvas, otherwise the id of the
- * containing Component. `kind` is cosmetic (icon/color only — CONTEXT.md
+ * containing Component — which, when non-null, must be a live Node in this same
+ * Project (a child Component cannot hang off a missing, soft-deleted, or
+ * foreign-Project parent). `kind` is cosmetic (icon/color only — CONTEXT.md
  * "Component kind"); `posX`/`posY` are the drop point.
  *
  * Owner-only: the Project is addressed by `projectId` (an internal handle, never
@@ -75,6 +77,23 @@ export async function createNode(
   }
   assertCanWrite(actor, project);
 
+  // A child Component (parentId !== null) must hang off a live parent Node in
+  // this same owned Project. Scoping the lookup to `project.id` closes
+  // cross-project nesting smuggling (a foreign parent id can never be used) and
+  // never reveals whether the id exists elsewhere — the same set-membership
+  // posture `connectNodes`/`updatePositions` use for their endpoint checks. A
+  // missing / soft-deleted / foreign parent surfaces as not-found (the input
+  // shape is valid; the referenced parent is absent), never a partial write.
+  if (parentId !== null) {
+    const parent = await db.node.findFirst({
+      where: { id: parentId, projectId: project.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!parent) {
+      throw new NotFoundError();
+    }
+  }
+
   return db.node.create({
     data: { projectId: project.id, parentId, kind, title, posX, posY },
   });
@@ -86,17 +105,35 @@ export async function createNode(
  * scope), per the Canvas derivation in CONTEXT.md. Addressed by the capability
  * `slug` (the read grant, ADR-0002), so it works without a session.
  *
- * Nodes and Edges are independent, so they are fetched concurrently — one
- * round-trip's depth, no waterfall (the perf model, PRD). The result is named
- * in Node/Edge terms even though users see "the interior Components and
- * Connections" (the Component/Node + Connection/Edge split). `boundaryProxies`
- * and `breadcrumbs` join this payload with boundary derivation (M3) and Descent.
+ * Interior Nodes, interior Edges, and the breadcrumb trail are independent, so
+ * they are fetched concurrently — one round-trip's depth, no waterfall (the
+ * perf model, PRD). The result is named in Node/Edge terms even though users
+ * see "the interior Components and Connections" (the Component/Node +
+ * Connection/Edge split).
+ *
+ * `breadcrumbs` is the ordered ancestor chain (root -> current scope, the
+ * current scope included) computed in a SINGLE recursive CTE, never a per-level
+ * walk (ADR-0006). The root scope (`canvasNodeId === null`) has no ancestors and
+ * returns `[]`. A non-null scope that resolves to no live Node in this Project
+ * (missing / soft-deleted / cross-project) is a not-found — detected by an empty
+ * breadcrumb trail, NOT by an empty interior (an empty interior is a legitimate
+ * leaf Component). `boundaryProxies` joins this payload with boundary derivation
+ * (M3).
+ *
+ * NOTE: the breadcrumb query is raw SQL — the first in the repo. Postgres folds
+ * unquoted identifiers to lowercase, so every model/column name is double-quoted
+ * PascalCase (`"Node"`, `"parentId"`, ...); the scope id and project id are
+ * bound parameters, never string-interpolated. See ADR-0006.
  */
 export async function getCanvas(
   db: Db,
   _actor: Actor | null,
   input: GetCanvasInput,
-): Promise<{ interiorNodes: Node[]; interiorEdges: Edge[] }> {
+): Promise<{
+  interiorNodes: Node[];
+  interiorEdges: Edge[];
+  breadcrumbs: { id: string; title: string }[];
+}> {
   const { slug, canvasNodeId } = getCanvasInput.parse(input);
 
   const project = await db.project.findFirst({
@@ -107,7 +144,7 @@ export async function getCanvas(
     throw new NotFoundError();
   }
 
-  const [interiorNodes, interiorEdges] = await Promise.all([
+  const [interiorNodes, interiorEdges, breadcrumbs] = await Promise.all([
     db.node.findMany({
       where: { projectId: project.id, parentId: canvasNodeId, deletedAt: null },
       orderBy: { createdAt: "asc" },
@@ -116,8 +153,39 @@ export async function getCanvas(
       where: { projectId: project.id, canvasNodeId, deletedAt: null },
       orderBy: { createdAt: "asc" },
     }),
+    // The breadcrumb trail walks `parentId` from the scope up to the root in one
+    // recursive CTE (ADR-0006). At the root scope there are no ancestors, so we
+    // skip the query entirely. `depth < 256` is cycle defense for a future
+    // `move`/reparent feature (the graph is a tree today), not a nesting limit.
+    canvasNodeId === null
+      ? Promise.resolve<{ id: string; title: string }[]>([])
+      : db.$queryRaw<{ id: string; title: string }[]>`
+          WITH RECURSIVE ancestry AS (
+            SELECT n.id, n.title, n."parentId", 0 AS depth
+            FROM "Node" n
+            WHERE n.id = ${canvasNodeId}
+              AND n."projectId" = ${project.id}
+              AND n."deletedAt" IS NULL
+            UNION ALL
+            SELECT p.id, p.title, p."parentId", a.depth + 1
+            FROM "Node" p
+            JOIN ancestry a ON p.id = a."parentId"
+            WHERE p."projectId" = ${project.id}
+              AND p."deletedAt" IS NULL
+              AND a.depth < 256
+          )
+          SELECT id, title FROM ancestry ORDER BY depth DESC`,
   ]);
-  return { interiorNodes, interiorEdges };
+
+  // A non-null scope with no breadcrumbs never resolved to a live Node in this
+  // Project. Key off the breadcrumb trail (a live scope always returns its own
+  // row at depth 0), never the interior count — an empty interior is a valid
+  // leaf Canvas. The root scope is exempt: it has no Component to resolve.
+  if (canvasNodeId !== null && breadcrumbs.length === 0) {
+    throw new NotFoundError();
+  }
+
+  return { interiorNodes, interiorEdges, breadcrumbs };
 }
 
 /**

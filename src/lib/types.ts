@@ -22,3 +22,12 @@ export type CanvasNode =
 /** A single Connection as the Canvas read returns it (a data-layer Edge). */
 export type CanvasEdge =
   RouterOutputs["architecture"]["getCanvas"]["interiorEdges"][number];
+
+/**
+ * The full Canvas read payload — interior Components, Connections, and the
+ * breadcrumb trail. Derived from the router output so it tracks every key
+ * `getCanvas` returns (today `interiorNodes`/`interiorEdges`/`breadcrumbs`;
+ * `boundaryProxies` in M3), which is what lets the cache-merge helper preserve
+ * sibling keys instead of a hand-maintained subset drifting out of sync.
+ */
+export type CanvasData = RouterOutputs["architecture"]["getCanvas"];

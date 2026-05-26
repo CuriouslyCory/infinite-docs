@@ -72,6 +72,123 @@ describe("createNode", () => {
       createNode(testDb, actor, { projectId: "nope", kind: "GENERIC" }),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
+
+  it("creates a child Component under a live parent in the same Project", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+
+    expect(child.parentId).toBe(parent.id);
+    const persisted = await testDb.node.findUnique({ where: { id: child.id } });
+    expect(persisted?.parentId).toBe(parent.id);
+  });
+
+  it("rejects a child under a parent from another Project (and writes nothing)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const projectA = await makeProject(user.id, "A");
+    const projectB = await makeProject(user.id, "B");
+    const foreignParent = await createNode(testDb, actor, {
+      projectId: projectB.id,
+      title: "Foreign",
+    });
+
+    await expect(
+      createNode(testDb, actor, {
+        projectId: projectA.id,
+        parentId: foreignParent.id,
+        title: "Child",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    const count = await testDb.node.count({
+      where: { projectId: projectA.id },
+    });
+    expect(count).toBe(0);
+  });
+
+  it("rejects a child under a soft-deleted parent", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    await testDb.node.update({
+      where: { id: parent.id },
+      data: { deletedAt: new Date() },
+    });
+
+    await expect(
+      createNode(testDb, actor, {
+        projectId: project.id,
+        parentId: parent.id,
+        title: "Child",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("reports not-found for an unknown parent", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+
+    await expect(
+      createNode(testDb, actor, {
+        projectId: project.id,
+        parentId: "nope",
+        title: "Child",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("rejects a non-owner creating a child even under a live parent", async () => {
+    const owner = await makeUser("Owner");
+    const ownerActor: Actor = { userId: owner.id, via: "session" };
+    const project = await makeProject(owner.id);
+    const parent = await createNode(testDb, ownerActor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const intruder: Actor = { userId: "intruder" };
+
+    await expect(
+      createNode(testDb, intruder, {
+        projectId: project.id,
+        parentId: parent.id,
+        title: "Child",
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("rejects a non-owner before the parent lookup, even for a missing parent (authz precedes the parent check)", async () => {
+    const owner = await makeUser("Owner");
+    const project = await makeProject(owner.id);
+    const intruder: Actor = { userId: "intruder" };
+
+    // A missing parentId under unauthorized credentials must surface as
+    // ForbiddenError, never NotFoundError: assertCanWrite runs before the parent
+    // lookup, so an intruder never reaches it and never learns whether a parent
+    // exists. Flip that order and this test throws NotFoundError and fails.
+    await expect(
+      createNode(testDb, intruder, {
+        projectId: project.id,
+        parentId: "nope",
+        title: "Child",
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
 });
 
 describe("getCanvas", () => {
@@ -138,10 +255,10 @@ describe("getCanvas", () => {
       projectId: project.id,
       title: "Parent",
     });
-    // Plant a child directly: the public create-child API arrives in a later
-    // slice (#8), but the scope filter must already exclude it from the root.
-    await testDb.node.create({
-      data: { projectId: project.id, parentId: parent.id, title: "Child" },
+    await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
     });
 
     const canvas = await getCanvas(testDb, null, { slug: project.slug });
@@ -157,8 +274,10 @@ describe("getCanvas", () => {
       projectId: project.id,
       title: "Parent",
     });
-    const child = await testDb.node.create({
-      data: { projectId: project.id, parentId: parent.id, title: "Child" },
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
     });
 
     const canvas = await getCanvas(testDb, null, {
@@ -167,6 +286,143 @@ describe("getCanvas", () => {
     });
 
     expect(canvas.interiorNodes.map((n) => n.id)).toEqual([child.id]);
+  });
+});
+
+describe("getCanvas breadcrumbs", () => {
+  it("returns an empty trail at the root scope", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    await createNode(testDb, actor, { projectId: project.id, title: "A" });
+
+    const canvas = await getCanvas(testDb, null, { slug: project.slug });
+
+    expect(canvas.breadcrumbs).toEqual([]);
+  });
+
+  it("returns [parent, current] ordered root -> current for a one-level scope", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+
+    const canvas = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: child.id,
+    });
+
+    expect(canvas.breadcrumbs).toEqual([
+      { id: parent.id, title: "Parent" },
+      { id: child.id, title: "Child" },
+    ]);
+  });
+
+  it("returns the full ancestor chain ordered root -> current for a deep scope", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: a.id,
+      title: "B",
+    });
+    const c = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: b.id,
+      title: "C",
+    });
+
+    const canvas = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: c.id,
+    });
+
+    expect(canvas.breadcrumbs.map((crumb) => crumb.title)).toEqual([
+      "A",
+      "B",
+      "C",
+    ]);
+    expect(canvas.breadcrumbs.map((crumb) => crumb.id)).toEqual([
+      a.id,
+      b.id,
+      c.id,
+    ]);
+  });
+});
+
+describe("getCanvas scope validation", () => {
+  it("reports not-found for an unknown (non-null) scope", async () => {
+    const user = await makeUser();
+    const project = await makeProject(user.id);
+
+    await expect(
+      getCanvas(testDb, null, { slug: project.slug, canvasNodeId: "nope" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("reports not-found for a soft-deleted scope", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Doomed",
+    });
+    await testDb.node.update({
+      where: { id: node.id },
+      data: { deletedAt: new Date() },
+    });
+
+    await expect(
+      getCanvas(testDb, null, { slug: project.slug, canvasNodeId: node.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("reports not-found for a scope Node from another Project", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const projectA = await makeProject(user.id, "A");
+    const projectB = await makeProject(user.id, "B");
+    const inB = await createNode(testDb, actor, {
+      projectId: projectB.id,
+      title: "in-B",
+    });
+
+    // Read project A's Canvas but scope to a Node that lives in project B.
+    await expect(
+      getCanvas(testDb, null, { slug: projectA.slug, canvasNodeId: inB.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("returns an empty interior (not a not-found) for a valid leaf scope", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const leaf = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Leaf",
+    });
+
+    const canvas = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: leaf.id,
+    });
+
+    expect(canvas.interiorNodes).toEqual([]);
+    expect(canvas.breadcrumbs).toEqual([{ id: leaf.id, title: "Leaf" }]);
   });
 });
 

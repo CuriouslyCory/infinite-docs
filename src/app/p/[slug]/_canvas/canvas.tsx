@@ -18,7 +18,7 @@ import { Suspense, useCallback, useMemo } from "react";
 import { Toaster, toast } from "sonner";
 
 import { type EdgeDirection, type NodeKind } from "~/lib/schemas";
-import { type CanvasEdge, type CanvasNode } from "~/lib/types";
+import { type CanvasData, type CanvasEdge, type CanvasNode } from "~/lib/types";
 import { api } from "~/trpc/react";
 
 import { AddComponent } from "./add-component";
@@ -57,8 +57,6 @@ import {
 // React Flow perf guard.
 const nodeTypes = { component: ComponentNodeView };
 const edgeTypes = { connection: ConnectionEdgeView };
-
-type CanvasData = { interiorNodes: CanvasNode[]; interiorEdges: CanvasEdge[] };
 
 function toRFNode(n: CanvasNode): ComponentNode {
   return {
@@ -168,7 +166,11 @@ function CanvasInner({ slug, projectId }: { slug: string; projectId: string }) {
   const patchCanvas = useCallback(
     (patch: (prev: CanvasData) => Partial<CanvasData>) => {
       utils.architecture.getCanvas.setData(canvasInput, (old) => {
-        const base: CanvasData = old ?? { interiorNodes: [], interiorEdges: [] };
+        const base: CanvasData = old ?? {
+          interiorNodes: [],
+          interiorEdges: [],
+          breadcrumbs: [],
+        };
         return { ...base, ...patch(base) };
       });
     },
@@ -290,7 +292,12 @@ function CanvasInner({ slug, projectId }: { slug: string; projectId: string }) {
         const prev = byId.get(n.id);
         if (!prev) continue;
         if (prev.posX === n.position.x && prev.posY === n.position.y) continue;
-        changed.push({ id: n.id, prev, posX: n.position.x, posY: n.position.y });
+        changed.push({
+          id: n.id,
+          prev,
+          posX: n.position.x,
+          posY: n.position.y,
+        });
       }
       if (changed.length === 0) return;
 
@@ -314,7 +321,9 @@ function CanvasInner({ slug, projectId }: { slug: string; projectId: string }) {
         setNodes((ns) =>
           ns.map((n) => {
             const x = changed.find((ch) => ch.id === n.id);
-            return x ? { ...n, position: { x: x.prev.posX, y: x.prev.posY } } : n;
+            return x
+              ? { ...n, position: { x: x.prev.posX, y: x.prev.posY } }
+              : n;
           }),
         );
         patchCanvas((c) => ({
@@ -443,7 +452,8 @@ function CanvasInner({ slug, projectId }: { slug: string; projectId: string }) {
       setEdges((es) =>
         es.map((e) => {
           if (e.id !== id) return e;
-          const nextDirection = patch.direction ?? e.data?.direction ?? "FORWARD";
+          const nextDirection =
+            patch.direction ?? e.data?.direction ?? "FORWARD";
           const nextLabel =
             patch.label !== undefined ? patch.label : (e.data?.label ?? null);
           return {
