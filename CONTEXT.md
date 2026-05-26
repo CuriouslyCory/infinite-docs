@@ -38,11 +38,13 @@ The data-model representation of a Component: the stored graph vertex with
 `parentId` (its containing Component, or null at the **Project** root), plus
 `kind` (see **Component kind**), position (`posX`, `posY`), `documentation`, and a
 soft-delete column (`deletedAt`). Never surfaced to users by this name.
-*(The `Node` model, creation, scoped read (**getCanvas**), inline rename
-(`updateNode`, title only for now), batch position writes (`updatePositions`),
-and **Connection**/**Edge** wiring (see **Edge**) are realized now; broader
-Component editing (`kind`, `documentation`), reparenting (`move`) with cycle
-prevention, and cascading **soft-delete** land in later milestones.)*
+*(The `Node` model, creation (including child Components under a validated parent
+via `createNode` with a non-null `parentId`), scoped read at any depth
+(**getCanvas**, with **breadcrumbs**), inline rename (`updateNode`, title only for
+now), batch position writes (`updatePositions`), and **Connection**/**Edge**
+wiring (see **Edge**) are realized now; broader Component editing (`kind`,
+`documentation`), reparenting (`move`) with cycle prevention, and cascading
+**soft-delete** land in later milestones.)*
 
 ### Component kind (`NodeKind`)
 A Component's category, stored on its **Node** as `kind: NodeKind`. One of six
@@ -98,8 +100,8 @@ A **derived view, not a stored entity.** The Canvas of a Component `N` is
 top-level Canvas (the Nodes with `parentId = null`). Because it is derived, a Canvas is never
 written directly — you mutate Nodes and Edges, and the Canvas falls out. *(The Node half of
 the derivation is realized now via **getCanvas**, and the Edge half is realized now too
-(`{ Edges where canvasNodeId = N }`); navigating into non-root scopes still arrives with
-**Descent**.)*
+(`{ Edges where canvasNodeId = N }`); reading a non-root scope is realized now via
+**getCanvas**, while user-facing navigation into it arrives with **Descent**.)*
 
 ### getCanvas
 The single service read that materializes a **Canvas** for a given **Canvas
@@ -109,11 +111,13 @@ a per-level query walk. Because a Canvas is a *derived view*, `getCanvas` return
 the **Nodes** and **Edges** that fall out of the scope — it is the read half of
 the Component/Node split, so its result is named in **Node**/**Edge** terms in
 code and tests even though the feature is described to users as "the interior
-**Components**". *(Realized partially now — `getCanvas` returns `interiorNodes`
-and `interiorEdges` for a scope; `boundaryProxies` and `breadcrumbs` land with
-boundary derivation (M3) and Descent respectively. See ADR-0001 for the
-single-round-trip service contract, ADR-0004 for how the payload reaches the
-client island, and ADR-0005 for the explicit `canvasNodeId` Edge scope.)*
+**Components**". *(Realized partially now — `getCanvas` returns `interiorNodes`,
+`interiorEdges`, and `breadcrumbs` for a scope; `boundaryProxies` lands with
+boundary derivation (M3). A non-null scope that resolves to no live Node in the
+Project is a not-found. See ADR-0001 for the single-round-trip service contract,
+ADR-0004 for how the payload reaches the client island, ADR-0005 for the explicit
+`canvasNodeId` Edge scope, and ADR-0006 for the single recursive breadcrumb
+query.)*
 
 ### Canvas scope
 Which **Canvas** an operation is acting on. A Canvas has **no id of its own** (it
@@ -124,8 +128,21 @@ Component — represented as `parentId = null` in the data model and as the
 sentinel string `"root"` at the canvas-island boundary (ADR-0004 keys the island
 by scope so descending re-seeds the store). Use **scope** for this concept in
 prose and code; do not invent a `canvasId` (there is nothing to give an id to)
-and do not call it a "level", "context", or "view". *(The root scope is realized
-now; non-root scopes arrive with **Descent**.)*
+and do not call it a "level", "context", or "view". *(The root scope and reading
+at non-root scopes are realized now via **getCanvas**; user-facing navigation into
+non-root scopes arrives with **Descent**.)*
+
+### Breadcrumbs
+The ordered ancestor chain of a **Canvas scope**: the **Components** from the
+**Project** root down to, and including, the scope's own Component. Returned by
+**getCanvas** as `breadcrumbs`, named in **Node** terms in code (like
+`interiorNodes`) even though users see Components. Shape `{ id, title }[]`, ordered
+**root → current** (root-most first, the current scope last). The **root scope**
+has no Component, so its breadcrumbs are the empty array `[]` — no `"root"`
+sentinel lives inside the chain (that string is a canvas-island key, not data;
+ADR-0004). Computed in a **single recursive query**, never a per-level walk
+(ADR-0006). *(Realized now in the data layer ahead of **Descent** navigation; the
+Descent UI renders them later.)*
 
 ### Descent
 The act of opening a Component to enter its interior **Canvas**, moving one level deeper into
