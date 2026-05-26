@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CareerCraft Studio — an AI-powered career management platform that generates tailored resumes, cover letters, and compatibility analyses. Built with Next.js 16, tRPC, Prisma, and LangChain.
+Infinite Docs — a drag-and-drop tool for documenting software architecture as an infinitely-nestable graph. You place **Components** on a **Canvas** and link them with **Connections**; opening a Component descends into its own interior Canvas, recursing to any depth — from top-level infrastructure (hosts, databases, external APIs) down to internal services, modules, or tables. The external systems a Component connects to follow you inward as read-only **boundary proxies**, so dependency context is never lost on the way down. Every Component carries markdown documentation, the whole graph serializes to deterministic markdown for LLM consumption, and an authenticated MCP server lets AI agents read and maintain the architecture as they work on the system it describes. Built on the T3 stack (see Stack below).
 
 We have a few "philosophies" I want to make sure we honor throughout development:
 
