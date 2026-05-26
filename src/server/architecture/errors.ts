@@ -7,7 +7,11 @@
  * a framework.
  */
 
-export type ArchitectureErrorCode = "FORBIDDEN" | "NOT_FOUND";
+export type ArchitectureErrorCode =
+  | "FORBIDDEN"
+  | "NOT_FOUND"
+  | "CONFLICT"
+  | "BAD_REQUEST";
 
 export abstract class ArchitectureError extends Error {
   abstract readonly code: ArchitectureErrorCode;
@@ -28,5 +32,36 @@ export class NotFoundError extends ArchitectureError {
   constructor(message = "Resource not found.") {
     super(message);
     this.name = "NotFoundError";
+  }
+}
+
+/**
+ * A request that conflicts with the current state — e.g. drawing a Connection
+ * that already exists between the same source and target on the same Canvas
+ * (the de-dupe rule, ADR-0005). Distinct from a malformed request
+ * ({@link ValidationError}): the input is well-formed, but the operation is
+ * not allowed given what is already there.
+ */
+export class ConflictError extends ArchitectureError {
+  readonly code: ArchitectureErrorCode = "CONFLICT";
+
+  constructor(message = "That action conflicts with the current state.") {
+    super(message);
+    this.name = "ConflictError";
+  }
+}
+
+/**
+ * A semantically invalid request that Zod cannot catch on its own — e.g. a
+ * self-Connection (source === target) or endpoints that do not sit on the
+ * Canvas the Connection is drawn on (ADR-0005). The shape is valid; the meaning
+ * is not.
+ */
+export class ValidationError extends ArchitectureError {
+  readonly code: ArchitectureErrorCode = "BAD_REQUEST";
+
+  constructor(message = "That request is not valid.") {
+    super(message);
+    this.name = "ValidationError";
   }
 }

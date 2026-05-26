@@ -200,6 +200,7 @@ export type ProjectWhereInput = {
   deletedAt?: Prisma.DateTimeNullableFilter<"Project"> | Date | string | null
   owner?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
   nodes?: Prisma.NodeListRelationFilter
+  edges?: Prisma.EdgeListRelationFilter
 }
 
 export type ProjectOrderByWithRelationInput = {
@@ -212,6 +213,7 @@ export type ProjectOrderByWithRelationInput = {
   deletedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   owner?: Prisma.UserOrderByWithRelationInput
   nodes?: Prisma.NodeOrderByRelationAggregateInput
+  edges?: Prisma.EdgeOrderByRelationAggregateInput
 }
 
 export type ProjectWhereUniqueInput = Prisma.AtLeast<{
@@ -227,6 +229,7 @@ export type ProjectWhereUniqueInput = Prisma.AtLeast<{
   deletedAt?: Prisma.DateTimeNullableFilter<"Project"> | Date | string | null
   owner?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
   nodes?: Prisma.NodeListRelationFilter
+  edges?: Prisma.EdgeListRelationFilter
 }, "id" | "slug">
 
 export type ProjectOrderByWithAggregationInput = {
@@ -264,6 +267,7 @@ export type ProjectCreateInput = {
   deletedAt?: Date | string | null
   owner: Prisma.UserCreateNestedOneWithoutProjectsInput
   nodes?: Prisma.NodeCreateNestedManyWithoutProjectInput
+  edges?: Prisma.EdgeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateInput = {
@@ -275,6 +279,7 @@ export type ProjectUncheckedCreateInput = {
   updatedAt?: Date | string
   deletedAt?: Date | string | null
   nodes?: Prisma.NodeUncheckedCreateNestedManyWithoutProjectInput
+  edges?: Prisma.EdgeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUpdateInput = {
@@ -286,6 +291,7 @@ export type ProjectUpdateInput = {
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   owner?: Prisma.UserUpdateOneRequiredWithoutProjectsNestedInput
   nodes?: Prisma.NodeUpdateManyWithoutProjectNestedInput
+  edges?: Prisma.EdgeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateInput = {
@@ -297,6 +303,7 @@ export type ProjectUncheckedUpdateInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   nodes?: Prisma.NodeUncheckedUpdateManyWithoutProjectNestedInput
+  edges?: Prisma.EdgeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectCreateManyInput = {
@@ -429,6 +436,20 @@ export type ProjectUpdateOneRequiredWithoutNodesNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.ProjectUpdateToOneWithWhereWithoutNodesInput, Prisma.ProjectUpdateWithoutNodesInput>, Prisma.ProjectUncheckedUpdateWithoutNodesInput>
 }
 
+export type ProjectCreateNestedOneWithoutEdgesInput = {
+  create?: Prisma.XOR<Prisma.ProjectCreateWithoutEdgesInput, Prisma.ProjectUncheckedCreateWithoutEdgesInput>
+  connectOrCreate?: Prisma.ProjectCreateOrConnectWithoutEdgesInput
+  connect?: Prisma.ProjectWhereUniqueInput
+}
+
+export type ProjectUpdateOneRequiredWithoutEdgesNestedInput = {
+  create?: Prisma.XOR<Prisma.ProjectCreateWithoutEdgesInput, Prisma.ProjectUncheckedCreateWithoutEdgesInput>
+  connectOrCreate?: Prisma.ProjectCreateOrConnectWithoutEdgesInput
+  upsert?: Prisma.ProjectUpsertWithoutEdgesInput
+  connect?: Prisma.ProjectWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.ProjectUpdateToOneWithWhereWithoutEdgesInput, Prisma.ProjectUpdateWithoutEdgesInput>, Prisma.ProjectUncheckedUpdateWithoutEdgesInput>
+}
+
 export type ProjectCreateWithoutOwnerInput = {
   id?: string
   title: string
@@ -437,6 +458,7 @@ export type ProjectCreateWithoutOwnerInput = {
   updatedAt?: Date | string
   deletedAt?: Date | string | null
   nodes?: Prisma.NodeCreateNestedManyWithoutProjectInput
+  edges?: Prisma.EdgeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateWithoutOwnerInput = {
@@ -447,6 +469,7 @@ export type ProjectUncheckedCreateWithoutOwnerInput = {
   updatedAt?: Date | string
   deletedAt?: Date | string | null
   nodes?: Prisma.NodeUncheckedCreateNestedManyWithoutProjectInput
+  edges?: Prisma.EdgeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectCreateOrConnectWithoutOwnerInput = {
@@ -496,6 +519,7 @@ export type ProjectCreateWithoutNodesInput = {
   updatedAt?: Date | string
   deletedAt?: Date | string | null
   owner: Prisma.UserCreateNestedOneWithoutProjectsInput
+  edges?: Prisma.EdgeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateWithoutNodesInput = {
@@ -506,6 +530,7 @@ export type ProjectUncheckedCreateWithoutNodesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  edges?: Prisma.EdgeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectCreateOrConnectWithoutNodesInput = {
@@ -532,6 +557,7 @@ export type ProjectUpdateWithoutNodesInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   owner?: Prisma.UserUpdateOneRequiredWithoutProjectsNestedInput
+  edges?: Prisma.EdgeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateWithoutNodesInput = {
@@ -542,6 +568,67 @@ export type ProjectUncheckedUpdateWithoutNodesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  edges?: Prisma.EdgeUncheckedUpdateManyWithoutProjectNestedInput
+}
+
+export type ProjectCreateWithoutEdgesInput = {
+  id?: string
+  title: string
+  slug: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  deletedAt?: Date | string | null
+  owner: Prisma.UserCreateNestedOneWithoutProjectsInput
+  nodes?: Prisma.NodeCreateNestedManyWithoutProjectInput
+}
+
+export type ProjectUncheckedCreateWithoutEdgesInput = {
+  id?: string
+  title: string
+  slug: string
+  ownerId: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  deletedAt?: Date | string | null
+  nodes?: Prisma.NodeUncheckedCreateNestedManyWithoutProjectInput
+}
+
+export type ProjectCreateOrConnectWithoutEdgesInput = {
+  where: Prisma.ProjectWhereUniqueInput
+  create: Prisma.XOR<Prisma.ProjectCreateWithoutEdgesInput, Prisma.ProjectUncheckedCreateWithoutEdgesInput>
+}
+
+export type ProjectUpsertWithoutEdgesInput = {
+  update: Prisma.XOR<Prisma.ProjectUpdateWithoutEdgesInput, Prisma.ProjectUncheckedUpdateWithoutEdgesInput>
+  create: Prisma.XOR<Prisma.ProjectCreateWithoutEdgesInput, Prisma.ProjectUncheckedCreateWithoutEdgesInput>
+  where?: Prisma.ProjectWhereInput
+}
+
+export type ProjectUpdateToOneWithWhereWithoutEdgesInput = {
+  where?: Prisma.ProjectWhereInput
+  data: Prisma.XOR<Prisma.ProjectUpdateWithoutEdgesInput, Prisma.ProjectUncheckedUpdateWithoutEdgesInput>
+}
+
+export type ProjectUpdateWithoutEdgesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  owner?: Prisma.UserUpdateOneRequiredWithoutProjectsNestedInput
+  nodes?: Prisma.NodeUpdateManyWithoutProjectNestedInput
+}
+
+export type ProjectUncheckedUpdateWithoutEdgesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  title?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  ownerId?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  nodes?: Prisma.NodeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectCreateManyOwnerInput = {
@@ -561,6 +648,7 @@ export type ProjectUpdateWithoutOwnerInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   nodes?: Prisma.NodeUpdateManyWithoutProjectNestedInput
+  edges?: Prisma.EdgeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateWithoutOwnerInput = {
@@ -571,6 +659,7 @@ export type ProjectUncheckedUpdateWithoutOwnerInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   nodes?: Prisma.NodeUncheckedUpdateManyWithoutProjectNestedInput
+  edges?: Prisma.EdgeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateManyWithoutOwnerInput = {
@@ -589,10 +678,12 @@ export type ProjectUncheckedUpdateManyWithoutOwnerInput = {
 
 export type ProjectCountOutputType = {
   nodes: number
+  edges: number
 }
 
 export type ProjectCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   nodes?: boolean | ProjectCountOutputTypeCountNodesArgs
+  edges?: boolean | ProjectCountOutputTypeCountEdgesArgs
 }
 
 /**
@@ -612,6 +703,13 @@ export type ProjectCountOutputTypeCountNodesArgs<ExtArgs extends runtime.Types.E
   where?: Prisma.NodeWhereInput
 }
 
+/**
+ * ProjectCountOutputType without action
+ */
+export type ProjectCountOutputTypeCountEdgesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.EdgeWhereInput
+}
+
 
 export type ProjectSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -623,6 +721,7 @@ export type ProjectSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   deletedAt?: boolean
   owner?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   nodes?: boolean | Prisma.Project$nodesArgs<ExtArgs>
+  edges?: boolean | Prisma.Project$edgesArgs<ExtArgs>
   _count?: boolean | Prisma.ProjectCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["project"]>
 
@@ -662,6 +761,7 @@ export type ProjectOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
 export type ProjectInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   owner?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   nodes?: boolean | Prisma.Project$nodesArgs<ExtArgs>
+  edges?: boolean | Prisma.Project$edgesArgs<ExtArgs>
   _count?: boolean | Prisma.ProjectCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type ProjectIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -676,6 +776,7 @@ export type $ProjectPayload<ExtArgs extends runtime.Types.Extensions.InternalArg
   objects: {
     owner: Prisma.$UserPayload<ExtArgs>
     nodes: Prisma.$NodePayload<ExtArgs>[]
+    edges: Prisma.$EdgePayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -1081,6 +1182,7 @@ export interface Prisma__ProjectClient<T, Null = never, ExtArgs extends runtime.
   readonly [Symbol.toStringTag]: "PrismaPromise"
   owner<T extends Prisma.UserDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.UserDefaultArgs<ExtArgs>>): Prisma.Prisma__UserClient<runtime.Types.Result.GetResult<Prisma.$UserPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
   nodes<T extends Prisma.Project$nodesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Project$nodesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$NodePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  edges<T extends Prisma.Project$edgesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Project$edgesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$EdgePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1539,6 +1641,30 @@ export type Project$nodesArgs<ExtArgs extends runtime.Types.Extensions.InternalA
   take?: number
   skip?: number
   distinct?: Prisma.NodeScalarFieldEnum | Prisma.NodeScalarFieldEnum[]
+}
+
+/**
+ * Project.edges
+ */
+export type Project$edgesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the Edge
+   */
+  select?: Prisma.EdgeSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the Edge
+   */
+  omit?: Prisma.EdgeOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.EdgeInclude<ExtArgs> | null
+  where?: Prisma.EdgeWhereInput
+  orderBy?: Prisma.EdgeOrderByWithRelationInput | Prisma.EdgeOrderByWithRelationInput[]
+  cursor?: Prisma.EdgeWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.EdgeScalarFieldEnum | Prisma.EdgeScalarFieldEnum[]
 }
 
 /**

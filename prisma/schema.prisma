@@ -77,6 +77,7 @@ model Project {
     updatedAt DateTime  @updatedAt
     deletedAt DateTime?
     nodes     Node[]
+    edges     Edge[]
 
     @@index([ownerId])
 }
@@ -92,6 +93,17 @@ enum NodeKind {
     EXTERNAL_API
     HOST
     QUEUE
+}
+
+// Cosmetic orientation of a Connection: drives only how it is drawn (no
+// arrowhead / one / two), never behaviour or de-duplication (see CONTEXT.md
+// "Edge direction"). Mirrored by the Zod enum `edgeDirection` in ~/lib/schemas,
+// the client-safe source of truth; a compile-time parity guard in edge.service
+// keeps the two in lockstep.
+enum EdgeDirection {
+    NONE
+    FORWARD
+    BIDIRECTIONAL
 }
 
 // The data-model representation of a Component (see CONTEXT.md "Component / Node
@@ -116,8 +128,49 @@ model Node {
     updatedAt     DateTime  @updatedAt
     deletedAt     DateTime?
 
+    // Edges are scoped to a Canvas by an explicit `canvasNodeId` and reference
+    // their endpoints by `sourceId`/`targetId`; three relations to one model
+    // force Prisma's named-relation disambiguation (see ADR-0005).
+    edgesOnCanvas Edge[]    @relation("EdgesOnCanvas")
+    outgoingEdges Edge[]    @relation("EdgesFromNode")
+    incomingEdges Edge[]    @relation("EdgesToNode")
+
     @@index([projectId, parentId])
     @@index([parentId])
+}
+
+// The data-model representation of a Connection (see CONTEXT.md "Connection /
+// Edge split"); never surfaced to users by this name. Its Canvas is the
+// EXPLICIT `canvasNodeId` (the Component whose interior Canvas owns it; null =
+// the Project root) — recorded, NOT inferred from the endpoints, so a future
+// refinement Connection can legitimately span scope levels (ADR-0005). The
+// three invariants — both endpoints on the same Canvas, no self-link, and no
+// duplicate ACTIVE Edge sharing source+target+scope — are enforced in
+// `connectNodes`, NOT by database constraints: do not add an `@@unique` here
+// (it would also wrongly forbid re-creating a soft-deleted Connection;
+// ADR-0005). The FK cascades are the hard-delete backstop only — the normal
+// removal path is soft-delete via `deletedAt`. `label` is untrusted user
+// content; `direction` is cosmetic (CONTEXT.md "Edge direction").
+model Edge {
+    id           String        @id @default(cuid())
+    projectId    String
+    project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    canvasNodeId String?
+    canvasNode   Node?         @relation("EdgesOnCanvas", fields: [canvasNodeId], references: [id], onDelete: Cascade)
+    sourceId     String
+    source       Node          @relation("EdgesFromNode", fields: [sourceId], references: [id], onDelete: Cascade)
+    targetId     String
+    target       Node          @relation("EdgesToNode", fields: [targetId], references: [id], onDelete: Cascade)
+    label        String?
+    direction    EdgeDirection @default(FORWARD)
+    createdAt    DateTime      @default(now())
+    updatedAt    DateTime      @updatedAt
+    deletedAt    DateTime?
+
+    @@index([projectId, canvasNodeId])
+    @@index([canvasNodeId, sourceId, targetId, deletedAt])
+    @@index([sourceId])
+    @@index([targetId])
 }
 
 model VerificationToken {

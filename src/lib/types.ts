@@ -18,3 +18,7 @@ export type ProjectListItem =
 /** A single Component as the Canvas read returns it (a data-layer Node). */
 export type CanvasNode =
   RouterOutputs["architecture"]["getCanvas"]["interiorNodes"][number];
+
+/** A single Connection as the Canvas read returns it (a data-layer Edge). */
+export type CanvasEdge =
+  RouterOutputs["architecture"]["getCanvas"]["interiorEdges"][number];

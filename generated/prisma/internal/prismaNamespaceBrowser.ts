@@ -57,6 +57,7 @@ export const ModelName = {
   User: 'User',
   Project: 'Project',
   Node: 'Node',
+  Edge: 'Edge',
   VerificationToken: 'VerificationToken'
 } as const
 
@@ -156,6 +157,22 @@ export const NodeScalarFieldEnum = {
 } as const
 
 export type NodeScalarFieldEnum = (typeof NodeScalarFieldEnum)[keyof typeof NodeScalarFieldEnum]
+
+
+export const EdgeScalarFieldEnum = {
+  id: 'id',
+  projectId: 'projectId',
+  canvasNodeId: 'canvasNodeId',
+  sourceId: 'sourceId',
+  targetId: 'targetId',
+  label: 'label',
+  direction: 'direction',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+  deletedAt: 'deletedAt'
+} as const
+
+export type EdgeScalarFieldEnum = (typeof EdgeScalarFieldEnum)[keyof typeof EdgeScalarFieldEnum]
 
 
 export const VerificationTokenScalarFieldEnum = {
