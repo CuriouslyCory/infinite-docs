@@ -9,7 +9,13 @@
 * 🟢 You can import this file directly.
 */
 
+export const NodeKind = {
+  GENERIC: 'GENERIC',
+  SERVICE: 'SERVICE',
+  DATABASE: 'DATABASE',
+  EXTERNAL_API: 'EXTERNAL_API',
+  HOST: 'HOST',
+  QUEUE: 'QUEUE'
+} as const
 
-
-// This file is empty because there are no enums in the schema.
-export {}
+export type NodeKind = (typeof NodeKind)[keyof typeof NodeKind]

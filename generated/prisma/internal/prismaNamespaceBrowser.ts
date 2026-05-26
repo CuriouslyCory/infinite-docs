@@ -56,6 +56,7 @@ export const ModelName = {
   Session: 'Session',
   User: 'User',
   Project: 'Project',
+  Node: 'Node',
   VerificationToken: 'VerificationToken'
 } as const
 
@@ -139,6 +140,24 @@ export const ProjectScalarFieldEnum = {
 export type ProjectScalarFieldEnum = (typeof ProjectScalarFieldEnum)[keyof typeof ProjectScalarFieldEnum]
 
 
+export const NodeScalarFieldEnum = {
+  id: 'id',
+  projectId: 'projectId',
+  parentId: 'parentId',
+  title: 'title',
+  kind: 'kind',
+  posX: 'posX',
+  posY: 'posY',
+  documentation: 'documentation',
+  metadata: 'metadata',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+  deletedAt: 'deletedAt'
+} as const
+
+export type NodeScalarFieldEnum = (typeof NodeScalarFieldEnum)[keyof typeof NodeScalarFieldEnum]
+
+
 export const VerificationTokenScalarFieldEnum = {
   identifier: 'identifier',
   token: 'token',
@@ -156,6 +175,14 @@ export const SortOrder = {
 export type SortOrder = (typeof SortOrder)[keyof typeof SortOrder]
 
 
+export const NullableJsonNullValueInput = {
+  DbNull: DbNull,
+  JsonNull: JsonNull
+} as const
+
+export type NullableJsonNullValueInput = (typeof NullableJsonNullValueInput)[keyof typeof NullableJsonNullValueInput]
+
+
 export const QueryMode = {
   default: 'default',
   insensitive: 'insensitive'
@@ -170,4 +197,13 @@ export const NullsOrder = {
 } as const
 
 export type NullsOrder = (typeof NullsOrder)[keyof typeof NullsOrder]
+
+
+export const JsonNullValueFilter = {
+  DbNull: DbNull,
+  JsonNull: JsonNull,
+  AnyNull: AnyNull
+} as const
+
+export type JsonNullValueFilter = (typeof JsonNullValueFilter)[keyof typeof JsonNullValueFilter]
 

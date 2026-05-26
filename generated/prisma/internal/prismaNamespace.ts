@@ -389,6 +389,7 @@ export const ModelName = {
   Session: 'Session',
   User: 'User',
   Project: 'Project',
+  Node: 'Node',
   VerificationToken: 'VerificationToken'
 } as const
 
@@ -405,7 +406,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "post" | "account" | "session" | "user" | "project" | "verificationToken"
+    modelProps: "post" | "account" | "session" | "user" | "project" | "node" | "verificationToken"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -779,6 +780,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    Node: {
+      payload: Prisma.$NodePayload<ExtArgs>
+      fields: Prisma.NodeFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.NodeFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.NodeFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload>
+        }
+        findFirst: {
+          args: Prisma.NodeFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.NodeFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload>
+        }
+        findMany: {
+          args: Prisma.NodeFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload>[]
+        }
+        create: {
+          args: Prisma.NodeCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload>
+        }
+        createMany: {
+          args: Prisma.NodeCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.NodeCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload>[]
+        }
+        delete: {
+          args: Prisma.NodeDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload>
+        }
+        update: {
+          args: Prisma.NodeUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload>
+        }
+        deleteMany: {
+          args: Prisma.NodeDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.NodeUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.NodeUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload>[]
+        }
+        upsert: {
+          args: Prisma.NodeUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$NodePayload>
+        }
+        aggregate: {
+          args: Prisma.NodeAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateNode>
+        }
+        groupBy: {
+          args: Prisma.NodeGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.NodeGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.NodeCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.NodeCountAggregateOutputType> | number
+        }
+      }
+    }
     VerificationToken: {
       payload: Prisma.$VerificationTokenPayload<ExtArgs>
       fields: Prisma.VerificationTokenFieldRefs
@@ -956,6 +1031,24 @@ export const ProjectScalarFieldEnum = {
 export type ProjectScalarFieldEnum = (typeof ProjectScalarFieldEnum)[keyof typeof ProjectScalarFieldEnum]
 
 
+export const NodeScalarFieldEnum = {
+  id: 'id',
+  projectId: 'projectId',
+  parentId: 'parentId',
+  title: 'title',
+  kind: 'kind',
+  posX: 'posX',
+  posY: 'posY',
+  documentation: 'documentation',
+  metadata: 'metadata',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+  deletedAt: 'deletedAt'
+} as const
+
+export type NodeScalarFieldEnum = (typeof NodeScalarFieldEnum)[keyof typeof NodeScalarFieldEnum]
+
+
 export const VerificationTokenScalarFieldEnum = {
   identifier: 'identifier',
   token: 'token',
@@ -973,6 +1066,14 @@ export const SortOrder = {
 export type SortOrder = (typeof SortOrder)[keyof typeof SortOrder]
 
 
+export const NullableJsonNullValueInput = {
+  DbNull: DbNull,
+  JsonNull: JsonNull
+} as const
+
+export type NullableJsonNullValueInput = (typeof NullableJsonNullValueInput)[keyof typeof NullableJsonNullValueInput]
+
+
 export const QueryMode = {
   default: 'default',
   insensitive: 'insensitive'
@@ -987,6 +1088,15 @@ export const NullsOrder = {
 } as const
 
 export type NullsOrder = (typeof NullsOrder)[keyof typeof NullsOrder]
+
+
+export const JsonNullValueFilter = {
+  DbNull: DbNull,
+  JsonNull: JsonNull,
+  AnyNull: AnyNull
+} as const
+
+export type JsonNullValueFilter = (typeof JsonNullValueFilter)[keyof typeof JsonNullValueFilter]
 
 
 
@@ -1038,6 +1148,20 @@ export type ListDateTimeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaM
 
 
 /**
+ * Reference to a field of type 'NodeKind'
+ */
+export type EnumNodeKindFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'NodeKind'>
+    
+
+
+/**
+ * Reference to a field of type 'NodeKind[]'
+ */
+export type ListEnumNodeKindFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'NodeKind[]'>
+    
+
+
+/**
  * Reference to a field of type 'Float'
  */
 export type FloatFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Float'>
@@ -1048,6 +1172,20 @@ export type FloatFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, '
  * Reference to a field of type 'Float[]'
  */
 export type ListFloatFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Float[]'>
+    
+
+
+/**
+ * Reference to a field of type 'Json'
+ */
+export type JsonFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Json'>
+    
+
+
+/**
+ * Reference to a field of type 'QueryMode'
+ */
+export type EnumQueryModeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'QueryMode'>
     
 
 /**
@@ -1165,6 +1303,7 @@ export type GlobalOmitConfig = {
   session?: Prisma.SessionOmit
   user?: Prisma.UserOmit
   project?: Prisma.ProjectOmit
+  node?: Prisma.NodeOmit
   verificationToken?: Prisma.VerificationTokenOmit
 }
 
