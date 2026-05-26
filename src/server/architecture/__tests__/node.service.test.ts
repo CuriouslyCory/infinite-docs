@@ -153,7 +153,7 @@ describe("createNode", () => {
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 
-  it("rejects a non-owner creating a child (authz precedes the parent check)", async () => {
+  it("rejects a non-owner creating a child even under a live parent", async () => {
     const owner = await makeUser("Owner");
     const ownerActor: Actor = { userId: owner.id, via: "session" };
     const project = await makeProject(owner.id);
@@ -167,6 +167,24 @@ describe("createNode", () => {
       createNode(testDb, intruder, {
         projectId: project.id,
         parentId: parent.id,
+        title: "Child",
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("rejects a non-owner before the parent lookup, even for a missing parent (authz precedes the parent check)", async () => {
+    const owner = await makeUser("Owner");
+    const project = await makeProject(owner.id);
+    const intruder: Actor = { userId: "intruder" };
+
+    // A missing parentId under unauthorized credentials must surface as
+    // ForbiddenError, never NotFoundError: assertCanWrite runs before the parent
+    // lookup, so an intruder never reaches it and never learns whether a parent
+    // exists. Flip that order and this test throws NotFoundError and fails.
+    await expect(
+      createNode(testDb, intruder, {
+        projectId: project.id,
+        parentId: "nope",
         title: "Child",
       }),
     ).rejects.toBeInstanceOf(ForbiddenError);
