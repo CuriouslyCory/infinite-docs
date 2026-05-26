@@ -1,35 +1,157 @@
-# Create T3 App
+# Infinite Docs
 
-This is a [T3 Stack](https://create.t3.gg/) project bootstrapped with `create-t3-app`.
+A drag-and-drop tool for documenting software architecture as an **infinitely-nestable graph**.
 
-## What's next? How do I make an app with this?
+You place **Components** on a **Canvas** and link them with **Connections**. Opening a Component
+descends into its own interior Canvas, recursing to any depth — from top-level infrastructure
+(hosts, databases, external APIs) down to internal services, modules, or individual tables. The
+external systems a Component connects to follow you inward as read-only **boundary proxies**, so
+dependency context is never lost on the way down. Every Component carries markdown documentation,
+the whole graph serializes to deterministic markdown for LLM consumption, and an authenticated
+**MCP server** lets AI agents read and maintain the architecture as they work on the system it
+describes.
 
-We try to keep this project as simple as possible, so you can start with just the scaffolding we set up for you, and add additional things later when they become necessary.
+## Why
 
-If you are not familiar with the different technologies used in this project, please refer to the respective docs. If you still are in the wind, please join our [Discord](https://t3.gg/discord) and ask for help.
+Existing tools force a choice no one should have to make:
 
-- [Next.js](https://nextjs.org)
-- [NextAuth.js](https://next-auth.js.org)
-- [Prisma](https://prisma.io)
-- [Drizzle](https://orm.drizzle.team)
-- [Tailwind CSS](https://tailwindcss.com)
-- [tRPC](https://trpc.io)
+- **Static diagrams** (Visio, Lucid, draw.io) produce pictures that rot the moment the system
+  changes, can't be drilled into, and carry no real documentation.
+- **Text docs and wikis** capture detail but lose the spatial, relational picture — you can't
+  *see* how infrastructure, services, and data connect.
+- **Neither feeds cleanly into an LLM**, and none let an AI agent *read and maintain* the
+  architecture as it works on the actual system.
 
-## Learn More
+Infinite Docs is a single place to model a system at *any depth*, keep it alive as the system
+evolves, and hand it to both people and agents as a first-class artifact.
 
-To learn more about the [T3 Stack](https://create.t3.gg/), take a look at the following resources:
+## Core concepts
 
-- [Documentation](https://create.t3.gg/)
-- [Learn the T3 Stack](https://create.t3.gg/en/faq#what-learning-resources-are-currently-available) — Check out these awesome tutorials
+[`CONTEXT.md`](CONTEXT.md) is the binding glossary — the source of truth for vocabulary. The
+essentials:
 
-You can check out the [create-t3-app GitHub repository](https://github.com/t3-oss/create-t3-app) — your feedback and contributions are welcome!
+| Term | What it is |
+| --- | --- |
+| **Component** / Node | The unit of architecture you place, name, document, and open. *Component* is the user-facing word; *Node* is its data-model name. |
+| **Connection** / Edge | A link between two Components. *Connection* is user-facing; *Edge* is the data-model name. |
+| **Canvas** | A *derived* view — the Components and Connections that live under one parent. Never stored directly. |
+| **Descent** | Opening a Component to enter its interior Canvas, one level deeper, recursing to any depth. |
+| **Boundary proxy** | A read-only stand-in for an external system a parent depends on, projected inward and inherited transitively down the subtree. |
+| **Project** | The root container of one architecture graph, owned by a single user. |
+| **Capability URL** | An unguessable per-Project slug whose mere possession grants read access. Mutations always require the signed-in owner. |
+| **Service layer** | The single deep module — `(db, actor, input) => result` — that is the only home for business logic and authorization. tRPC and MCP are thin adapters over it. |
 
-## Running tests
+The `Component`/`Node` and `Connection`/`Edge` split is deliberate: "node" is overloaded in this
+stack (Node.js, the canvas library), so humans and agents say **Component**/**Connection** while
+the schema, services, and graph algorithms say **Node**/**Edge**.
+
+## Project status
+
+The product is sequenced across milestones M0–M5; the full vision lives in the PRD
+([issue #2](https://github.com/CuriouslyCory/infinite-docs/issues/2)).
+
+| Milestone | Scope | Status |
+| --- | --- | --- |
+| **M0** | Data model + `(db, actor, input)` service layer + Vitest harness | Complete |
+| **M1** | First nested Canvas: create / drag / connect / rename / descend, soft-delete + undo | In progress |
+| **M2** | Markdown export + in-app documentation editor | Planned |
+| **M3** | Boundary propagation (read-only proxies, inherited transitively) | Planned |
+| **M4** | MCP server: agent tokens, tools, resources, `llms.txt`, "Connect an agent" | Planned |
+| **M5** | Refinement-edge wiring, auto-layout, sharing polish | Planned |
+
+**Working today:** sign in with Discord, create and list Projects, open a Project by its
+capability URL, and on its root Canvas add Components (six kinds — service, database, external
+API, host, queue, generic), drag them, rename them inline, and draw / label / direct / remove
+Connections. Every edit is optimistic — it appears instantly and persists in the background, with
+rollback and a toast on failure. **In progress for M1:** descending into a Component's interior
+Canvas (breadcrumb navigation) and cascading soft-delete with undo.
+
+## Stack
+
+T3 Stack: **Next.js 16** (App Router + React Server Components), **tRPC v11**, **Prisma 7**
+(PostgreSQL), **NextAuth v5** (Discord), **Tailwind v4**, **TypeScript** (strict), **Zod**, and
+**React Flow** ([`@xyflow/react`](https://reactflow.dev)) for the Canvas. Package manager is
+**pnpm** (pinned in `packageManager`).
+
+A few architectural notes worth knowing before you dig in:
+
+- The **Prisma client is generated to `generated/prisma`** (committed to git), not `node_modules`.
+  Always go through the singleton at `~/server/db` — never import `@prisma/client` directly.
+- **Environment variables are schema-validated** in `src/env.js` (`@t3-oss/env-nextjs` + Zod); an
+  invalid or missing var fails the build.
+- The **Canvas is a client-only island** — dynamically imported with SSR disabled, since the
+  diagramming library is not server-renderable (see [ADR-0004](docs/adr/0004-canvas-ssr-disabled-island.md)).
+
+## Getting started
+
+**Prerequisites:** Node.js, [pnpm](https://pnpm.io), and PostgreSQL (a local instance, Docker, or
+a hosted branch such as [Neon](https://neon.tech)).
+
+1. **Install dependencies** (also runs `prisma generate` via `postinstall`):
+
+   ```bash
+   pnpm install
+   ```
+
+2. **Configure environment.** Copy the example and fill it in:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   - `AUTH_SECRET` — generate one with `npx auth secret`.
+   - `AUTH_DISCORD_ID` / `AUTH_DISCORD_SECRET` — from a
+     [Discord OAuth application](https://discord.com/developers/applications).
+   - `DATABASE_URL` — your Postgres connection string.
+
+3. **Start Postgres** (skip if you already have one). The bundled script spins up a local
+   container:
+
+   ```bash
+   ./start-database.sh
+   ```
+
+4. **Push the schema** to your database:
+
+   ```bash
+   pnpm db:push
+   ```
+
+5. **Run the dev server:**
+
+   ```bash
+   pnpm dev
+   ```
+
+   Open the app, sign in with Discord, create a Project, and start modeling on its Canvas.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `pnpm dev` | Dev server (Turbopack) |
+| `pnpm check` | `eslint .` + `tsc --noEmit` — the primary validation gate |
+| `pnpm typecheck` | Types only |
+| `pnpm lint` / `pnpm lint:fix` | ESLint |
+| `pnpm format:write` / `pnpm format:check` | Prettier |
+| `pnpm test` / `pnpm test:watch` | Vitest (see below) |
+| `pnpm build` / `pnpm preview` | Production build / build + start |
+| `pnpm db:push` | Push schema to the DB without a migration (fast iteration) |
+| `pnpm db:generate` | Create + apply a migration, then refresh the client |
+| `pnpm db:migrate` | Apply migrations (production) |
+| `pnpm db:studio` | Prisma Studio |
+
+> `pnpm check` cannot catch a client/server bundle leak or a query waterfall — for Canvas and
+> data-layer changes, **verify by running the app**, not just by checking.
+
+## Testing
 
 Tests run with [Vitest](https://vitest.dev) against a **real, isolated Postgres** database — not
-mocks. Each test truncates the database to start clean, so tests must use a **separate** database
-from your dev data. See [ADR-0003](docs/adr/0003-vitest-test-harness-and-db-isolation.md) for the
-rationale.
+mocks. The `(db, actor, input)` service layer is the deliberate testable seam: tests inject a real
+database and exercise services directly, asserting *external behavior* (returned value + resulting
+database state), never internal query structure. Each test truncates the database to start clean,
+so tests must use a **separate** database from your dev data. See
+[ADR-0003](docs/adr/0003-vitest-test-harness-and-db-isolation.md) for the rationale.
 
 1. **Configure the test database.** Copy `.env.test.example` to `.env.test` and set its
    `DATABASE_URL` to a database **separate** from the one in `.env` — a local database or a
@@ -55,6 +177,26 @@ rationale.
    Vitest's global setup syncs the schema to the test database with `prisma db push` before the
    suite runs, so there is no separate migrate step.
 
-## How do I deploy this?
+## Project layout
 
-Follow our deployment guides for [Vercel](https://create.t3.gg/en/deployment/vercel), [Netlify](https://create.t3.gg/en/deployment/netlify) and [Docker](https://create.t3.gg/en/deployment/docker) for more information.
+- `src/server/architecture/` — the **service layer** (`project`, `node`, `edge` services, plus
+  `access`, `actor`, `slug`, and error mapping). The only home for business logic and authorization.
+- `src/server/api/routers/architecture.ts` — the tRPC adapter: resolves an `actor`, calls the
+  service, maps domain errors to `TRPCError`s. No business logic here.
+- `src/lib/schemas.ts` — Zod input schemas, importable as values from client code without pulling
+  in the server graph.
+- `src/app/p/[slug]/` — the Project route and the Canvas island (React Flow custom nodes/edges).
+- `prisma/schema.prisma` — the `Project` / `Node` / `Edge` models and the `NodeKind` /
+  `EdgeDirection` enums.
+- [`CONTEXT.md`](CONTEXT.md) — the binding glossary.
+- [`docs/adr/`](docs/adr/) — architecture decision records (service layer, capability-URL sharing,
+  test harness, Canvas island, edge scope & invariants).
+- [`docs/agents/`](docs/agents/) — agent workflow docs (issue tracker, triage labels, domain docs).
+
+## Deploying
+
+Follow the T3 deployment guides for [Vercel](https://create.t3.gg/en/deployment/vercel),
+[Netlify](https://create.t3.gg/en/deployment/netlify), or
+[Docker](https://create.t3.gg/en/deployment/docker). Remember that `src/env.js` validates every
+environment variable at build time — set `SKIP_ENV_VALIDATION` to bypass it (e.g. in Docker
+builds where vars are injected at runtime).
