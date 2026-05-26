@@ -168,6 +168,7 @@ model Edge {
     deletedAt    DateTime?
 
     @@index([projectId, canvasNodeId])
+    @@index([canvasNodeId, sourceId, targetId, deletedAt])
     @@index([sourceId])
     @@index([targetId])
 }

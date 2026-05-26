@@ -53,11 +53,13 @@ database constraints.** The function loads the endpoints, then:
 matched only against non-soft-deleted Edges.** Consequences of that precise
 definition:
 
-- `A → B` is a **distinct** Connection from `B → A`. The drawn direction is part
-  of the Edge's identity.
-- `label` and `direction` do **not** factor into duplicate-ness. Re-drawing
-  `A → B` with a different arrowhead or label is the user editing the existing
-  Connection (via `updateEdge`), not creating a second one.
+- `A → B` is a **distinct** Connection from `B → A` — distinctness is the
+  *ordered pair of endpoints* (which Node is `sourceId`, which is `targetId`),
+  not any rendered metadata.
+- The cosmetic `direction` (arrowheads) and `label` do **not** factor into
+  duplicate-ness. Re-drawing `A → B` with a different arrowhead or label is the
+  user editing the existing Connection (via `updateEdge`), not creating a second
+  one.
 - A soft-deleted Edge never blocks re-creation, so erase-and-redraw works.
 
 A database **partial unique index** (`WHERE deletedAt IS NULL`) to harden the
