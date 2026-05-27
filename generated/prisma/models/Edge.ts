@@ -35,6 +35,7 @@ export type EdgeMinAggregateOutputType = {
   createdAt: Date | null
   updatedAt: Date | null
   deletedAt: Date | null
+  deletionId: string | null
 }
 
 export type EdgeMaxAggregateOutputType = {
@@ -48,6 +49,7 @@ export type EdgeMaxAggregateOutputType = {
   createdAt: Date | null
   updatedAt: Date | null
   deletedAt: Date | null
+  deletionId: string | null
 }
 
 export type EdgeCountAggregateOutputType = {
@@ -61,6 +63,7 @@ export type EdgeCountAggregateOutputType = {
   createdAt: number
   updatedAt: number
   deletedAt: number
+  deletionId: number
   _all: number
 }
 
@@ -76,6 +79,7 @@ export type EdgeMinAggregateInputType = {
   createdAt?: true
   updatedAt?: true
   deletedAt?: true
+  deletionId?: true
 }
 
 export type EdgeMaxAggregateInputType = {
@@ -89,6 +93,7 @@ export type EdgeMaxAggregateInputType = {
   createdAt?: true
   updatedAt?: true
   deletedAt?: true
+  deletionId?: true
 }
 
 export type EdgeCountAggregateInputType = {
@@ -102,6 +107,7 @@ export type EdgeCountAggregateInputType = {
   createdAt?: true
   updatedAt?: true
   deletedAt?: true
+  deletionId?: true
   _all?: true
 }
 
@@ -188,6 +194,7 @@ export type EdgeGroupByOutputType = {
   createdAt: Date
   updatedAt: Date
   deletedAt: Date | null
+  deletionId: string | null
   _count: EdgeCountAggregateOutputType | null
   _min: EdgeMinAggregateOutputType | null
   _max: EdgeMaxAggregateOutputType | null
@@ -222,6 +229,7 @@ export type EdgeWhereInput = {
   createdAt?: Prisma.DateTimeFilter<"Edge"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Edge"> | Date | string
   deletedAt?: Prisma.DateTimeNullableFilter<"Edge"> | Date | string | null
+  deletionId?: Prisma.StringNullableFilter<"Edge"> | string | null
   project?: Prisma.XOR<Prisma.ProjectScalarRelationFilter, Prisma.ProjectWhereInput>
   canvasNode?: Prisma.XOR<Prisma.NodeNullableScalarRelationFilter, Prisma.NodeWhereInput> | null
   source?: Prisma.XOR<Prisma.NodeScalarRelationFilter, Prisma.NodeWhereInput>
@@ -239,6 +247,7 @@ export type EdgeOrderByWithRelationInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   deletedAt?: Prisma.SortOrderInput | Prisma.SortOrder
+  deletionId?: Prisma.SortOrderInput | Prisma.SortOrder
   project?: Prisma.ProjectOrderByWithRelationInput
   canvasNode?: Prisma.NodeOrderByWithRelationInput
   source?: Prisma.NodeOrderByWithRelationInput
@@ -259,6 +268,7 @@ export type EdgeWhereUniqueInput = Prisma.AtLeast<{
   createdAt?: Prisma.DateTimeFilter<"Edge"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Edge"> | Date | string
   deletedAt?: Prisma.DateTimeNullableFilter<"Edge"> | Date | string | null
+  deletionId?: Prisma.StringNullableFilter<"Edge"> | string | null
   project?: Prisma.XOR<Prisma.ProjectScalarRelationFilter, Prisma.ProjectWhereInput>
   canvasNode?: Prisma.XOR<Prisma.NodeNullableScalarRelationFilter, Prisma.NodeWhereInput> | null
   source?: Prisma.XOR<Prisma.NodeScalarRelationFilter, Prisma.NodeWhereInput>
@@ -276,6 +286,7 @@ export type EdgeOrderByWithAggregationInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   deletedAt?: Prisma.SortOrderInput | Prisma.SortOrder
+  deletionId?: Prisma.SortOrderInput | Prisma.SortOrder
   _count?: Prisma.EdgeCountOrderByAggregateInput
   _max?: Prisma.EdgeMaxOrderByAggregateInput
   _min?: Prisma.EdgeMinOrderByAggregateInput
@@ -295,6 +306,7 @@ export type EdgeScalarWhereWithAggregatesInput = {
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"Edge"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"Edge"> | Date | string
   deletedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"Edge"> | Date | string | null
+  deletionId?: Prisma.StringNullableWithAggregatesFilter<"Edge"> | string | null
 }
 
 export type EdgeCreateInput = {
@@ -304,6 +316,7 @@ export type EdgeCreateInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
   project: Prisma.ProjectCreateNestedOneWithoutEdgesInput
   canvasNode?: Prisma.NodeCreateNestedOneWithoutEdgesOnCanvasInput
   source: Prisma.NodeCreateNestedOneWithoutOutgoingEdgesInput
@@ -321,6 +334,7 @@ export type EdgeUncheckedCreateInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
 }
 
 export type EdgeUpdateInput = {
@@ -330,6 +344,7 @@ export type EdgeUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   project?: Prisma.ProjectUpdateOneRequiredWithoutEdgesNestedInput
   canvasNode?: Prisma.NodeUpdateOneWithoutEdgesOnCanvasNestedInput
   source?: Prisma.NodeUpdateOneRequiredWithoutOutgoingEdgesNestedInput
@@ -347,6 +362,7 @@ export type EdgeUncheckedUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type EdgeCreateManyInput = {
@@ -360,6 +376,7 @@ export type EdgeCreateManyInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
 }
 
 export type EdgeUpdateManyMutationInput = {
@@ -369,6 +386,7 @@ export type EdgeUpdateManyMutationInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type EdgeUncheckedUpdateManyInput = {
@@ -382,6 +400,7 @@ export type EdgeUncheckedUpdateManyInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type EdgeListRelationFilter = {
@@ -405,6 +424,7 @@ export type EdgeCountOrderByAggregateInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   deletedAt?: Prisma.SortOrder
+  deletionId?: Prisma.SortOrder
 }
 
 export type EdgeMaxOrderByAggregateInput = {
@@ -418,6 +438,7 @@ export type EdgeMaxOrderByAggregateInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   deletedAt?: Prisma.SortOrder
+  deletionId?: Prisma.SortOrder
 }
 
 export type EdgeMinOrderByAggregateInput = {
@@ -431,6 +452,7 @@ export type EdgeMinOrderByAggregateInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   deletedAt?: Prisma.SortOrder
+  deletionId?: Prisma.SortOrder
 }
 
 export type EdgeCreateNestedManyWithoutProjectInput = {
@@ -612,6 +634,7 @@ export type EdgeCreateWithoutProjectInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
   canvasNode?: Prisma.NodeCreateNestedOneWithoutEdgesOnCanvasInput
   source: Prisma.NodeCreateNestedOneWithoutOutgoingEdgesInput
   target: Prisma.NodeCreateNestedOneWithoutIncomingEdgesInput
@@ -627,6 +650,7 @@ export type EdgeUncheckedCreateWithoutProjectInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
 }
 
 export type EdgeCreateOrConnectWithoutProjectInput = {
@@ -669,6 +693,7 @@ export type EdgeScalarWhereInput = {
   createdAt?: Prisma.DateTimeFilter<"Edge"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Edge"> | Date | string
   deletedAt?: Prisma.DateTimeNullableFilter<"Edge"> | Date | string | null
+  deletionId?: Prisma.StringNullableFilter<"Edge"> | string | null
 }
 
 export type EdgeCreateWithoutCanvasNodeInput = {
@@ -678,6 +703,7 @@ export type EdgeCreateWithoutCanvasNodeInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
   project: Prisma.ProjectCreateNestedOneWithoutEdgesInput
   source: Prisma.NodeCreateNestedOneWithoutOutgoingEdgesInput
   target: Prisma.NodeCreateNestedOneWithoutIncomingEdgesInput
@@ -693,6 +719,7 @@ export type EdgeUncheckedCreateWithoutCanvasNodeInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
 }
 
 export type EdgeCreateOrConnectWithoutCanvasNodeInput = {
@@ -712,6 +739,7 @@ export type EdgeCreateWithoutSourceInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
   project: Prisma.ProjectCreateNestedOneWithoutEdgesInput
   canvasNode?: Prisma.NodeCreateNestedOneWithoutEdgesOnCanvasInput
   target: Prisma.NodeCreateNestedOneWithoutIncomingEdgesInput
@@ -727,6 +755,7 @@ export type EdgeUncheckedCreateWithoutSourceInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
 }
 
 export type EdgeCreateOrConnectWithoutSourceInput = {
@@ -746,6 +775,7 @@ export type EdgeCreateWithoutTargetInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
   project: Prisma.ProjectCreateNestedOneWithoutEdgesInput
   canvasNode?: Prisma.NodeCreateNestedOneWithoutEdgesOnCanvasInput
   source: Prisma.NodeCreateNestedOneWithoutOutgoingEdgesInput
@@ -761,6 +791,7 @@ export type EdgeUncheckedCreateWithoutTargetInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
 }
 
 export type EdgeCreateOrConnectWithoutTargetInput = {
@@ -831,6 +862,7 @@ export type EdgeCreateManyProjectInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
 }
 
 export type EdgeUpdateWithoutProjectInput = {
@@ -840,6 +872,7 @@ export type EdgeUpdateWithoutProjectInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   canvasNode?: Prisma.NodeUpdateOneWithoutEdgesOnCanvasNestedInput
   source?: Prisma.NodeUpdateOneRequiredWithoutOutgoingEdgesNestedInput
   target?: Prisma.NodeUpdateOneRequiredWithoutIncomingEdgesNestedInput
@@ -855,6 +888,7 @@ export type EdgeUncheckedUpdateWithoutProjectInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type EdgeUncheckedUpdateManyWithoutProjectInput = {
@@ -867,6 +901,7 @@ export type EdgeUncheckedUpdateManyWithoutProjectInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type EdgeCreateManyCanvasNodeInput = {
@@ -879,6 +914,7 @@ export type EdgeCreateManyCanvasNodeInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
 }
 
 export type EdgeCreateManySourceInput = {
@@ -891,6 +927,7 @@ export type EdgeCreateManySourceInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
 }
 
 export type EdgeCreateManyTargetInput = {
@@ -903,6 +940,7 @@ export type EdgeCreateManyTargetInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   deletedAt?: Date | string | null
+  deletionId?: string | null
 }
 
 export type EdgeUpdateWithoutCanvasNodeInput = {
@@ -912,6 +950,7 @@ export type EdgeUpdateWithoutCanvasNodeInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   project?: Prisma.ProjectUpdateOneRequiredWithoutEdgesNestedInput
   source?: Prisma.NodeUpdateOneRequiredWithoutOutgoingEdgesNestedInput
   target?: Prisma.NodeUpdateOneRequiredWithoutIncomingEdgesNestedInput
@@ -927,6 +966,7 @@ export type EdgeUncheckedUpdateWithoutCanvasNodeInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type EdgeUncheckedUpdateManyWithoutCanvasNodeInput = {
@@ -939,6 +979,7 @@ export type EdgeUncheckedUpdateManyWithoutCanvasNodeInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type EdgeUpdateWithoutSourceInput = {
@@ -948,6 +989,7 @@ export type EdgeUpdateWithoutSourceInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   project?: Prisma.ProjectUpdateOneRequiredWithoutEdgesNestedInput
   canvasNode?: Prisma.NodeUpdateOneWithoutEdgesOnCanvasNestedInput
   target?: Prisma.NodeUpdateOneRequiredWithoutIncomingEdgesNestedInput
@@ -963,6 +1005,7 @@ export type EdgeUncheckedUpdateWithoutSourceInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type EdgeUncheckedUpdateManyWithoutSourceInput = {
@@ -975,6 +1018,7 @@ export type EdgeUncheckedUpdateManyWithoutSourceInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type EdgeUpdateWithoutTargetInput = {
@@ -984,6 +1028,7 @@ export type EdgeUpdateWithoutTargetInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   project?: Prisma.ProjectUpdateOneRequiredWithoutEdgesNestedInput
   canvasNode?: Prisma.NodeUpdateOneWithoutEdgesOnCanvasNestedInput
   source?: Prisma.NodeUpdateOneRequiredWithoutOutgoingEdgesNestedInput
@@ -999,6 +1044,7 @@ export type EdgeUncheckedUpdateWithoutTargetInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type EdgeUncheckedUpdateManyWithoutTargetInput = {
@@ -1011,6 +1057,7 @@ export type EdgeUncheckedUpdateManyWithoutTargetInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   deletedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  deletionId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 
@@ -1026,6 +1073,7 @@ export type EdgeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = r
   createdAt?: boolean
   updatedAt?: boolean
   deletedAt?: boolean
+  deletionId?: boolean
   project?: boolean | Prisma.ProjectDefaultArgs<ExtArgs>
   canvasNode?: boolean | Prisma.Edge$canvasNodeArgs<ExtArgs>
   source?: boolean | Prisma.NodeDefaultArgs<ExtArgs>
@@ -1043,6 +1091,7 @@ export type EdgeSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensio
   createdAt?: boolean
   updatedAt?: boolean
   deletedAt?: boolean
+  deletionId?: boolean
   project?: boolean | Prisma.ProjectDefaultArgs<ExtArgs>
   canvasNode?: boolean | Prisma.Edge$canvasNodeArgs<ExtArgs>
   source?: boolean | Prisma.NodeDefaultArgs<ExtArgs>
@@ -1060,6 +1109,7 @@ export type EdgeSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensio
   createdAt?: boolean
   updatedAt?: boolean
   deletedAt?: boolean
+  deletionId?: boolean
   project?: boolean | Prisma.ProjectDefaultArgs<ExtArgs>
   canvasNode?: boolean | Prisma.Edge$canvasNodeArgs<ExtArgs>
   source?: boolean | Prisma.NodeDefaultArgs<ExtArgs>
@@ -1077,9 +1127,10 @@ export type EdgeSelectScalar = {
   createdAt?: boolean
   updatedAt?: boolean
   deletedAt?: boolean
+  deletionId?: boolean
 }
 
-export type EdgeOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "projectId" | "canvasNodeId" | "sourceId" | "targetId" | "label" | "direction" | "createdAt" | "updatedAt" | "deletedAt", ExtArgs["result"]["edge"]>
+export type EdgeOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "projectId" | "canvasNodeId" | "sourceId" | "targetId" | "label" | "direction" | "createdAt" | "updatedAt" | "deletedAt" | "deletionId", ExtArgs["result"]["edge"]>
 export type EdgeInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   project?: boolean | Prisma.ProjectDefaultArgs<ExtArgs>
   canvasNode?: boolean | Prisma.Edge$canvasNodeArgs<ExtArgs>
@@ -1118,6 +1169,7 @@ export type $EdgePayload<ExtArgs extends runtime.Types.Extensions.InternalArgs =
     createdAt: Date
     updatedAt: Date
     deletedAt: Date | null
+    deletionId: string | null
   }, ExtArgs["result"]["edge"]>
   composites: {}
 }
@@ -1555,6 +1607,7 @@ export interface EdgeFieldRefs {
   readonly createdAt: Prisma.FieldRef<"Edge", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"Edge", 'DateTime'>
   readonly deletedAt: Prisma.FieldRef<"Edge", 'DateTime'>
+  readonly deletionId: Prisma.FieldRef<"Edge", 'String'>
 }
     
 

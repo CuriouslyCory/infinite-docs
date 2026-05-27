@@ -41,10 +41,12 @@ soft-delete column (`deletedAt`). Never surfaced to users by this name.
 *(The `Node` model, creation (including child Components under a validated parent
 via `createNode` with a non-null `parentId`), scoped read at any depth
 (**getCanvas**, with **breadcrumbs**), inline rename (`updateNode`, title only for
-now), batch position writes (`updatePositions`), and **Connection**/**Edge**
-wiring (see **Edge**) are realized now; broader Component editing (`kind`,
-`documentation`), reparenting (`move`) with cycle prevention, and cascading
-**soft-delete** land in later milestones.)*
+now), batch position writes (`updatePositions`), **Connection**/**Edge** wiring
+(see **Edge**), and cascading **soft-delete** with **undo** (`deleteNode` removes
+the Node, its subtree, and every incident or interior **Edge** as one batch;
+`restoreNode` reverses it — see **Deletion id**) are realized now; broader
+Component editing (`kind`, `documentation`) and reparenting (`move`) with cycle
+prevention land in later milestones.)*
 
 ### Component kind (`NodeKind`)
 A Component's category, stored on its **Node** as `kind: NodeKind`. One of six
@@ -78,8 +80,9 @@ Three invariants hold and are enforced **in the service, not the database** (ADR
 endpoints sit on the **same Canvas** as the Edge, an Edge never links a Node to itself, and no
 two *active* (non-soft-deleted) Edges share the same source, target, and scope. Never surfaced
 to users by this name. *(The `Edge` model, `connectNodes`/`updateEdge`/`deleteEdge`, and the
-**getCanvas** `interiorEdges` read are realized now; partial-unique-index hardening of the
-de-dupe rule, and Connection undo, are later refinements.)*
+**getCanvas** `interiorEdges` read are realized now; Connection removal as part of a Component
+delete is undoable now (see **Deletion id**), while partial-unique-index hardening of the
+de-dupe rule and undo of a standalone single-Connection `deleteEdge` are later refinements.)*
 
 ### Edge direction (`EdgeDirection`)
 A **Connection's** orientation, stored on its **Edge** as `direction: EdgeDirection`. One of
@@ -204,12 +207,28 @@ The single home, inside the service layer, for authorization predicates. Exposes
 service function routes its authorization decision through this module so the policy lives in
 exactly one place. *(See ADR-0001 and ADR-0002.)*
 
+### Deletion id
+The handle that ties together one cascading Component soft-delete so it can be undone as a unit.
+A single `deleteNode` mints one id and stamps it (`deletionId`) on every row it transitions to
+deleted — the target **Node**, its subtree, and every incident or interior **Edge** — and
+`restoreNode` clears `deletedAt` for *exactly* the rows bearing that id, so an undo restores the
+operation's set and nothing outside it. A row removed by some other operation never carries this
+id and is never revived by undoing a later one — a lone `deleteEdge` sets `deletedAt` with **no**
+`deletionId`, and an earlier delete carries its own id. It is a *grouping of soft-deleted rows*,
+not a stored history: do not call it a "transaction" (the database mechanism that writes it), a
+"version" or "snapshot" (nothing is copied — rows are flagged in place), or an "audit log".
+Named in **Node**/**Edge** terms in code; users see only "delete" and "undo". *(Realized now via
+`deleteNode`/`restoreNode`; see ADR-0008. The id is a bare stamped column today — a durable
+`Deletion` entity and an MCP undo tool are deferred, additive future work.)*
+
 ### Soft-delete + undo
 Deletes set a `deletedAt` timestamp rather than removing rows; reads filter out soft-deleted
 records; the operation is reversible. This matters specifically because AI agents mutate the
-graph, and a recoverable delete is the safety net for an automated change gone wrong. *(Defined
-now — the `Project` model carries `deletedAt` and all reads already filter it — but cascading
-deletes and undo are implemented in a later milestone (M1).)*
+graph, and a recoverable delete is the safety net for an automated change gone wrong. *(Realized
+now for a Component: `deleteNode` cascades a soft-delete across the Node, its subtree, and every
+incident or interior **Edge** as one **Deletion id**, and `restoreNode` reverses exactly that
+set (ADR-0008). Both are **writes** — owner-only, never slug-granted (ADR-0002). The `Project`
+model also carries `deletedAt` and all reads filter it; Project-level cascade remains future.)*
 
 ## Standing notes
 

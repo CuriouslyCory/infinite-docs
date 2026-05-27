@@ -110,6 +110,32 @@ export const updatePositionsInput = z.object({
 export type UpdatePositionsInput = z.infer<typeof updatePositionsInput>;
 
 /**
+ * Input for deleting a Component. Addressed by the Node `id` — the natural key
+ * for an existing row, and how a future MCP "delete" tool arrives: the service
+ * loads the Node, resolves its Project, and enforces owner-only access
+ * (ADR-0001). Deletion is a cascading soft-delete — the Node, its subtree, and
+ * every incident or interior Connection are stamped with one shared deletion id
+ * so the whole operation is undoable as a unit (ADR-0008). Writes are never
+ * slug-granted (ADR-0002).
+ */
+export const deleteNodeInput = z.object({
+  id: z.string().min(1),
+});
+export type DeleteNodeInput = z.infer<typeof deleteNodeInput>;
+
+/**
+ * Input for undoing a cascading Component delete. Addressed by the `deletionId`
+ * minted by `deleteNode` (the undo handle): the service restores EXACTLY the
+ * rows bearing that id and nothing else (ADR-0008). Undo is a write — owner-only
+ * (the owner is resolved from the stamped rows' Project), never slug-granted
+ * (ADR-0002).
+ */
+export const restoreNodeInput = z.object({
+  deletionId: z.string().min(1),
+});
+export type RestoreNodeInput = z.infer<typeof restoreNodeInput>;
+
+/**
  * The three Connection orientations. This Zod enum is the client-safe source of
  * truth for the value set (the edge renderer imports it as values); the Prisma
  * `EdgeDirection` enum mirrors it, and a compile-time parity guard in

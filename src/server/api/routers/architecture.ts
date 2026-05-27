@@ -11,7 +11,9 @@ import {
 } from "~/server/architecture/project.service";
 import {
   createNode,
+  deleteNode,
   getCanvas,
+  restoreNode,
   updateNode,
   updatePositions,
 } from "~/server/architecture/node.service";
@@ -25,8 +27,10 @@ import {
   createNodeInput,
   createProjectInput,
   deleteEdgeInput,
+  deleteNodeInput,
   getCanvasInput,
   getProjectBySlugInput,
+  restoreNodeInput,
   updateEdgeInput,
   updateNodeInput,
   updatePositionsInput,
@@ -164,6 +168,36 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await deleteEdge(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: cascading soft-delete of a Component — its Node, its
+  // subtree, and every incident/interior Connection — stamped with one
+  // deletionId for undo. Wrapped in a transaction (like updatePositions) so the
+  // recursive read and both sweeps commit atomically; owner access is enforced
+  // in the service (ADR-0001).
+  deleteNode: protectedProcedure
+    .input(deleteNodeInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await ctx.db.$transaction((tx) => deleteNode(tx, actor, input));
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: undo a cascading delete, restoring exactly the rows
+  // stamped with the given deletionId. Owner access is enforced in the service
+  // (ADR-0001).
+  restoreNode: protectedProcedure
+    .input(restoreNodeInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await ctx.db.$transaction((tx) => restoreNode(tx, actor, input));
       } catch (error) {
         throw toTRPCError(error);
       }

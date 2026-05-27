@@ -21,10 +21,12 @@ export function CanvasIsland({
   canvasScope,
   slug,
   projectId,
+  canEdit,
 }: {
   canvasScope: string;
   slug: string;
   projectId: string;
+  canEdit: boolean;
 }) {
   // Key the lazily-loaded Canvas (which owns the ReactFlowProvider) so changing
   // the scope forces a full remount and a fresh store. The scope is "root" for
@@ -35,12 +37,15 @@ export function CanvasIsland({
   // `slug` keys the capability read (getCanvas); `projectId` addresses the
   // owner-only create. Both are plain scalars passed from the server route — not
   // server modules — so no server graph crosses into this client island.
+  // `canEdit` gates owner-only edit affordances (add, rename, delete, drag,
+  // connect).
   return (
     <Canvas
       key={canvasScope}
       scope={canvasScope}
       slug={slug}
       projectId={projectId}
+      canEdit={canEdit}
     />
   );
 }
