@@ -14,6 +14,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
+import { useRouter } from "next/navigation";
 import { Suspense, useCallback, useMemo } from "react";
 import { Toaster, toast } from "sonner";
 
@@ -89,6 +90,7 @@ function toRFEdge(e: CanvasEdge): ConnectionEdge {
 function optimisticCanvasNode(
   id: string,
   projectId: string,
+  parentId: string | null,
   kind: NodeKind,
   position: { x: number; y: number },
 ): CanvasNode {
@@ -96,7 +98,7 @@ function optimisticCanvasNode(
   return {
     id,
     projectId,
-    parentId: null,
+    parentId,
     title: "Untitled",
     kind,
     posX: position.x,
@@ -112,6 +114,7 @@ function optimisticCanvasNode(
 function optimisticCanvasEdge(
   id: string,
   projectId: string,
+  canvasNodeId: string | null,
   sourceId: string,
   targetId: string,
 ): CanvasEdge {
@@ -119,7 +122,7 @@ function optimisticCanvasEdge(
   return {
     id,
     projectId,
-    canvasNodeId: null,
+    canvasNodeId,
     sourceId,
     targetId,
     label: null,
@@ -130,18 +133,34 @@ function optimisticCanvasEdge(
   };
 }
 
-function CanvasInner({ slug, projectId }: { slug: string; projectId: string }) {
+function CanvasInner({
+  scope,
+  slug,
+  projectId,
+}: {
+  scope: string;
+  slug: string;
+  projectId: string;
+}) {
   const utils = api.useUtils();
+  const router = useRouter();
+  // The root scope is the sentinel string "root" at the island boundary
+  // (ADR-0004); every other scope IS a Node id — the parentId of this Canvas's
+  // Components and the canvasNodeId of its Connections.
+  const canvasNodeId = scope === "root" ? null : scope;
   // Stable across renders so it stays a single query key and a stable callback dep.
-  const canvasInput = useMemo(() => ({ slug, canvasNodeId: null }), [slug]);
+  const canvasInput = useMemo(
+    () => ({ slug, canvasNodeId }),
+    [slug, canvasNodeId],
+  );
   const [{ interiorNodes, interiorEdges }] =
     api.architecture.getCanvas.useSuspenseQuery(canvasInput);
 
   // Seed React Flow's store ONCE from the hydrated query; thereafter the store
-  // owns interaction state. The island is keyed by scope (./index), so a scope
-  // change (Descent, a later slice) remounts and re-seeds rather than inheriting
-  // these. Persistence flows through one batched/single mutation per gesture
-  // (below), with the query cache kept in lockstep so a remount re-seeds it.
+  // owns interaction state. The island is keyed by scope (./index), so a Descent
+  // (a scope change) remounts and re-seeds rather than inheriting these.
+  // Persistence flows through one batched/single mutation per gesture (below),
+  // with the query cache kept in lockstep so a remount re-seeds it.
   const [nodes, setNodes, onNodesChange] = useNodesState<ComponentNode>(
     interiorNodes.map(toRFNode),
   );
@@ -202,13 +221,14 @@ function CanvasInner({ slug, projectId }: { slug: string; projectId: string }) {
       patchCanvas((c) => ({
         interiorNodes: [
           ...c.interiorNodes,
-          optimisticCanvasNode(tempId, projectId, kind, position),
+          optimisticCanvasNode(tempId, projectId, canvasNodeId, kind, position),
         ],
       }));
 
       try {
         const real = await createNode.mutateAsync({
           projectId,
+          parentId: canvasNodeId,
           kind,
           posX: position.x,
           posY: position.y,
@@ -229,7 +249,14 @@ function CanvasInner({ slug, projectId }: { slug: string; projectId: string }) {
         toast.error("Couldn’t add the component. Please try again.");
       }
     },
-    [screenToFlowPosition, projectId, setNodes, patchCanvas, createNode],
+    [
+      screenToFlowPosition,
+      projectId,
+      canvasNodeId,
+      setNodes,
+      patchCanvas,
+      createNode,
+    ],
   );
 
   // Persist a renamed Component: optimistic title in the store + cache mirror,
@@ -379,14 +406,14 @@ function CanvasInner({ slug, projectId }: { slug: string; projectId: string }) {
       patchCanvas((c) => ({
         interiorEdges: [
           ...c.interiorEdges,
-          optimisticCanvasEdge(tempId, projectId, source, target),
+          optimisticCanvasEdge(tempId, projectId, canvasNodeId, source, target),
         ],
       }));
 
       try {
         const real = await connectNodes.mutateAsync({
           projectId,
-          canvasNodeId: null,
+          canvasNodeId,
           sourceId: source,
           targetId: target,
         });
@@ -404,7 +431,15 @@ function CanvasInner({ slug, projectId }: { slug: string; projectId: string }) {
         toast.error("Couldn’t add the connection. Please try again.");
       }
     },
-    [utils, canvasInput, setEdges, patchCanvas, projectId, connectNodes],
+    [
+      utils,
+      canvasInput,
+      canvasNodeId,
+      setEdges,
+      patchCanvas,
+      projectId,
+      connectNodes,
+    ],
   );
 
   // Remove a Connection (React Flow's Delete/Backspace). `onEdgesChange` already
@@ -498,6 +533,22 @@ function CanvasInner({ slug, projectId }: { slug: string; projectId: string }) {
           onEdgesChange={onEdgesChange}
           onConnect={(c) => void handleConnect(c)}
           onEdgesDelete={handleEdgesDelete}
+          onNodeDoubleClick={(_event, node) => {
+            // Descent: open the Component's interior Canvas. A still-optimistic
+            // (temp_) node has no real id, so no interior to open.
+            if (node.id.startsWith("temp_")) return;
+            router.push(`/p/${slug}/n/${node.id}`);
+          }}
+          onNodeMouseEnter={(_event, node) => {
+            // Make Descent feel instant: warm the interior Canvas payload (tRPC
+            // cache, the same key the descended island reads) and the route shell.
+            if (node.id.startsWith("temp_")) return;
+            void utils.architecture.getCanvas.prefetch({
+              slug,
+              canvasNodeId: node.id,
+            });
+            router.prefetch(`/p/${slug}/n/${node.id}`);
+          }}
           onNodeDragStop={(_event, _node, dragged) =>
             void persistPositions(dragged)
           }
@@ -541,7 +592,7 @@ export default function Canvas({
         <Suspense
           fallback={<div className="h-full w-full bg-[#1b1c33]" aria-hidden />}
         >
-          <CanvasInner slug={slug} projectId={projectId} />
+          <CanvasInner scope={scope} slug={slug} projectId={projectId} />
         </Suspense>
       </div>
       <Toaster theme="dark" position="bottom-right" richColors />

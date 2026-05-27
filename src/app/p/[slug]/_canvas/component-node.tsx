@@ -7,6 +7,7 @@ import {
   Database,
   Globe,
   Layers,
+  Pencil,
   Server,
   type LucideIcon,
 } from "lucide-react";
@@ -96,7 +97,8 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
 
   return (
     <div
-      className={`flex items-center gap-2 rounded-lg border border-white/15 bg-[#1f2138] px-3 py-2 text-sm text-white shadow-lg ${
+      title={data.optimistic ? undefined : "Double-click to open"}
+      className={`group flex items-center gap-2 rounded-lg border border-white/15 bg-[#1f2138] px-3 py-2 text-sm text-white shadow-lg ${
         data.optimistic ? "opacity-60" : "opacity-100"
       }`}
     >
@@ -119,6 +121,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onFocus={(e) => e.currentTarget.select()}
+          onDoubleClick={(e) => e.stopPropagation()}
           onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -131,16 +134,27 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           }}
         />
       ) : (
-        <span
-          className="max-w-[12rem] truncate"
-          onDoubleClick={(e) => {
+        <span className="max-w-[12rem] truncate">{data.title}</span>
+      )}
+      {/* Rename affordance: revealed on hover (or keyboard focus). Double-click
+          is reserved for Descent, so renaming gets its own explicit control.
+          `nodrag` stops React Flow from starting a node drag on the button, and
+          stopping the dblclick keeps a fast double-tap on the pencil from
+          descending. Hidden while optimistic — a temp_ Component has no id yet. */}
+      {!editing && canRename && (
+        <button
+          type="button"
+          aria-label={`Rename ${data.title}`}
+          title="Rename"
+          className="nodrag shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-white focus-visible:opacity-100"
+          onClick={(e) => {
             e.stopPropagation();
             beginEditing();
           }}
-          title={canRename ? "Double-click to rename" : undefined}
+          onDoubleClick={(e) => e.stopPropagation()}
         >
-          {data.title}
-        </span>
+          <Pencil size={14} aria-hidden />
+        </button>
       )}
       <Handle
         type="source"

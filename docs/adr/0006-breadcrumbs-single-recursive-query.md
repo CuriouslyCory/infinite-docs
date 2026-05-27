@@ -88,3 +88,7 @@ Specifics that are part of the decision, not incidental:
   than letting raw queries spread — preserves the Prisma-typed surface everywhere
   else. A second recursive read (e.g. a subtree delete) should reuse this pattern
   and cite this ADR.
+- **The trail is now rendered by the Descent breadcrumb bar (ADR-0007)**, which
+  reads it from the same hydrated `getCanvas` cache as the Canvas island. The
+  root scope stays `[]`; the Project is supplied as a presentational root crumb,
+  never injected into this array.

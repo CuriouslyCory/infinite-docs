@@ -84,3 +84,7 @@ unrelated routes to the Canvas.
 - New runtime dependency surface (`@xyflow/react`, pinned at install) and its
   CSS are now part of the build. React Flow 12 resolves `zustand@4.5.x`, which
   is React-19-compatible, so no peer overrides are required.
+- **Descent (ADR-0007) supplies the island's scope key as a `canvasNodeId`** —
+  the `"root"` → interior generalization this ADR anticipated. The keyed remount
+  is what guarantees an interior Canvas re-seeds from its own payload instead of
+  inheriting the parent's store.
