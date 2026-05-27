@@ -25,6 +25,7 @@ import { api } from "~/trpc/react";
 import { AddComponent } from "./add-component";
 import {
   ComponentNodeView,
+  DeleteComponentContext,
   DescendComponentContext,
   RenameComponentContext,
   type ComponentNode,
@@ -65,6 +66,9 @@ function toRFNode(n: CanvasNode): ComponentNode {
     id: n.id,
     type: "component",
     position: { x: n.posX, y: n.posY },
+    // Keyboard Delete is reserved for Connections; a Component is removed only
+    // through its explicit (undoable) trash control, never a stray Backspace.
+    deletable: false,
     data: {
       title: n.title,
       kind: n.kind,
@@ -109,6 +113,7 @@ function optimisticCanvasNode(
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
+    deletionId: null,
   };
 }
 
@@ -131,6 +136,7 @@ function optimisticCanvasEdge(
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
+    deletionId: null,
   };
 }
 
@@ -177,6 +183,10 @@ function CanvasInner({
   const connectNodes = api.architecture.connectNodes.useMutation();
   const { mutateAsync: editEdge } = api.architecture.updateEdge.useMutation();
   const { mutateAsync: removeEdge } = api.architecture.deleteEdge.useMutation();
+  const { mutateAsync: deleteComponent } =
+    api.architecture.deleteNode.useMutation();
+  const { mutateAsync: restoreComponent } =
+    api.architecture.restoreNode.useMutation();
 
   // The query cache is the re-seed mirror. EVERY write goes through this merge
   // helper so a partial update can never drop a sibling key (e.g. node edits
@@ -216,6 +226,7 @@ function CanvasInner({
           id: tempId,
           type: "component",
           position,
+          deletable: false,
           data: { title: "Untitled", kind, optimistic: true },
         },
       ]);
@@ -472,6 +483,130 @@ function CanvasInner({
     [utils, canvasInput, patchCanvas, setEdges, removeEdge],
   );
 
+  // Undo a Component delete: optimistically re-add the on-canvas rows the delete
+  // removed (the off-canvas subtree + interior Connections are restored
+  // server-side and reappear on descent), then restore the whole batch by its
+  // deletionId. A failed restore re-removes the rows and toasts. Defined before
+  // `removeComponent` because that callback references it.
+  const undoRemoveComponent = useCallback(
+    (
+      deletionId: string,
+      node: CanvasNode | undefined,
+      incidentEdges: CanvasEdge[],
+    ): void => {
+      if (node) {
+        setNodes((ns) =>
+          ns.some((n) => n.id === node.id) ? ns : [...ns, toRFNode(node)],
+        );
+        patchCanvas((c) => ({
+          interiorNodes: c.interiorNodes.some((n) => n.id === node.id)
+            ? c.interiorNodes
+            : [...c.interiorNodes, node],
+        }));
+      }
+      setEdges((es) => {
+        const present = new Set(es.map((e) => e.id));
+        const add = incidentEdges.filter((e) => !present.has(e.id));
+        return add.length ? [...es, ...add.map(toRFEdge)] : es;
+      });
+      patchCanvas((c) => {
+        const present = new Set(c.interiorEdges.map((e) => e.id));
+        const add = incidentEdges.filter((e) => !present.has(e.id));
+        return add.length
+          ? { interiorEdges: [...c.interiorEdges, ...add] }
+          : {};
+      });
+
+      void restoreComponent({ deletionId }).catch(() => {
+        if (node) {
+          setNodes((ns) => ns.filter((n) => n.id !== node.id));
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.filter((n) => n.id !== node.id),
+          }));
+        }
+        const ids = new Set(incidentEdges.map((e) => e.id));
+        setEdges((es) => es.filter((e) => !ids.has(e.id)));
+        patchCanvas((c) => ({
+          interiorEdges: c.interiorEdges.filter((e) => !ids.has(e.id)),
+        }));
+        toast.error("Couldn’t undo. Please try again.");
+      });
+    },
+    [setNodes, setEdges, patchCanvas, restoreComponent],
+  );
+
+  // Delete a Component: a cascading soft-delete. Optimistically remove it and its
+  // ON-CANVAS incident Connections from the store + cache mirror (descendants and
+  // interior Connections live off-canvas — the server cascade handles them), then
+  // one deleteNode mutation. On success raise an Undo toast keyed by the returned
+  // deletionId; on failure roll the removal back and toast. Provided to the nodes
+  // through DeleteComponentContext so it stays one stable reference.
+  const removeComponent = useCallback(
+    (id: string): void => {
+      if (id.startsWith("temp_")) return; // no real id to soft-delete yet
+      const cached = utils.architecture.getCanvas.getData(canvasInput);
+      const node = cached?.interiorNodes.find((n) => n.id === id);
+      const incidentEdges =
+        cached?.interiorEdges.filter(
+          (e) => e.sourceId === id || e.targetId === id,
+        ) ?? [];
+
+      setNodes((ns) => ns.filter((n) => n.id !== id));
+      setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
+      patchCanvas((c) => ({
+        interiorNodes: c.interiorNodes.filter((n) => n.id !== id),
+        interiorEdges: c.interiorEdges.filter(
+          (e) => e.sourceId !== id && e.targetId !== id,
+        ),
+      }));
+
+      void deleteComponent({ id })
+        .then(({ deletionId }) => {
+          toast("Component deleted", {
+            action: {
+              label: "Undo",
+              onClick: () =>
+                undoRemoveComponent(deletionId, node, incidentEdges),
+            },
+          });
+        })
+        .catch(() => {
+          if (node) {
+            setNodes((ns) =>
+              ns.some((n) => n.id === id) ? ns : [...ns, toRFNode(node)],
+            );
+            patchCanvas((c) => ({
+              interiorNodes: c.interiorNodes.some((n) => n.id === id)
+                ? c.interiorNodes
+                : [...c.interiorNodes, node],
+            }));
+          }
+          setEdges((es) => {
+            const present = new Set(es.map((e) => e.id));
+            const add = incidentEdges.filter((e) => !present.has(e.id));
+            return add.length ? [...es, ...add.map(toRFEdge)] : es;
+          });
+          patchCanvas((c) => {
+            const present = new Set(c.interiorEdges.map((e) => e.id));
+            const add = incidentEdges.filter((e) => !present.has(e.id));
+            return add.length
+              ? { interiorEdges: [...c.interiorEdges, ...add] }
+              : {};
+          });
+          toast.error("Couldn’t delete the component. Please try again.");
+        });
+    },
+    [
+      utils,
+      canvasInput,
+      setNodes,
+      setEdges,
+      patchCanvas,
+      deleteComponent,
+      undoRemoveComponent,
+    ],
+  );
+
   // Edit a Connection's label/direction: optimistic in store (markers re-derived
   // from the new direction) + cache mirror, one updateEdge mutation, both rolled
   // back with a toast on failure. Provided to the edges through context (below)
@@ -545,50 +680,52 @@ function CanvasInner({
     <RenameComponentContext.Provider value={commitRename}>
       <EditEdgeContext.Provider value={commitEdgeEdit}>
         <DescendComponentContext.Provider value={descend}>
-          <ReactFlow<ComponentNode, ConnectionEdge>
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={(c) => void handleConnect(c)}
-            onEdgesDelete={handleEdgesDelete}
-            onNodeDoubleClick={(_event, node) => descend(node.id)}
-            onNodeMouseEnter={(_event, node) => {
-              // Make Descent feel instant: warm the interior Canvas payload (tRPC
-              // cache, the same key the descended island reads) and the route shell.
-              if (node.id.startsWith("temp_")) return;
-              void utils.architecture.getCanvas.prefetch({
-                slug,
-                canvasNodeId: node.id,
-              });
-              router.prefetch(`/p/${slug}/n/${node.id}`);
-            }}
-            onNodeDragStop={(_event, _node, dragged) =>
-              void persistPositions(dragged)
-            }
-            onSelectionDragStop={(_event, dragged) =>
-              void persistPositions(dragged)
-            }
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            fitView
-          >
-            <Background />
-            <Controls />
-            <Panel position="top-left">
-              <AddComponent
-                onAdd={addComponent}
-                pending={createNode.isPending}
-              />
-            </Panel>
-            {nodes.length === 0 && (
-              <Panel position="top-center">
-                <p className="mt-2 text-sm text-white/50">
-                  Empty canvas. Add a Component to start modeling.
-                </p>
+          <DeleteComponentContext.Provider value={removeComponent}>
+            <ReactFlow<ComponentNode, ConnectionEdge>
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={(c) => void handleConnect(c)}
+              onEdgesDelete={handleEdgesDelete}
+              onNodeDoubleClick={(_event, node) => descend(node.id)}
+              onNodeMouseEnter={(_event, node) => {
+                // Make Descent feel instant: warm the interior Canvas payload (tRPC
+                // cache, the same key the descended island reads) and the route shell.
+                if (node.id.startsWith("temp_")) return;
+                void utils.architecture.getCanvas.prefetch({
+                  slug,
+                  canvasNodeId: node.id,
+                });
+                router.prefetch(`/p/${slug}/n/${node.id}`);
+              }}
+              onNodeDragStop={(_event, _node, dragged) =>
+                void persistPositions(dragged)
+              }
+              onSelectionDragStop={(_event, dragged) =>
+                void persistPositions(dragged)
+              }
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              fitView
+            >
+              <Background />
+              <Controls />
+              <Panel position="top-left">
+                <AddComponent
+                  onAdd={addComponent}
+                  pending={createNode.isPending}
+                />
               </Panel>
-            )}
-          </ReactFlow>
+              {nodes.length === 0 && (
+                <Panel position="top-center">
+                  <p className="mt-2 text-sm text-white/50">
+                    Empty canvas. Add a Component to start modeling.
+                  </p>
+                </Panel>
+              )}
+            </ReactFlow>
+          </DeleteComponentContext.Provider>
         </DescendComponentContext.Provider>
       </EditEdgeContext.Provider>
     </RenameComponentContext.Provider>

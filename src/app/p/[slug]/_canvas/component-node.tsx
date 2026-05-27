@@ -10,6 +10,7 @@ import {
   Layers,
   Pencil,
   Server,
+  Trash2,
   type LucideIcon,
 } from "lucide-react";
 import { createContext, useContext, useRef, useState } from "react";
@@ -48,6 +49,17 @@ export const DescendComponentContext = createContext<(id: string) => void>(
   () => undefined,
 );
 
+/**
+ * The Canvas island supplies the delete action (a cascading soft-delete of a
+ * Component) through this context, like rename/descent — keeping the node a pure
+ * presentational component so React Flow doesn't re-render every node when the
+ * island re-renders. The default is inert: a node rendered outside the island's
+ * provider cannot be deleted.
+ */
+export const DeleteComponentContext = createContext<(id: string) => void>(
+  () => undefined,
+);
+
 // Kind → icon. Kind is cosmetic (CONTEXT.md "Component kind"); this is the only
 // place the six kinds acquire a glyph. A finite `Record` keyed by `NodeKind` is
 // not widened by `noUncheckedIndexedAccess`, so indexing it needs no guard.
@@ -76,6 +88,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
   const Icon = KIND_ICON[data.kind];
   const onRename = useContext(RenameComponentContext);
   const onDescend = useContext(DescendComponentContext);
+  const onDelete = useContext(DeleteComponentContext);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(data.title);
   // Enter commits, then blurs the unmounting input — which would fire a second
@@ -88,6 +101,9 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
   // Descent is likewise disabled while optimistic: a `temp_…` Component has no
   // real id, so there is no interior Canvas to open yet.
   const canDescend = !data.optimistic;
+  // Delete is likewise disabled while optimistic: a `temp_…` Component has no
+  // real id yet, so there is nothing to soft-delete server-side.
+  const canDelete = !data.optimistic;
 
   function beginEditing() {
     if (!canRename) return;
@@ -192,6 +208,28 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           onDoubleClick={(e) => e.stopPropagation()}
         >
           <Pencil size={14} aria-hidden />
+        </button>
+      )}
+      {/* Delete affordance: a cascading soft-delete (the Component, its subtree,
+          and incident/interior Connections), undoable via the toast the island
+          raises. Revealed on hover or keyboard focus; `nodrag` stops a drag and
+          stopping the dblclick keeps a fast double-tap from also descending.
+          Hidden while optimistic — a temp_ Component has no id yet. Keyboard
+          Delete is reserved for Connections (Components are `deletable: false`),
+          so removal goes through this explicit, undoable control. */}
+      {!editing && canDelete && (
+        <button
+          type="button"
+          aria-label={`Delete ${data.title}`}
+          title="Delete"
+          className="nodrag shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-red-400 focus-visible:opacity-100"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(id);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <Trash2 size={14} aria-hidden />
         </button>
       )}
       <Handle

@@ -153,7 +153,8 @@ export const NodeScalarFieldEnum = {
   metadata: 'metadata',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  deletedAt: 'deletedAt'
+  deletedAt: 'deletedAt',
+  deletionId: 'deletionId'
 } as const
 
 export type NodeScalarFieldEnum = (typeof NodeScalarFieldEnum)[keyof typeof NodeScalarFieldEnum]
@@ -169,7 +170,8 @@ export const EdgeScalarFieldEnum = {
   direction: 'direction',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  deletedAt: 'deletedAt'
+  deletedAt: 'deletedAt',
+  deletionId: 'deletionId'
 } as const
 
 export type EdgeScalarFieldEnum = (typeof EdgeScalarFieldEnum)[keyof typeof EdgeScalarFieldEnum]

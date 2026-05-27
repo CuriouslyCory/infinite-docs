@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   type Edge,
   type Node,
@@ -8,12 +10,16 @@ import type { Actor, Db } from "./actor";
 import { NotFoundError } from "./errors";
 import {
   createNodeInput,
+  deleteNodeInput,
   getCanvasInput,
+  restoreNodeInput,
   updateNodeInput,
   updatePositionsInput,
   type CreateNodeInput,
+  type DeleteNodeInput,
   type GetCanvasInput,
   type NodeKind,
+  type RestoreNodeInput,
   type UpdateNodeInput,
   type UpdatePositionsInput,
 } from "~/lib/schemas";
@@ -276,4 +282,182 @@ export async function updatePositions(
       }),
     ),
   );
+}
+
+/**
+ * Deletes a Component via a cascading soft-delete: the target Node, its entire
+ * subtree (every Node descending through `parentId`), and every incident or
+ * interior Connection are flagged `deletedAt` in ONE atomic operation, all
+ * stamped with one fresh `deletionId` so the whole set can be undone as a unit
+ * (`restoreNode`; ADR-0008). The safety net that matters because AI agents
+ * mutate the graph (CONTEXT.md "Soft-delete + undo").
+ *
+ * Addressed by the Node `id`; loaded, its Project resolved, and authorized
+ * owner-only through `access.assertCanWrite` BEFORE the subtree is gathered
+ * (ADR-0001) — an intruder learns nothing about the graph's shape. Idempotent in
+ * spirit: an already-deleted Component reads as not-found (like `deleteEdge`).
+ *
+ * The subtree is gathered in a SINGLE recursive CTE descending `parentId` — the
+ * mirror of `getCanvas`'s ascending breadcrumb walk — never a per-level loop
+ * (ADR-0006, whose raw-SQL discipline this reuses: double-quoted PascalCase
+ * identifiers, bound params, a `depth < 256` cap, `deletedAt IS NULL` on both
+ * arms). Filtering `deletedAt IS NULL` on the recursive step is safe because no
+ * live Node ever sits under a soft-deleted ancestor (a cascade sweeps the whole
+ * subtree, and `createNode` rejects a soft-deleted parent), so the walk never
+ * needs to pass THROUGH a deleted Node to reach a live descendant.
+ *
+ * The Edge sweep is `sourceId ∈ S OR targetId ∈ S OR canvasNodeId ∈ S` (S = the
+ * subtree), NEVER `canvasNodeId` alone: an "incident" Connection from the deleted
+ * Component up to a SURVIVING sibling lives on the parent's Canvas
+ * (`canvasNodeId ∉ S`) yet must still be swept, or it would dangle to a deleted
+ * endpoint forever. ADR-0005 made all three Edge columns first-class precisely so
+ * this cannot be reduced to scope. Both `updateMany`s filter `deletedAt: null`,
+ * so a Connection the user had already removed via `deleteEdge` is NOT re-stamped
+ * — and so `restoreNode` never revives it.
+ *
+ * Runs inside the caller's transaction (the router wraps it in
+ * `db.$transaction`, like `updatePositions`), so the recursive read and both
+ * sweeps commit atomically.
+ */
+export async function deleteNode(
+  db: Db,
+  actor: Actor,
+  input: DeleteNodeInput,
+): Promise<{ deletionId: string; nodeIds: string[]; edgeIds: string[] }> {
+  const { id } = deleteNodeInput.parse(input);
+
+  const node = await db.node.findFirst({
+    where: { id, deletedAt: null },
+    select: { id: true, projectId: true },
+  });
+  if (!node) {
+    throw new NotFoundError();
+  }
+  const project = await db.project.findFirst({
+    where: { id: node.projectId, deletedAt: null },
+    select: { ownerId: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanWrite(actor, project);
+
+  // Gather the subtree (root included) in one recursive descent of `parentId`.
+  // Bound params only; identifiers double-quoted PascalCase because Postgres
+  // folds unquoted names to lowercase (ADR-0006).
+  const subtree = await db.$queryRaw<{ id: string }[]>`
+    WITH RECURSIVE subtree AS (
+      SELECT n.id, 0 AS depth
+      FROM "Node" n
+      WHERE n.id = ${node.id}
+        AND n."projectId" = ${node.projectId}
+        AND n."deletedAt" IS NULL
+      UNION ALL
+      SELECT c.id, s.depth + 1
+      FROM "Node" c
+      JOIN subtree s ON c."parentId" = s.id
+      WHERE c."projectId" = ${node.projectId}
+        AND c."deletedAt" IS NULL
+        AND s.depth < 256
+    )
+    SELECT id FROM subtree`;
+  const nodeIds = subtree.map((row) => row.id);
+
+  const deletionId = randomUUID();
+  const deletedAt = new Date();
+
+  // The Edge sweep: any live Edge with an endpoint in the subtree OR drawn on a
+  // deleted Component's interior Canvas. Capture the ids first (for the
+  // optimistic-UI return), then stamp the same live set.
+  const edgeWhere = {
+    projectId: node.projectId,
+    deletedAt: null,
+    OR: [
+      { sourceId: { in: nodeIds } },
+      { targetId: { in: nodeIds } },
+      { canvasNodeId: { in: nodeIds } },
+    ],
+  };
+  const sweptEdges = await db.edge.findMany({
+    where: edgeWhere,
+    select: { id: true },
+  });
+  const edgeIds = sweptEdges.map((edge) => edge.id);
+
+  await db.node.updateMany({
+    where: { id: { in: nodeIds }, deletedAt: null },
+    data: { deletedAt, deletionId },
+  });
+  await db.edge.updateMany({
+    where: edgeWhere,
+    data: { deletedAt, deletionId },
+  });
+
+  return { deletionId, nodeIds, edgeIds };
+}
+
+/**
+ * Undoes a cascading Component delete: restores EXACTLY the rows stamped with the
+ * given `deletionId` and nothing else (ADR-0008) — `deletedAt` and `deletionId`
+ * are both cleared, so the batch handle is consumed. Because the cascade only
+ * ever stamped rows it itself transitioned to deleted (its `updateMany`s filter
+ * `deletedAt: null`), a Connection or descendant removed by some OTHER operation
+ * never carries this id and is never revived here; two independent deletes undo
+ * independently.
+ *
+ * Undo is a WRITE — owner-only. The Project is resolved from the stamped rows
+ * (never from input), then authorized through `access.assertCanWrite`
+ * (ADR-0001/0002); a capability-URL viewer cannot undo. An unknown or
+ * already-restored `deletionId` matches no rows and reads as not-found.
+ *
+ * Restore is "as-is": if an ancestor of this batch was independently deleted in
+ * a LATER operation, the restored subtree is briefly unreachable via `getCanvas`
+ * until that ancestor is also restored — honoring "restore exactly the affected
+ * set and nothing outside it" literally. Runs inside the caller's transaction.
+ */
+export async function restoreNode(
+  db: Db,
+  actor: Actor,
+  input: RestoreNodeInput,
+): Promise<{ deletionId: string; nodeIds: string[]; edgeIds: string[] }> {
+  const { deletionId } = restoreNodeInput.parse(input);
+
+  const nodes = await db.node.findMany({
+    where: { deletionId },
+    select: { id: true, projectId: true },
+  });
+  // A deletion never spans Projects (the cascade is scoped to one), so any
+  // stamped row resolves the owner. No rows = unknown / already-restored handle.
+  const [firstNode] = nodes;
+  if (!firstNode) {
+    throw new NotFoundError();
+  }
+  const project = await db.project.findFirst({
+    where: { id: firstNode.projectId, deletedAt: null },
+    select: { ownerId: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanWrite(actor, project);
+
+  const edges = await db.edge.findMany({
+    where: { deletionId },
+    select: { id: true },
+  });
+
+  await db.node.updateMany({
+    where: { deletionId },
+    data: { deletedAt: null, deletionId: null },
+  });
+  await db.edge.updateMany({
+    where: { deletionId },
+    data: { deletedAt: null, deletionId: null },
+  });
+
+  return {
+    deletionId,
+    nodeIds: nodes.map((n) => n.id),
+    edgeIds: edges.map((e) => e.id),
+  };
 }

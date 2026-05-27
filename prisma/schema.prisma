@@ -127,6 +127,13 @@ model Node {
     createdAt     DateTime  @default(now())
     updatedAt     DateTime  @updatedAt
     deletedAt     DateTime?
+    // Batch id of the cascading soft-delete that removed this row (null when
+    // live). One `deleteNode` stamps one id across the deleted Component, its
+    // subtree, and every swept Edge; `restoreNode` clears `deletedAt` + this id
+    // for exactly the rows bearing it, so undo restores that operation's set and
+    // nothing else (CONTEXT.md "Deletion id"; ADR-0008). A lone `deleteEdge`
+    // sets `deletedAt` with NO `deletionId`.
+    deletionId    String?
 
     // Edges are scoped to a Canvas by an explicit `canvasNodeId` and reference
     // their endpoints by `sourceId`/`targetId`; three relations to one model
@@ -137,6 +144,7 @@ model Node {
 
     @@index([projectId, parentId])
     @@index([parentId])
+    @@index([deletionId])
 }
 
 // The data-model representation of a Connection (see CONTEXT.md "Connection /
@@ -166,11 +174,16 @@ model Edge {
     createdAt    DateTime      @default(now())
     updatedAt    DateTime      @updatedAt
     deletedAt    DateTime?
+    // Batch id of the cascading Component soft-delete that swept this Edge (see
+    // Node.deletionId / ADR-0008); null when live or when removed by a lone
+    // `deleteEdge`.
+    deletionId   String?
 
     @@index([projectId, canvasNodeId])
     @@index([canvasNodeId, sourceId, targetId, deletedAt])
     @@index([sourceId])
     @@index([targetId])
+    @@index([deletionId])
 }
 
 model VerificationToken {

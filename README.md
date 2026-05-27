@@ -53,18 +53,20 @@ The product is sequenced across milestones M0–M5; the full vision lives in the
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | **M0** | Data model + `(db, actor, input)` service layer + Vitest harness | Complete |
-| **M1** | First nested Canvas: create / drag / connect / rename / descend, soft-delete + undo | In progress |
+| **M1** | First nested Canvas: create / drag / connect / rename / descend, soft-delete + undo | Complete |
 | **M2** | Markdown export + in-app documentation editor | Planned |
 | **M3** | Boundary propagation (read-only proxies, inherited transitively) | Planned |
 | **M4** | MCP server: agent tokens, tools, resources, `llms.txt`, "Connect an agent" | Planned |
 | **M5** | Refinement-edge wiring, auto-layout, sharing polish | Planned |
 
 **Working today:** sign in with Discord, create and list Projects, open a Project by its
-capability URL, and on its root Canvas add Components (six kinds — service, database, external
-API, host, queue, generic), drag them, rename them inline, and draw / label / direct / remove
-Connections. Every edit is optimistic — it appears instantly and persists in the background, with
-rollback and a toast on failure. **In progress for M1:** descending into a Component's interior
-Canvas (breadcrumb navigation) and cascading soft-delete with undo.
+capability URL, and on its Canvas add Components (six kinds — service, database, external API,
+host, queue, generic), drag them, rename them inline, draw / label / direct / remove
+Connections, **descend** into a Component's interior Canvas with breadcrumb navigation, and
+**delete** a Component — cascading to its whole subtree and every incident or interior
+Connection — with one-click **undo**. Every edit is optimistic: it appears instantly and persists
+in the background, with rollback and a toast on failure. **Next up (M2):** markdown export and an
+in-app documentation editor.
 
 ## Stack
 
