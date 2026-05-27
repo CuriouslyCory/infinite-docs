@@ -101,7 +101,7 @@ top-level Canvas (the Nodes with `parentId = null`). Because it is derived, a Ca
 written directly — you mutate Nodes and Edges, and the Canvas falls out. *(The Node half of
 the derivation is realized now via **getCanvas**, and the Edge half is realized now too
 (`{ Edges where canvasNodeId = N }`); reading a non-root scope is realized now via
-**getCanvas**, while user-facing navigation into it arrives with **Descent**.)*
+**getCanvas**, and user-facing navigation into it is realized now via **Descent**.)*
 
 ### getCanvas
 The single service read that materializes a **Canvas** for a given **Canvas
@@ -126,11 +126,13 @@ interior Canvas it is**: the scope "is" a `Node`, and that Node's `id` is the
 `parentId` of the Components on it. The **Project root** is the scope with no such
 Component — represented as `parentId = null` in the data model and as the
 sentinel string `"root"` at the canvas-island boundary (ADR-0004 keys the island
-by scope so descending re-seeds the store). Use **scope** for this concept in
-prose and code; do not invent a `canvasId` (there is nothing to give an id to)
+by scope so descending re-seeds the store). A non-root scope rides the **Project
+route** as a bare Node id (`/p/[slug]/n/[nodeId]`); `"root"` stays an island
+sentinel only and never appears in a URL (ADR-0007). Use **scope** for this concept
+in prose and code; do not invent a `canvasId` (there is nothing to give an id to)
 and do not call it a "level", "context", or "view". *(The root scope and reading
 at non-root scopes are realized now via **getCanvas**; user-facing navigation into
-non-root scopes arrives with **Descent**.)*
+non-root scopes is realized now via **Descent**.)*
 
 ### Breadcrumbs
 The ordered ancestor chain of a **Canvas scope**: the **Components** from the
@@ -141,13 +143,17 @@ The ordered ancestor chain of a **Canvas scope**: the **Components** from the
 has no Component, so its breadcrumbs are the empty array `[]` — no `"root"`
 sentinel lives inside the chain (that string is a canvas-island key, not data;
 ADR-0004). Computed in a **single recursive query**, never a per-level walk
-(ADR-0006). *(Realized now in the data layer ahead of **Descent** navigation; the
-Descent UI renders them later.)*
+(ADR-0006). The **trail** (this `{ id, title }[]` data) is distinct from the
+**breadcrumb bar** (the UI that renders it): the bar prepends the **Project** as a
+presentational root crumb — so the empty-at-root trail still shows the Project —
+and marks the last entry as the current scope (ADR-0007). *(Realized now
+end-to-end: computed in the data layer and rendered by the Descent breadcrumb bar.)*
 
 ### Descent
 The act of opening a Component to enter its interior **Canvas**, moving one level deeper into
-the graph. Recurses to any depth. *(Defined now; navigation is implemented in a later
-milestone.)*
+the graph. Recurses to any depth. *(Realized now: double-clicking a Component descends into its
+interior **Canvas** at the **Project route** `/p/[slug]/n/[nodeId]`, with hover prefetch so the
+descent feels instant. See ADR-0007.)*
 
 ### Boundary proxy
 A read-only stand-in for an external system that a Component connects to on its *parent* Canvas,
@@ -171,8 +177,11 @@ The web address at which a Project opens — its **capability-URL slug** as a pa
 landing on the Project's top-level **Canvas**. The route is a server component that resolves the
 Project by slug (read access per ADR-0002), so it is reachable without sign-in; the **Canvas** is
 mounted beneath it as a client-only island (ADR-0004). A missing or soft-deleted slug renders an
-indistinguishable not-found. *(The empty top-level Canvas route lands in this milestone; routing
-into interior Canvases via **Descent** is a later milestone.)*
+indistinguishable not-found. Interior Canvases hang off the same path at
+`/p/[slug]/n/[nodeId]`, where `[nodeId]` is the scope's opaque **Node** id — URL addressing, not
+prose, so it sits outside the Component/Node naming split (like the `slug` itself), and the
+bearer-slug response headers cover it via the `/p/:path*` matcher (ADR-0007). *(Both the top-level
+Canvas route and — via **Descent** — interior Canvas routing are realized now.)*
 
 ### Actor
 The resolved identity of whoever is calling a service function:

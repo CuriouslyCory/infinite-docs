@@ -3,10 +3,12 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import {
   Box,
+  ChevronRight,
   Cog,
   Database,
   Globe,
   Layers,
+  Pencil,
   Server,
   type LucideIcon,
 } from "lucide-react";
@@ -33,6 +35,18 @@ export type ComponentNode = Node<ComponentNodeData, "component">;
 export const RenameComponentContext = createContext<
   (id: string, title: string) => void
 >(() => undefined);
+
+/**
+ * The Canvas island supplies the Descent action (open a Component's interior
+ * Canvas) through this context, for the same reason rename uses one: the node
+ * stays pure and React Flow doesn't re-render every node when the island
+ * re-renders. Both the node's "Open" button and the flow's double-click handler
+ * call it, so the route/prefetch logic lives in exactly one place. The default
+ * is inert — a node rendered outside the island's provider cannot descend.
+ */
+export const DescendComponentContext = createContext<(id: string) => void>(
+  () => undefined,
+);
 
 // Kind → icon. Kind is cosmetic (CONTEXT.md "Component kind"); this is the only
 // place the six kinds acquire a glyph. A finite `Record` keyed by `NodeKind` is
@@ -61,6 +75,7 @@ const KIND_ICON: Record<NodeKind, LucideIcon> = {
 export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
   const Icon = KIND_ICON[data.kind];
   const onRename = useContext(RenameComponentContext);
+  const onDescend = useContext(DescendComponentContext);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(data.title);
   // Enter commits, then blurs the unmounting input — which would fire a second
@@ -70,6 +85,9 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
   // Renaming is disabled while optimistic: a `temp_…` Component has no real id to
   // address yet, and the create-reconcile would overwrite a local title anyway.
   const canRename = !data.optimistic;
+  // Descent is likewise disabled while optimistic: a `temp_…` Component has no
+  // real id, so there is no interior Canvas to open yet.
+  const canDescend = !data.optimistic;
 
   function beginEditing() {
     if (!canRename) return;
@@ -96,7 +114,8 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
 
   return (
     <div
-      className={`flex items-center gap-2 rounded-lg border border-white/15 bg-[#1f2138] px-3 py-2 text-sm text-white shadow-lg ${
+      title={data.optimistic ? undefined : "Double-click to open"}
+      className={`group flex items-center gap-2 rounded-lg border border-white/15 bg-[#1f2138] px-3 py-2 text-sm text-white shadow-lg ${
         data.optimistic ? "opacity-60" : "opacity-100"
       }`}
     >
@@ -119,6 +138,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onFocus={(e) => e.currentTarget.select()}
+          onDoubleClick={(e) => e.stopPropagation()}
           onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -131,16 +151,48 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           }}
         />
       ) : (
-        <span
-          className="max-w-[12rem] truncate"
-          onDoubleClick={(e) => {
+        <span className="max-w-[12rem] truncate">{data.title}</span>
+      )}
+      {/* Descent affordance: a keyboard-reachable equivalent of double-click,
+          revealed on hover or keyboard focus. Tab lands here and Enter/Space
+          activates it; mouse users still double-click. `nodrag` stops a drag from
+          starting on the button, and stopping the dblclick keeps a fast
+          double-tap from also descending. Hidden while optimistic — a temp_
+          Component has no interior yet. */}
+      {!editing && canDescend && (
+        <button
+          type="button"
+          aria-label={`Open ${data.title}`}
+          title="Open"
+          className="nodrag shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-white focus-visible:opacity-100"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDescend(id);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <ChevronRight size={14} aria-hidden />
+        </button>
+      )}
+      {/* Rename affordance: revealed on hover (or keyboard focus). Double-click
+          is reserved for Descent, so renaming gets its own explicit control.
+          `nodrag` stops React Flow from starting a node drag on the button, and
+          stopping the dblclick keeps a fast double-tap on the pencil from
+          descending. Hidden while optimistic — a temp_ Component has no id yet. */}
+      {!editing && canRename && (
+        <button
+          type="button"
+          aria-label={`Rename ${data.title}`}
+          title="Rename"
+          className="nodrag shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-white focus-visible:opacity-100"
+          onClick={(e) => {
             e.stopPropagation();
             beginEditing();
           }}
-          title={canRename ? "Double-click to rename" : undefined}
+          onDoubleClick={(e) => e.stopPropagation()}
         >
-          {data.title}
-        </span>
+          <Pencil size={14} aria-hidden />
+        </button>
       )}
       <Handle
         type="source"

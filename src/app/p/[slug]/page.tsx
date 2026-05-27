@@ -1,9 +1,11 @@
 import { TRPCError } from "@trpc/server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 
+import { CanvasIsland } from "~/app/p/[slug]/_canvas";
+import { Breadcrumbs } from "~/app/p/[slug]/_canvas/breadcrumbs";
 import { HydrateClient, api } from "~/trpc/server";
-import { CanvasIsland } from "./_canvas";
 
 /**
  * The Project route: the capability-URL slug as a path segment, landing on the
@@ -49,17 +51,23 @@ export default async function ProjectPage({
           >
             ← Projects
           </Link>
-          {/* Breadcrumb region. Display-only this slice; the real trail from the
-              getCanvas payload arrives with Descent in a later slice. No edit
-              affordance here — the Project route is read-shaped for everyone. */}
-          <span className="text-sm font-medium">{project.title}</span>
+          {/* The breadcrumb bar reads the same hydrated getCanvas query the
+              Canvas island reads (ADR-0007). At the root scope the trail is
+              empty, so it renders just the Project title as the current crumb. */}
+          <Suspense
+            fallback={
+              <span className="text-sm font-medium">{project.title}</span>
+            }
+          >
+            <Breadcrumbs
+              slug={slug}
+              canvasNodeId={null}
+              projectTitle={project.title}
+            />
+          </Suspense>
         </header>
         <div className="min-h-0 flex-1">
-          <CanvasIsland
-            canvasScope="root"
-            slug={slug}
-            projectId={project.id}
-          />
+          <CanvasIsland canvasScope="root" slug={slug} projectId={project.id} />
         </div>
       </main>
     </HydrateClient>

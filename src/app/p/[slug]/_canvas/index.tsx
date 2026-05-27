@@ -27,9 +27,10 @@ export function CanvasIsland({
   projectId: string;
 }) {
   // Key the lazily-loaded Canvas (which owns the ReactFlowProvider) so changing
-  // the scope forces a full remount and a fresh store. The scope is "root" now;
-  // Descent swaps in a canvasNodeId in a later slice, and the keyed remount
-  // guarantees the child Canvas never inherits the parent's viewport or nodes.
+  // the scope forces a full remount and a fresh store. The scope is "root" for
+  // the Project's top-level Canvas and a canvasNodeId after a Descent; the keyed
+  // remount guarantees the child Canvas never inherits the parent's viewport or
+  // nodes.
   //
   // `slug` keys the capability read (getCanvas); `projectId` addresses the
   // owner-only create. Both are plain scalars passed from the server route — not
