@@ -3,9 +3,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
+import { CanvasIsland } from "~/app/p/[slug]/_canvas";
+import { Breadcrumbs } from "~/app/p/[slug]/_canvas/breadcrumbs";
 import { HydrateClient, api } from "~/trpc/server";
-import { CanvasIsland } from "../../_canvas";
-import { Breadcrumbs } from "../../_canvas/breadcrumbs";
 
 /**
  * The interior Canvas route — a Descent target addressed by the scope's Node id

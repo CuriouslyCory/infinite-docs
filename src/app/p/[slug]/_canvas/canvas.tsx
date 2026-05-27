@@ -25,6 +25,7 @@ import { api } from "~/trpc/react";
 import { AddComponent } from "./add-component";
 import {
   ComponentNodeView,
+  DescendComponentContext,
   RenameComponentContext,
   type ComponentNode,
 } from "./component-node";
@@ -523,55 +524,72 @@ function CanvasInner({
     [utils, canvasInput, setEdges, patchCanvas, editEdge],
   );
 
+  // Descent: open a Component's interior Canvas. One callback shared by the
+  // node's "Open" button (via DescendComponentContext) and the flow's
+  // double-click handler, so the route + prefetch logic lives in one place.
+  const descend = useCallback(
+    (nodeId: string) => {
+      if (nodeId.startsWith("temp_")) return; // no real interior yet
+      // Pre-warm in case this wasn't preceded by a hover (keyboard activation).
+      void utils.architecture.getCanvas.prefetch({
+        slug,
+        canvasNodeId: nodeId,
+      });
+      router.prefetch(`/p/${slug}/n/${nodeId}`);
+      router.push(`/p/${slug}/n/${nodeId}`);
+    },
+    [utils, router, slug],
+  );
+
   return (
     <RenameComponentContext.Provider value={commitRename}>
       <EditEdgeContext.Provider value={commitEdgeEdit}>
-        <ReactFlow<ComponentNode, ConnectionEdge>
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={(c) => void handleConnect(c)}
-          onEdgesDelete={handleEdgesDelete}
-          onNodeDoubleClick={(_event, node) => {
-            // Descent: open the Component's interior Canvas. A still-optimistic
-            // (temp_) node has no real id, so no interior to open.
-            if (node.id.startsWith("temp_")) return;
-            router.push(`/p/${slug}/n/${node.id}`);
-          }}
-          onNodeMouseEnter={(_event, node) => {
-            // Make Descent feel instant: warm the interior Canvas payload (tRPC
-            // cache, the same key the descended island reads) and the route shell.
-            if (node.id.startsWith("temp_")) return;
-            void utils.architecture.getCanvas.prefetch({
-              slug,
-              canvasNodeId: node.id,
-            });
-            router.prefetch(`/p/${slug}/n/${node.id}`);
-          }}
-          onNodeDragStop={(_event, _node, dragged) =>
-            void persistPositions(dragged)
-          }
-          onSelectionDragStop={(_event, dragged) =>
-            void persistPositions(dragged)
-          }
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          fitView
-        >
-          <Background />
-          <Controls />
-          <Panel position="top-left">
-            <AddComponent onAdd={addComponent} pending={createNode.isPending} />
-          </Panel>
-          {nodes.length === 0 && (
-            <Panel position="top-center">
-              <p className="mt-2 text-sm text-white/50">
-                Empty canvas. Add a Component to start modeling.
-              </p>
+        <DescendComponentContext.Provider value={descend}>
+          <ReactFlow<ComponentNode, ConnectionEdge>
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={(c) => void handleConnect(c)}
+            onEdgesDelete={handleEdgesDelete}
+            onNodeDoubleClick={(_event, node) => descend(node.id)}
+            onNodeMouseEnter={(_event, node) => {
+              // Make Descent feel instant: warm the interior Canvas payload (tRPC
+              // cache, the same key the descended island reads) and the route shell.
+              if (node.id.startsWith("temp_")) return;
+              void utils.architecture.getCanvas.prefetch({
+                slug,
+                canvasNodeId: node.id,
+              });
+              router.prefetch(`/p/${slug}/n/${node.id}`);
+            }}
+            onNodeDragStop={(_event, _node, dragged) =>
+              void persistPositions(dragged)
+            }
+            onSelectionDragStop={(_event, dragged) =>
+              void persistPositions(dragged)
+            }
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            fitView
+          >
+            <Background />
+            <Controls />
+            <Panel position="top-left">
+              <AddComponent
+                onAdd={addComponent}
+                pending={createNode.isPending}
+              />
             </Panel>
-          )}
-        </ReactFlow>
+            {nodes.length === 0 && (
+              <Panel position="top-center">
+                <p className="mt-2 text-sm text-white/50">
+                  Empty canvas. Add a Component to start modeling.
+                </p>
+              </Panel>
+            )}
+          </ReactFlow>
+        </DescendComponentContext.Provider>
       </EditEdgeContext.Provider>
     </RenameComponentContext.Provider>
   );
