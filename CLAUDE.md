@@ -66,7 +66,7 @@ There are no automated tests in this repo; `pnpm check` is the closest thing to 
 
 ### Prisma client lives in a non-standard location
 
-The Prisma client is generated to **`generated/prisma`** (see `prisma/schema.prisma` `generator.output`), not `node_modules`. Always access the database through the singleton at `~/server/db` (which imports `PrismaClient` from `../../generated/prisma/client`) — never import from `@prisma/client`. The `generated/` directory is committed to git and is excluded from tsconfig/ESLint; `postinstall` runs `prisma generate` to refresh it.
+The Prisma client is generated to **`generated/prisma`** (see `prisma/schema.prisma` `generator.output`), not `node_modules`. Always access the database through the singleton at `~/server/db` (which imports `PrismaClient` from `../../generated/prisma/client`) — never import from `@prisma/client`. The `generated/` directory is git-ignored (regenerated, not committed) and is excluded from tsconfig/ESLint; `postinstall` runs `prisma generate` to (re)create it on install.
 
 ### Environment variables are schema-validated
 

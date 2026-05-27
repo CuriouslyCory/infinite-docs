@@ -35,7 +35,7 @@ async function seedTwoRootNodes() {
 }
 
 describe("connectNodes", () => {
-  it("draws a Connection on the root Canvas with the FORWARD default and no label", async () => {
+  it("draws a Connection on the root Canvas with no label", async () => {
     const { actor, project, a, b } = await seedTwoRootNodes();
 
     const edge = await connectNodes(testDb, actor, {
@@ -48,7 +48,6 @@ describe("connectNodes", () => {
     expect(edge.canvasNodeId).toBeNull();
     expect(edge.sourceId).toBe(a.id);
     expect(edge.targetId).toBe(b.id);
-    expect(edge.direction).toBe("FORWARD");
     expect(edge.label).toBeNull();
     expect(edge.deletedAt).toBeNull();
 
@@ -56,7 +55,7 @@ describe("connectNodes", () => {
     expect(persisted?.sourceId).toBe(a.id);
   });
 
-  it("persists an explicit label and direction", async () => {
+  it("persists an explicit label", async () => {
     const { actor, project, a, b } = await seedTwoRootNodes();
 
     const edge = await connectNodes(testDb, actor, {
@@ -64,11 +63,9 @@ describe("connectNodes", () => {
       sourceId: a.id,
       targetId: b.id,
       label: "reads from",
-      direction: "BIDIRECTIONAL",
     });
 
     expect(edge.label).toBe("reads from");
-    expect(edge.direction).toBe("BIDIRECTIONAL");
   });
 
   it("rejects endpoints that live on different Canvases", async () => {
@@ -193,14 +190,13 @@ describe("connectNodes", () => {
     expect(await testDb.edge.count({ where: { deletedAt: null } })).toBe(2);
   });
 
-  it("treats a re-draw with a different label/direction as a duplicate (they do not factor in)", async () => {
+  it("treats a re-draw with a different label as a duplicate (the label does not factor in)", async () => {
     const { actor, project, a, b } = await seedTwoRootNodes();
     await connectNodes(testDb, actor, {
       projectId: project.id,
       sourceId: a.id,
       targetId: b.id,
       label: "first",
-      direction: "FORWARD",
     });
 
     await expect(
@@ -209,7 +205,6 @@ describe("connectNodes", () => {
         sourceId: a.id,
         targetId: b.id,
         label: "second",
-        direction: "NONE",
       }),
     ).rejects.toBeInstanceOf(ConflictError);
   });
@@ -334,17 +329,6 @@ describe("updateEdge", () => {
     expect(updated.label).toBe("new");
     const persisted = await testDb.edge.findUnique({ where: { id: edge.id } });
     expect(persisted?.label).toBe("new");
-  });
-
-  it("updates a Connection's direction", async () => {
-    const { actor, edge } = await seedEdge();
-
-    const updated = await updateEdge(testDb, actor, {
-      id: edge.id,
-      direction: "NONE",
-    });
-
-    expect(updated.direction).toBe("NONE");
   });
 
   it("clears the label when passed null", async () => {

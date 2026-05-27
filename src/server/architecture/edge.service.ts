@@ -1,7 +1,4 @@
-import {
-  type Edge,
-  type EdgeDirection as PrismaEdgeDirection,
-} from "../../../generated/prisma/client";
+import { type Edge } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
@@ -11,36 +8,8 @@ import {
   updateEdgeInput,
   type ConnectNodesInput,
   type DeleteEdgeInput,
-  type EdgeDirection,
   type UpdateEdgeInput,
 } from "~/lib/schemas";
-
-// Compile-time parity guard: the client-safe Zod `edgeDirection` enum
-// (~/lib/schemas) and the Prisma `EdgeDirection` enum must describe the same
-// value set. If either side gains or loses a member, one of these typed maps
-// stops type-checking and `pnpm check` fails — turning "keep the two enums in
-// sync" from a remembered discipline into a checked invariant (CONTEXT.md "Edge
-// direction"). This guard lives server-side precisely because importing the
-// Prisma enum is the leak we forbid in client code (ADR-0004); the client only
-// ever sees the Zod enum.
-const _zodDirectionIsPrismaDirection: Record<
-  EdgeDirection,
-  PrismaEdgeDirection
-> = {
-  NONE: "NONE",
-  FORWARD: "FORWARD",
-  BIDIRECTIONAL: "BIDIRECTIONAL",
-};
-const _prismaDirectionIsZodDirection: Record<
-  PrismaEdgeDirection,
-  EdgeDirection
-> = {
-  NONE: "NONE",
-  FORWARD: "FORWARD",
-  BIDIRECTIONAL: "BIDIRECTIONAL",
-};
-void _zodDirectionIsPrismaDirection;
-void _prismaDirectionIsZodDirection;
 
 /**
  * Draws a Connection (creates an Edge) between two Components on one Canvas.
@@ -53,8 +22,8 @@ void _prismaDirectionIsZodDirection;
  * 1. no self-Connection (`sourceId !== targetId`);
  * 2. same-Canvas — both endpoints' `parentId` equals `canvasNodeId`;
  * 3. no duplicate ACTIVE Edge sharing source + target + scope (A→B is distinct
- *    from B→A; label/direction never factor in; a soft-deleted Edge never
- *    blocks re-creation).
+ *    from B→A — the ordered pair IS the direction; the label never factors in;
+ *    a soft-deleted Edge never blocks re-creation).
  *
  * Owner-only: the Project is addressed by `projectId` (an internal handle,
  * never the capability slug — writes are never slug-granted, ADR-0002) and the
@@ -67,7 +36,7 @@ export async function connectNodes(
   actor: Actor,
   input: ConnectNodesInput,
 ): Promise<Edge> {
-  const { projectId, canvasNodeId, sourceId, targetId, label, direction } =
+  const { projectId, canvasNodeId, sourceId, targetId, label } =
     connectNodesInput.parse(input);
 
   const project = await db.project.findFirst({
@@ -126,26 +95,26 @@ export async function connectNodes(
       sourceId,
       targetId,
       label,
-      direction,
     },
   });
 }
 
 /**
- * Edits a Connection's `label` and/or `direction`. Addressed by the Edge `id` —
- * the natural key for an existing row, and how a future MCP tool arrives: the
- * service loads the Edge, resolves its Project, and authorizes owner-only
- * through `access.assertCanWrite` (ADR-0001). Only the provided fields change —
- * `label: null` clears it, `label: undefined` leaves it, an omitted `direction`
- * is untouched. `label` is UNTRUSTED user content, stored verbatim
- * (prompt-injection standing note, CONTEXT.md).
+ * Edits a Connection's `label`. Addressed by the Edge `id` — the natural key
+ * for an existing row, and how a future MCP tool arrives: the service loads the
+ * Edge, resolves its Project, and authorizes owner-only through
+ * `access.assertCanWrite` (ADR-0001). Only `label` changes — `label: null`
+ * clears it, `label: undefined` leaves it. There is no direction to edit: the
+ * arrow is structural (output→input), derived from the endpoints (ADR-0009).
+ * `label` is UNTRUSTED user content, stored verbatim (prompt-injection standing
+ * note, CONTEXT.md).
  */
 export async function updateEdge(
   db: Db,
   actor: Actor,
   input: UpdateEdgeInput,
 ): Promise<Edge> {
-  const { id, label, direction } = updateEdgeInput.parse(input);
+  const { id, label } = updateEdgeInput.parse(input);
 
   const edge = await db.edge.findFirst({ where: { id, deletedAt: null } });
   if (!edge) {
@@ -164,7 +133,6 @@ export async function updateEdge(
     where: { id: edge.id },
     data: {
       ...(label !== undefined ? { label } : {}),
-      ...(direction !== undefined ? { direction } : {}),
     },
   });
 }

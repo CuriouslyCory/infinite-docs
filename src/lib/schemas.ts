@@ -136,26 +136,16 @@ export const restoreNodeInput = z.object({
 export type RestoreNodeInput = z.infer<typeof restoreNodeInput>;
 
 /**
- * The three Connection orientations. This Zod enum is the client-safe source of
- * truth for the value set (the edge renderer imports it as values); the Prisma
- * `EdgeDirection` enum mirrors it, and a compile-time parity guard in
- * edge.service fails the build if the two ever drift. Direction is cosmetic —
- * it drives only how a Connection is drawn (no arrowhead / one / two) and never
- * factors into de-duplication (see CONTEXT.md "Edge direction"). Never import
- * the Prisma enum into client code (it reaches the server graph); import this.
- */
-export const edgeDirection = z.enum(["NONE", "FORWARD", "BIDIRECTIONAL"]);
-export type EdgeDirection = z.infer<typeof edgeDirection>;
-
-/**
  * Input for drawing a Connection (creating an Edge). Addressed by `projectId`
  * (an internal handle), NOT the capability slug: writes are never slug-granted
  * (ADR-0002). `input` carries no ownerId; identity comes only from the actor
  * (ADR-0001). `canvasNodeId` is the Canvas the Connection is painted on (null =>
  * the Project root) and is supplied explicitly, never inferred from the
  * endpoints (ADR-0005); the service confirms both endpoints actually sit on it.
- * `sourceId`/`targetId` are the endpoint Nodes. `label` is UNTRUSTED user
- * content, stored verbatim (prompt-injection standing note, CONTEXT.md).
+ * `sourceId`/`targetId` are the endpoint Nodes — their ordering (output Port →
+ * input Port) IS the Connection's direction; the arrow is structural, never a
+ * stored field (ADR-0009). `label` is UNTRUSTED user content, stored verbatim
+ * (prompt-injection standing note, CONTEXT.md).
  */
 export const connectNodesInput = z.object({
   projectId: z.string().min(1),
@@ -163,24 +153,23 @@ export const connectNodesInput = z.object({
   sourceId: z.string().min(1),
   targetId: z.string().min(1),
   label: z.string().max(200).optional(),
-  direction: edgeDirection.default("FORWARD"),
 });
 // `z.input` (not `z.infer`) so callers may omit the defaulted fields; the
 // service re-parses with the schema to materialize them.
 export type ConnectNodesInput = z.input<typeof connectNodesInput>;
 
 /**
- * Input for editing a Connection (its `label` and/or `direction`). Addressed by
- * the Edge `id` — the natural key for an existing row, and how a future MCP tool
- * arrives. The service loads the Edge, resolves its Project, and enforces
- * owner-only access (ADR-0001). `label` is nullable (null clears it) and
- * optional (undefined leaves it); `direction` is optional. `label` is UNTRUSTED
+ * Input for editing a Connection's `label`. Addressed by the Edge `id` — the
+ * natural key for an existing row, and how a future MCP tool arrives. The
+ * service loads the Edge, resolves its Project, and enforces owner-only access
+ * (ADR-0001). `label` is nullable (null clears it) and optional (undefined
+ * leaves it). There is no direction to edit — the arrow is structural,
+ * output→input, derived from the endpoints (ADR-0009). `label` is UNTRUSTED
  * user content, stored verbatim (prompt-injection standing note, CONTEXT.md).
  */
 export const updateEdgeInput = z.object({
   id: z.string().min(1),
   label: z.string().max(200).nullable().optional(),
-  direction: edgeDirection.optional(),
 });
 export type UpdateEdgeInput = z.infer<typeof updateEdgeInput>;
 

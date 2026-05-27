@@ -6,7 +6,10 @@ import {
   addEdge,
   Background,
   type Connection,
+  ConnectionMode,
   Controls,
+  type EdgeMarker,
+  MarkerType,
   Panel,
   ReactFlow,
   ReactFlowProvider,
@@ -18,7 +21,8 @@ import { useRouter } from "next/navigation";
 import { Suspense, useCallback, useMemo } from "react";
 import { Toaster, toast } from "sonner";
 
-import { type EdgeDirection, type NodeKind } from "~/lib/schemas";
+import { canConnect } from "~/lib/connection-rules";
+import { type NodeKind } from "~/lib/schemas";
 import { type CanvasData, type CanvasEdge, type CanvasNode } from "~/lib/types";
 import { api } from "~/trpc/react";
 
@@ -34,7 +38,6 @@ import {
 import {
   ConnectionEdgeView,
   EditEdgeContext,
-  markersForDirection,
   type ConnectionEdge,
 } from "./connection-edge";
 
@@ -62,6 +65,12 @@ import {
 const nodeTypes = { component: ComponentNodeView };
 const edgeTypes = { connection: ConnectionEdgeView };
 
+// A Connection's direction is structural — output Port → input Port — so every
+// Connection carries one arrowhead at its target (input) end. Set on the edge
+// object (never a stored field) so React Flow registers the marker once and the
+// edge view forwards the resolved url (CONTEXT.md "Port"; ADR-0009).
+const STRUCTURAL_MARKER_END: EdgeMarker = { type: MarkerType.ArrowClosed };
+
 function toRFNode(n: CanvasNode): ComponentNode {
   return {
     id: n.id,
@@ -84,12 +93,11 @@ function toRFEdge(e: CanvasEdge): ConnectionEdge {
     type: "connection",
     source: e.sourceId,
     target: e.targetId,
+    markerEnd: STRUCTURAL_MARKER_END,
     data: {
       label: e.label,
-      direction: e.direction,
       optimistic: e.id.startsWith("temp_"),
     },
-    ...markersForDirection(e.direction),
   };
 }
 
@@ -133,7 +141,6 @@ function optimisticCanvasEdge(
     sourceId,
     targetId,
     label: null,
-    direction: "FORWARD",
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -380,27 +387,33 @@ function CanvasInner({
     [utils, canvasInput, projectId, updatePositions, setNodes, patchCanvas],
   );
 
-  // Draw a Connection. Refuses self-links and still-optimistic (temp_) endpoints
-  // (the latter have no real id to persist yet), and short-circuits an obvious
-  // duplicate so the user gets instant feedback rather than a doomed round trip
-  // (the server is still authoritative). Optimistic edge in store + cache mirror,
-  // one connectNodes mutation, reconcile temp → real id, roll back + toast on
-  // failure (a CONFLICT/BAD_REQUEST rejection rolls back the same way).
+  // Draw a Connection. Refuses a still-optimistic (temp_) endpoint (no real id
+  // to persist yet), then pre-flights the pure topology rules — no self-link, no
+  // duplicate — via `canConnect`, so the user gets instant feedback rather than a
+  // doomed round trip (the service stays authoritative). Optimistic edge in store
+  // + cache mirror, one connectNodes mutation, reconcile temp → real id, roll
+  // back + toast on failure (a CONFLICT/BAD_REQUEST rejection rolls back the same
+  // way).
   const handleConnect = useCallback(
     async (connection: Connection) => {
       const { source, target } = connection;
-      if (!source || !target || source === target) return;
+      if (!source || !target) return;
       if (source.startsWith("temp_") || target.startsWith("temp_")) {
         toast.error("Finish adding that component before connecting it.");
         return;
       }
-      const existing = utils.architecture.getCanvas.getData(canvasInput);
-      if (
-        existing?.interiorEdges.some(
-          (e) => e.sourceId === source && e.targetId === target,
-        )
-      ) {
-        toast.error("That connection already exists.");
+      const existing =
+        utils.architecture.getCanvas.getData(canvasInput)?.interiorEdges ?? [];
+      const check = canConnect(
+        { source, target },
+        existing.map((e) => ({ source: e.sourceId, target: e.targetId })),
+      );
+      if (!check.ok) {
+        toast.error(
+          check.reason === "self-link"
+            ? "A component can’t connect to itself."
+            : "That connection already exists.",
+        );
         return;
       }
 
@@ -412,8 +425,8 @@ function CanvasInner({
             type: "connection",
             source,
             target,
-            data: { label: null, direction: "FORWARD", optimistic: true },
-            ...markersForDirection("FORWARD"),
+            markerEnd: STRUCTURAL_MARKER_END,
+            data: { label: null, optimistic: true },
           },
           es,
         ),
@@ -613,46 +626,26 @@ function CanvasInner({
     ],
   );
 
-  // Edit a Connection's label/direction: optimistic in store (markers re-derived
-  // from the new direction) + cache mirror, one updateEdge mutation, both rolled
-  // back with a toast on failure. Provided to the edges through context (below)
-  // so it stays one stable reference.
+  // Edit a Connection's label: optimistic in store + cache mirror, one updateEdge
+  // mutation, both rolled back with a toast on failure. Provided to the edges
+  // through context (below) so it stays one stable reference. (There is no
+  // direction to edit — the arrow is structural, output→input; ADR-0009.)
   const commitEdgeEdit = useCallback(
-    (
-      id: string,
-      patch: { label?: string | null; direction?: EdgeDirection },
-    ): void => {
+    (id: string, label: string | null): void => {
       const prev = utils.architecture.getCanvas
         .getData(canvasInput)
         ?.interiorEdges.find((e) => e.id === id);
 
       setEdges((es) =>
-        es.map((e) => {
-          if (e.id !== id) return e;
-          const nextDirection =
-            patch.direction ?? e.data?.direction ?? "FORWARD";
-          const nextLabel =
-            patch.label !== undefined ? patch.label : (e.data?.label ?? null);
-          return {
-            ...e,
-            data: { ...e.data, label: nextLabel, direction: nextDirection },
-            ...markersForDirection(nextDirection),
-          };
-        }),
+        es.map((e) => (e.id === id ? { ...e, data: { ...e.data, label } } : e)),
       );
       patchCanvas((c) => ({
         interiorEdges: c.interiorEdges.map((e) =>
-          e.id === id
-            ? {
-                ...e,
-                label: patch.label !== undefined ? patch.label : e.label,
-                direction: patch.direction ?? e.direction,
-              }
-            : e,
+          e.id === id ? { ...e, label } : e,
         ),
       }));
 
-      void editEdge({ id, ...patch }).catch(() => {
+      void editEdge({ id, label }).catch(() => {
         if (prev) {
           setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(prev) : e)));
           patchCanvas((c) => ({
@@ -694,6 +687,24 @@ function CanvasInner({
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={(c) => void handleConnect(c)}
+                // Strict connection mode is what makes a Connection run only
+                // output Port → input Port (a drag can go only from a source
+                // handle to a target handle); pin it explicitly so that
+                // output→input invariant can't be silently lost (ADR-0009).
+                connectionMode={ConnectionMode.Strict}
+                // Instant drag feedback: reject a self-link and a still-optimistic
+                // (temp_) endpoint by snapping back. Duplicates are deliberately
+                // allowed through (passing [] skips the duplicate rule) so
+                // onConnect can surface a toast — blocking them here would snap a
+                // duplicate back silently, with no explanation.
+                isValidConnection={(c) => {
+                  const { source, target } = c;
+                  if (!source || !target) return false;
+                  if (source.startsWith("temp_") || target.startsWith("temp_")) {
+                    return false;
+                  }
+                  return canConnect({ source, target }, []).ok;
+                }}
                 onEdgesDelete={handleEdgesDelete}
                 onNodeDoubleClick={(_event, node) => descend(node.id)}
                 onNodeMouseEnter={(_event, node) => {

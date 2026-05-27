@@ -147,7 +147,7 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: edit a Connection's label/direction. Owner access is
+  // Owner-only mutation: edit a Connection's label. Owner access is
   // enforced in the service (ADR-0001).
   updateEdge: protectedProcedure
     .input(updateEdgeInput)

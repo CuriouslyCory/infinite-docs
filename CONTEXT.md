@@ -20,9 +20,11 @@ the user-facing word from the data word and never mix them:
 | --- | --- | --- |
 | A documented thing on the graph | **Component** | **Node** |
 | A link between two of them | **Connection** | **Edge** |
+| A Component's connection point | **Port** (input / output) | **handle** (React Flow `target` / `source`) |
 
-Rule of thumb: anything a human reads or an MCP agent calls says **Component** / **Connection**;
-anything in the Prisma schema, service signatures, or graph algorithms says **Node** / **Edge**.
+Rule of thumb: anything a human reads or an MCP agent calls says **Component** / **Connection** /
+**Port**; anything in the Prisma schema, React Flow code, or graph algorithms says **Node** /
+**Edge** / **handle**.
 
 ## Terms
 
@@ -61,18 +63,22 @@ value is shown as "External API". *(The `kind` field and its six values are
 realized now; later kinds, if any, are an additive change.)*
 
 ### Connection
-The user-facing link between two Components, drawn on a **Canvas** by connecting one to
-another. Carries an optional **label** (untrusted user content — stored verbatim, never
-interpreted; see the prompt-injection standing note) and a **direction** (see **Edge
-direction**). Backed by an **Edge**. *(Drawing, labeling, directing, and removing a Connection
-are realized now — see **Edge** for the same-Canvas, no-self-link, and no-duplicate-active
-rules; the refinement Connection that resolves a **boundary proxy** to a real Component (M5)
-lands later.)*
+The user-facing link between two Components, drawn on a **Canvas** by dragging from one
+Component's output **Port** to another's input Port. Carries an optional **label** (untrusted
+user content — stored verbatim, never interpreted; see the prompt-injection standing note).
+Backed by an **Edge**. A Connection's direction is **structural**: the arrow always points at
+the input Port, derived from the output→input (`sourceId`→`targetId`) ordering — never a stored
+or user-set field, so it cannot lie (ADR-0009). A two-way relationship is **two Connections**
+(one each way), each independently labelable. *(Drawing, labeling, and removing a Connection are
+realized now — see **Edge** for the same-Canvas, no-self-link, and no-duplicate-active rules;
+the refinement Connection that resolves a **boundary proxy** to a real Component (M5) lands
+later.)*
 
 ### Edge
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
-`targetId` (both **Nodes**), a `direction` (`EdgeDirection`, see **Edge direction**), an
-optional `label`, and a soft-delete column (`deletedAt`). Scoped to the Canvas it is drawn on
+`targetId` (both **Nodes**), an optional `label`, and a soft-delete column (`deletedAt`). The
+`sourceId`→`targetId` ordering (output **Port** → input Port) IS the direction; the arrow is
+structural, with no stored `direction` field (ADR-0009). Scoped to the Canvas it is drawn on
 by an **explicit `canvasNodeId`** (the Component whose interior Canvas owns the Edge; null = the
 **Project** root), rather than being inferred from its endpoints — endpoints can later span
 scope levels (the M5 refinement Connection), so scope is recorded, not derived (ADR-0005).
@@ -84,18 +90,27 @@ to users by this name. *(The `Edge` model, `connectNodes`/`updateEdge`/`deleteEd
 delete is undoable now (see **Deletion id**), while partial-unique-index hardening of the
 de-dupe rule and undo of a standalone single-Connection `deleteEdge` are later refinements.)*
 
-### Edge direction (`EdgeDirection`)
-A **Connection's** orientation, stored on its **Edge** as `direction: EdgeDirection`. One of
-three values: `NONE` (undirected), `FORWARD` (source → target, the default), and
-`BIDIRECTIONAL` (both ways). The word in prose is **direction** and the enum name in code is
-`EdgeDirection` — never "arrow" or "directionality". **Direction is cosmetic:** it drives only
-how the Connection is drawn (no arrowhead, one, or two) and never factors into de-duplication
-(two Connections are duplicates by source + target + scope alone, regardless of direction; see
-**Edge** and ADR-0005). User-facing labels are *Undirected, Directed, Bidirectional*. As with
-`NodeKind`, this Zod enum is the client-safe source of truth (`~/lib/schemas`), the Prisma
-`EdgeDirection` enum mirrors it, and a compile-time parity guard in the service layer fails the
-build if the two ever drift. *(All three values are realized now; later directions, if any, are
-an additive change.)*
+### Port
+A Component's connection point — the user-facing name for a React Flow **handle**. Every
+Component exposes exactly two: an **input Port** (the `target` handle, rendered on the left,
+where Connections arrive) and an **output Port** (the `source` handle, rendered on the right,
+where Connections originate). A **Connection** is drawn by dragging output Port → input Port,
+and that ordering is the Connection's structural direction — the arrow points at the input Port
+(ADR-0009). Both Ports are **unbounded**: an output Port can feed many input Ports (fan-out) and
+an input Port can receive from many output Ports (fan-in), with no connection-count cap; the
+only limit is the de-dupe rule (no two *active* Connections share the same source + target +
+scope; see **Edge** and ADR-0005). The word in prose and UI is **Port**; the React Flow code
+word is **handle** (the same user-vs-code split as Component/Node) — never "connector",
+"socket", "anchor", or "terminal". *(The two handles render on every Component now, and "Port"
+is the canonical user word as of this slice. Exactly two Ports per Component — typed, named, or
+per-protocol Ports are out of scope.)*
+
+### Edge direction — retired
+Removed in the slice that made the Connection arrow **structural** (ADR-0009). Direction was
+once a cosmetic `EdgeDirection` field (`NONE` / `FORWARD` / `BIDIRECTIONAL`) the user cycled by
+hand; it is no longer stored. The arrow now always points at the target's **input Port**
+(output→input), derived from the `sourceId`→`targetId` ordering, and a two-way relationship is
+**two Connections**. See **Connection**, **Port**, and ADR-0009.
 
 ### Canvas
 A **derived view, not a stored entity.** The Canvas of a Component `N` is
