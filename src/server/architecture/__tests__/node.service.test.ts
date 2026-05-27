@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { type Actor } from "../actor";
 import { connectNodes, deleteEdge } from "../edge.service";
-import { ForbiddenError, NotFoundError } from "../errors";
+import { ConflictError, ForbiddenError, NotFoundError } from "../errors";
 import {
+  assertNoOrphanedChildren,
   createNode,
   deleteNode,
   getCanvas,
@@ -751,7 +752,7 @@ describe("deleteNode", () => {
   });
 
   it("rejects a non-owner (and writes nothing)", async () => {
-    const { p, c1 } = await seedTree();
+    const { p, c1, e1, e2, e3 } = await seedTree();
     const intruder: Actor = { userId: "intruder" };
 
     await expect(
@@ -764,6 +765,16 @@ describe("deleteNode", () => {
     expect(
       (await testDb.node.findUnique({ where: { id: c1.id } }))?.deletedAt,
     ).toBeNull();
+    // Also assert edges keep deletedAt/deletionId null
+    const e1r = await testDb.edge.findUnique({ where: { id: e1.id } });
+    const e2r = await testDb.edge.findUnique({ where: { id: e2.id } });
+    const e3r = await testDb.edge.findUnique({ where: { id: e3.id } });
+    expect(e1r?.deletedAt).toBeNull();
+    expect(e1r?.deletionId).toBeNull();
+    expect(e2r?.deletedAt).toBeNull();
+    expect(e2r?.deletionId).toBeNull();
+    expect(e3r?.deletedAt).toBeNull();
+    expect(e3r?.deletionId).toBeNull();
   });
 
   it("reports not-found for an unknown Component", async () => {
@@ -772,6 +783,38 @@ describe("deleteNode", () => {
     await expect(
       deleteNode(testDb, actor, { id: "nope" }),
     ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  // The post-stamp guard. The sequential cascade always gathers every live
+  // descendant, so this guard fires only under a concurrent createNode that
+  // commits a child under a soon-to-be-deleted parent (the accepted READ
+  // COMMITTED window, ADR-0008) — it CANNOT be reached by calling deleteNode on a
+  // pre-deleted node (that short-circuits to not-found). So we drive the real
+  // guard deleteNode runs (assertNoOrphanedChildren) directly, against the exact
+  // end-state a race would leave, crafted deterministically.
+  it("guard rejects (ConflictError) a live child left under a stamped node", async () => {
+    const { actor, project, p } = await seedTree();
+    const del = await deleteNode(testDb, actor, { id: p.id });
+
+    // The racing insert's aftermath: a live child whose parent is in the stamped
+    // set. createNode itself refuses a deleted parent, so craft the row directly.
+    await testDb.node.create({
+      data: { projectId: project.id, parentId: p.id, title: "Raced child" },
+    });
+
+    await expect(
+      assertNoOrphanedChildren(testDb, del.nodeIds),
+    ).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("guard passes when the cascade is complete (no live child under the stamped set)", async () => {
+    const { actor, p } = await seedTree();
+    const del = await deleteNode(testDb, actor, { id: p.id });
+
+    // The whole subtree was swept, so nothing live sits under it.
+    await expect(
+      assertNoOrphanedChildren(testDb, del.nodeIds),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -825,6 +868,76 @@ describe("restoreNode", () => {
     const root = await getCanvas(testDb, null, { slug: project.slug });
     expect(root.interiorNodes.map((n) => n.title).sort()).toEqual(["P", "S"]);
     expect(root.interiorEdges).toHaveLength(1);
+  });
+
+  it("restores interior Components and Connections, visible on descent", async () => {
+    // Root Canvas: P, S, T. P's interior: C1, C2.
+    // e1: P -> S (root Canvas, incident)
+    // e2: C1 -> C2 (on P's interior Canvas)
+    // e3: S -> T (root Canvas, survivors untouched)
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const p = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "P",
+    });
+    const s = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "S",
+    });
+    const t = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "T",
+    });
+    const c1 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: p.id,
+      title: "C1",
+    });
+    const c2 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: p.id,
+      title: "C2",
+    });
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: p.id,
+      targetId: s.id,
+    });
+    const e2 = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      canvasNodeId: p.id,
+      sourceId: c1.id,
+      targetId: c2.id,
+    });
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: s.id,
+      targetId: t.id,
+    });
+    const del = await deleteNode(testDb, actor, { id: p.id });
+
+    // While P is deleted, descending into its interior Canvas is a not-found.
+    await expect(
+      getCanvas(testDb, null, { slug: project.slug, canvasNodeId: p.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    // Restore
+    const res = await restoreNode(testDb, actor, {
+      deletionId: del.deletionId,
+    });
+    expect(res.nodeIds).toContain(c1.id);
+    expect(res.nodeIds).toContain(c2.id);
+    expect(res.edgeIds).toContain(e2.id);
+
+    // P's interior Canvas is now visible
+    const interior = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: p.id,
+    });
+    expect(interior.interiorNodes.map((n) => n.id)).toEqual([c1.id, c2.id]);
+    expect(interior.interiorEdges.map((e) => e.id)).toEqual([e2.id]);
   });
 
   it("does not revive a descendant deleted in an earlier, separate batch (isolation A)", async () => {
@@ -936,12 +1049,23 @@ describe("restoreNode", () => {
   });
 
   it("rejects a non-owner undoing a delete", async () => {
-    const { del } = await seedAndDelete();
+    const { p, c, e1, del } = await seedAndDelete();
     const intruder: Actor = { userId: "intruder" };
 
     await expect(
       restoreNode(testDb, intruder, { deletionId: del.deletionId }),
     ).rejects.toBeInstanceOf(ForbiddenError);
+
+    // Assert the batch stays deleted (deletedAt and deletionId intact)
+    const pr = await testDb.node.findUnique({ where: { id: p.id } });
+    const cr = await testDb.node.findUnique({ where: { id: c.id } });
+    const er = await testDb.edge.findUnique({ where: { id: e1.id } });
+    expect(pr?.deletedAt).not.toBeNull();
+    expect(pr?.deletionId).toBe(del.deletionId);
+    expect(cr?.deletedAt).not.toBeNull();
+    expect(cr?.deletionId).toBe(del.deletionId);
+    expect(er?.deletedAt).not.toBeNull();
+    expect(er?.deletionId).toBe(del.deletionId);
   });
 
   it("reports not-found for an unknown or already-restored deletionId", async () => {

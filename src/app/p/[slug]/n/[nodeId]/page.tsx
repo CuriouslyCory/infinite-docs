@@ -5,6 +5,7 @@ import { Suspense } from "react";
 
 import { CanvasIsland } from "~/app/p/[slug]/_canvas";
 import { Breadcrumbs } from "~/app/p/[slug]/_canvas/breadcrumbs";
+import { auth } from "~/server/auth";
 import { HydrateClient, api } from "~/trpc/server";
 
 /**
@@ -28,6 +29,7 @@ export default async function InteriorCanvasPage({
   params: Promise<{ slug: string; nodeId: string }>;
 }) {
   const { slug, nodeId } = await params;
+  const session = await auth();
 
   let project;
   try {
@@ -40,6 +42,8 @@ export default async function InteriorCanvasPage({
     }
     throw error;
   }
+
+  const canEdit = session?.user?.id === project.ownerId;
 
   // Seed the scoped Canvas so the island and the breadcrumb bar both read it
   // from the hydration cache — one fetch, no waterfall. The input MUST match the
@@ -78,6 +82,7 @@ export default async function InteriorCanvasPage({
             canvasScope={nodeId}
             slug={slug}
             projectId={project.id}
+            canEdit={canEdit}
           />
         </div>
       </main>

@@ -5,6 +5,7 @@ import { Suspense } from "react";
 
 import { CanvasIsland } from "~/app/p/[slug]/_canvas";
 import { Breadcrumbs } from "~/app/p/[slug]/_canvas/breadcrumbs";
+import { auth } from "~/server/auth";
 import { HydrateClient, api } from "~/trpc/server";
 
 /**
@@ -20,6 +21,7 @@ export default async function ProjectPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  const session = await auth();
 
   let project;
   try {
@@ -34,6 +36,8 @@ export default async function ProjectPage({
     }
     throw error;
   }
+
+  const canEdit = session?.user?.id === project.ownerId;
 
   // Prefetch the root Canvas so the client island reads it from the hydration
   // cache with no extra round trip (ADR-0004 names this route as that seam). The
@@ -67,7 +71,12 @@ export default async function ProjectPage({
           </Suspense>
         </header>
         <div className="min-h-0 flex-1">
-          <CanvasIsland canvasScope="root" slug={slug} projectId={project.id} />
+          <CanvasIsland
+            canvasScope="root"
+            slug={slug}
+            projectId={project.id}
+            canEdit={canEdit}
+          />
         </div>
       </main>
     </HydrateClient>

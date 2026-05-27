@@ -60,6 +60,14 @@ export const DeleteComponentContext = createContext<(id: string) => void>(
   () => undefined,
 );
 
+/**
+ * The Canvas island supplies the owner-only edit permission through this context.
+ * When false (non-owner), rename and delete affordances are hidden even if the
+ * node is not optimistic. Descent (navigation) remains ungated — viewers can
+ * open a Component's interior Canvas. Default is false (read-only).
+ */
+export const CanEditContext = createContext<boolean>(false);
+
 // Kind → icon. Kind is cosmetic (CONTEXT.md "Component kind"); this is the only
 // place the six kinds acquire a glyph. A finite `Record` keyed by `NodeKind` is
 // not widened by `noUncheckedIndexedAccess`, so indexing it needs no guard.
@@ -89,6 +97,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
   const onRename = useContext(RenameComponentContext);
   const onDescend = useContext(DescendComponentContext);
   const onDelete = useContext(DeleteComponentContext);
+  const canEdit = useContext(CanEditContext);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(data.title);
   // Enter commits, then blurs the unmounting input — which would fire a second
@@ -97,13 +106,16 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
 
   // Renaming is disabled while optimistic: a `temp_…` Component has no real id to
   // address yet, and the create-reconcile would overwrite a local title anyway.
-  const canRename = !data.optimistic;
+  // Also disabled for non-owners (canEdit = false).
+  const canRename = !data.optimistic && canEdit;
   // Descent is likewise disabled while optimistic: a `temp_…` Component has no
-  // real id, so there is no interior Canvas to open yet.
+  // real id, so there is no interior Canvas to open yet. Ungated for owners;
+  // viewers can descend to explore the graph.
   const canDescend = !data.optimistic;
   // Delete is likewise disabled while optimistic: a `temp_…` Component has no
-  // real id yet, so there is nothing to soft-delete server-side.
-  const canDelete = !data.optimistic;
+  // real id yet, so there is nothing to soft-delete server-side. Also disabled
+  // for non-owners (canEdit = false).
+  const canDelete = !data.optimistic && canEdit;
 
   function beginEditing() {
     if (!canRename) return;

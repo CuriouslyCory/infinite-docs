@@ -24,6 +24,7 @@ import { api } from "~/trpc/react";
 
 import { AddComponent } from "./add-component";
 import {
+  CanEditContext,
   ComponentNodeView,
   DeleteComponentContext,
   DescendComponentContext,
@@ -144,10 +145,12 @@ function CanvasInner({
   scope,
   slug,
   projectId,
+  canEdit,
 }: {
   scope: string;
   slug: string;
   projectId: string;
+  canEdit: boolean;
 }) {
   const utils = api.useUtils();
   const router = useRouter();
@@ -517,22 +520,24 @@ function CanvasInner({
           : {};
       });
 
-      void restoreComponent({ deletionId }).catch(() => {
-        if (node) {
-          setNodes((ns) => ns.filter((n) => n.id !== node.id));
+      void restoreComponent({ deletionId })
+        .then(() => void utils.architecture.getCanvas.invalidate())
+        .catch(() => {
+          if (node) {
+            setNodes((ns) => ns.filter((n) => n.id !== node.id));
+            patchCanvas((c) => ({
+              interiorNodes: c.interiorNodes.filter((n) => n.id !== node.id),
+            }));
+          }
+          const ids = new Set(incidentEdges.map((e) => e.id));
+          setEdges((es) => es.filter((e) => !ids.has(e.id)));
           patchCanvas((c) => ({
-            interiorNodes: c.interiorNodes.filter((n) => n.id !== node.id),
+            interiorEdges: c.interiorEdges.filter((e) => !ids.has(e.id)),
           }));
-        }
-        const ids = new Set(incidentEdges.map((e) => e.id));
-        setEdges((es) => es.filter((e) => !ids.has(e.id)));
-        patchCanvas((c) => ({
-          interiorEdges: c.interiorEdges.filter((e) => !ids.has(e.id)),
-        }));
-        toast.error("Couldn’t undo. Please try again.");
-      });
+          toast.error("Couldn’t undo. Please try again.");
+        });
     },
-    [setNodes, setEdges, patchCanvas, restoreComponent],
+    [setNodes, setEdges, patchCanvas, restoreComponent, utils],
   );
 
   // Delete a Component: a cascading soft-delete. Optimistically remove it and its
@@ -562,6 +567,7 @@ function CanvasInner({
 
       void deleteComponent({ id })
         .then(({ deletionId }) => {
+          void utils.architecture.getCanvas.invalidate();
           toast("Component deleted", {
             action: {
               label: "Undo",
@@ -681,50 +687,57 @@ function CanvasInner({
       <EditEdgeContext.Provider value={commitEdgeEdit}>
         <DescendComponentContext.Provider value={descend}>
           <DeleteComponentContext.Provider value={removeComponent}>
-            <ReactFlow<ComponentNode, ConnectionEdge>
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={(c) => void handleConnect(c)}
-              onEdgesDelete={handleEdgesDelete}
-              onNodeDoubleClick={(_event, node) => descend(node.id)}
-              onNodeMouseEnter={(_event, node) => {
-                // Make Descent feel instant: warm the interior Canvas payload (tRPC
-                // cache, the same key the descended island reads) and the route shell.
-                if (node.id.startsWith("temp_")) return;
-                void utils.architecture.getCanvas.prefetch({
-                  slug,
-                  canvasNodeId: node.id,
-                });
-                router.prefetch(`/p/${slug}/n/${node.id}`);
-              }}
-              onNodeDragStop={(_event, _node, dragged) =>
-                void persistPositions(dragged)
-              }
-              onSelectionDragStop={(_event, dragged) =>
-                void persistPositions(dragged)
-              }
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              fitView
-            >
-              <Background />
-              <Controls />
-              <Panel position="top-left">
-                <AddComponent
-                  onAdd={addComponent}
-                  pending={createNode.isPending}
-                />
-              </Panel>
-              {nodes.length === 0 && (
-                <Panel position="top-center">
-                  <p className="mt-2 text-sm text-white/50">
-                    Empty canvas. Add a Component to start modeling.
-                  </p>
-                </Panel>
-              )}
-            </ReactFlow>
+            <CanEditContext.Provider value={canEdit}>
+              <ReactFlow<ComponentNode, ConnectionEdge>
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={(c) => void handleConnect(c)}
+                onEdgesDelete={handleEdgesDelete}
+                onNodeDoubleClick={(_event, node) => descend(node.id)}
+                onNodeMouseEnter={(_event, node) => {
+                  // Make Descent feel instant: warm the interior Canvas payload (tRPC
+                  // cache, the same key the descended island reads) and the route shell.
+                  if (node.id.startsWith("temp_")) return;
+                  void utils.architecture.getCanvas.prefetch({
+                    slug,
+                    canvasNodeId: node.id,
+                  });
+                  router.prefetch(`/p/${slug}/n/${node.id}`);
+                }}
+                onNodeDragStop={(_event, _node, dragged) =>
+                  void persistPositions(dragged)
+                }
+                onSelectionDragStop={(_event, dragged) =>
+                  void persistPositions(dragged)
+                }
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                nodesDraggable={canEdit}
+                nodesConnectable={canEdit}
+                deleteKeyCode={canEdit ? undefined : null}
+                fitView
+              >
+                <Background />
+                <Controls />
+                {canEdit && (
+                  <Panel position="top-left">
+                    <AddComponent
+                      onAdd={addComponent}
+                      pending={createNode.isPending}
+                    />
+                  </Panel>
+                )}
+                {nodes.length === 0 && (
+                  <Panel position="top-center">
+                    <p className="mt-2 text-sm text-white/50">
+                      Empty canvas. Add a Component to start modeling.
+                    </p>
+                  </Panel>
+                )}
+              </ReactFlow>
+            </CanEditContext.Provider>
           </DeleteComponentContext.Provider>
         </DescendComponentContext.Provider>
       </EditEdgeContext.Provider>
@@ -736,10 +749,12 @@ export default function Canvas({
   scope,
   slug,
   projectId,
+  canEdit,
 }: {
   scope: string;
   slug: string;
   projectId: string;
+  canEdit: boolean;
 }) {
   return (
     <ReactFlowProvider>
@@ -747,7 +762,12 @@ export default function Canvas({
         <Suspense
           fallback={<div className="h-full w-full bg-[#1b1c33]" aria-hidden />}
         >
-          <CanvasInner scope={scope} slug={slug} projectId={projectId} />
+          <CanvasInner
+            scope={scope}
+            slug={slug}
+            projectId={projectId}
+            canEdit={canEdit}
+          />
         </Suspense>
       </div>
       <Toaster theme="dark" position="bottom-right" richColors />

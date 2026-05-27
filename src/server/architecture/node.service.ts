@@ -7,7 +7,7 @@ import {
 } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
-import { NotFoundError } from "./errors";
+import { ConflictError, NotFoundError } from "./errors";
 import {
   createNodeInput,
   deleteNodeInput,
@@ -285,6 +285,35 @@ export async function updatePositions(
 }
 
 /**
+ * Fail-loud backstop for the cascade (ADR-0008). After `deleteNode` stamps a
+ * subtree, NO live Node may remain directly under any stamped node — that is the
+ * invariant the `deletedAt IS NULL` recursive descent rests on ("no live Node
+ * ever sits under a soft-deleted ancestor"). Because the sequential cascade
+ * always gathers every live descendant, the only way such an orphan appears is a
+ * concurrent `createNode` that committed a child under a soon-to-be-deleted
+ * parent between the subtree read and the commit — the accepted READ COMMITTED
+ * window ADR-0008 documents. Throwing `ConflictError` (→ TRPC `CONFLICT`) rolls
+ * the whole transaction back, so the would-be orphan is never persisted and the
+ * caller can retry; the web client's `removeComponent` catch rolls back its
+ * optimistic update and toasts. Exported so the guard's reject path is unit
+ * testable against a deliberately-constructed orphan state.
+ */
+export async function assertNoOrphanedChildren(
+  db: Db,
+  parentIds: string[],
+): Promise<void> {
+  const orphan = await db.node.findFirst({
+    where: { parentId: { in: parentIds }, deletedAt: null },
+    select: { id: true },
+  });
+  if (orphan) {
+    throw new ConflictError(
+      "The component changed during deletion. Please try again.",
+    );
+  }
+}
+
+/**
  * Deletes a Component via a cascading soft-delete: the target Node, its entire
  * subtree (every Node descending through `parentId`), and every incident or
  * interior Connection are flagged `deletedAt` in ONE atomic operation, all
@@ -343,22 +372,26 @@ export async function deleteNode(
   assertCanWrite(actor, project);
 
   // Gather the subtree (root included) in one recursive descent of `parentId`.
-  // Bound params only; identifiers double-quoted PascalCase because Postgres
-  // folds unquoted names to lowercase (ADR-0006).
+  // No depth cap — the graph is acyclic (no move/reparent yet; move will own
+  // cycle prevention per the glossary), so the recursion terminates naturally.
+  // Completeness beats a cap: a truncated cascade would silently orphan a
+  // descendant under a deleted ancestor, violating ADR-0008. If runaway recursion
+  // ever becomes a risk (move lands), the fail-loud guard below will catch any
+  // orphan that slips through. Bound params only; identifiers double-quoted
+  // PascalCase because Postgres folds unquoted names to lowercase (ADR-0006).
   const subtree = await db.$queryRaw<{ id: string }[]>`
     WITH RECURSIVE subtree AS (
-      SELECT n.id, 0 AS depth
+      SELECT n.id
       FROM "Node" n
       WHERE n.id = ${node.id}
         AND n."projectId" = ${node.projectId}
         AND n."deletedAt" IS NULL
       UNION ALL
-      SELECT c.id, s.depth + 1
+      SELECT c.id
       FROM "Node" c
       JOIN subtree s ON c."parentId" = s.id
       WHERE c."projectId" = ${node.projectId}
         AND c."deletedAt" IS NULL
-        AND s.depth < 256
     )
     SELECT id FROM subtree`;
   const nodeIds = subtree.map((row) => row.id);
@@ -392,6 +425,12 @@ export async function deleteNode(
     where: edgeWhere,
     data: { deletedAt, deletionId },
   });
+
+  // Post-stamp guard (ADR-0008): the sequential cascade always gathers every live
+  // descendant, so a live child still sitting directly under the freshly-stamped
+  // set means a concurrent createNode raced us between the subtree read and this
+  // commit. Fail loud rather than leave a silent, unrecoverable orphan.
+  await assertNoOrphanedChildren(db, nodeIds);
 
   return { deletionId, nodeIds, edgeIds };
 }
