@@ -9,6 +9,8 @@ import {
 } from "@xyflow/react";
 import { createContext, useContext, useRef, useState } from "react";
 
+import { CanEditContext } from "./component-node";
+
 export type ConnectionEdgeData = {
   /** Untrusted user content — rendered as plain text, never markup. */
   label: string | null;
@@ -66,14 +68,18 @@ export function ConnectionEdgeView({
     targetPosition,
   });
   const onEdit = useContext(EditEdgeContext);
+  const canEditCanvas = useContext(CanEditContext);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(d.label ?? "");
   // Enter commits, then blurs the unmounting input — which would fire a second
   // commit; this latch makes commit/cancel idempotent for one edit session.
   const settled = useRef(false);
 
-  // A `temp_…` Connection has no real id to address yet, so it cannot be edited.
-  const canEdit = !d.optimistic;
+  // A `temp_…` Connection has no real id to address yet, so it cannot be edited;
+  // non-owners (canEditCanvas = false) get no edit affordances either, mirroring
+  // the rename/delete gating in component-node.tsx. The label still renders for
+  // viewers — only editing is gated.
+  const canEdit = !d.optimistic && canEditCanvas;
   const hasLabel = d.label !== null && d.label.length > 0;
 
   function beginEditing() {

@@ -78,8 +78,9 @@ T3 Stack: **Next.js 16** (App Router + React Server Components), **tRPC v11**, *
 
 A few architectural notes worth knowing before you dig in:
 
-- The **Prisma client is generated to `generated/prisma`** (committed to git), not `node_modules`.
-  Always go through the singleton at `~/server/db` — never import `@prisma/client` directly.
+- The **Prisma client is generated to `generated/prisma`** (git-ignored; regenerated on install
+  via `postinstall`), not `node_modules`. Always go through the singleton at `~/server/db` — never
+  import `@prisma/client` directly.
 - **Environment variables are schema-validated** in `src/env.js` (`@t3-oss/env-nextjs` + Zod); an
   invalid or missing var fails the build.
 - The **Canvas is a client-only island** — dynamically imported with SSR disabled, since the

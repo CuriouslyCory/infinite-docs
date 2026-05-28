@@ -339,6 +339,18 @@ describe("updateEdge", () => {
     expect(updated.label).toBeNull();
   });
 
+  it("leaves the label unchanged when passed undefined", async () => {
+    const { actor, edge } = await seedEdge();
+
+    // Omitting `label` parses to undefined — the documented no-op (distinct from
+    // null, which clears). Locks the contract in edge.service.ts / schemas.ts.
+    const updated = await updateEdge(testDb, actor, { id: edge.id });
+
+    expect(updated.label).toBe("old");
+    const persisted = await testDb.edge.findUnique({ where: { id: edge.id } });
+    expect(persisted?.label).toBe("old");
+  });
+
   it("rejects a non-owner editing a Connection", async () => {
     const { edge } = await seedEdge();
     const intruder: Actor = { userId: "intruder" };
