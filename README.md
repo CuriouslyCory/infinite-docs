@@ -61,8 +61,9 @@ The product is sequenced across milestones M0–M5; the full vision lives in the
 
 **Working today:** sign in with Discord, create and list Projects, open a Project by its
 capability URL, and on its Canvas add Components (six kinds — service, database, external API,
-host, queue, generic), drag them, rename them inline, draw / label / direct / remove
-Connections, **descend** into a Component's interior Canvas with breadcrumb navigation, and
+host, queue, generic), drag them, rename them inline, draw / label / remove
+Connections (with a structural arrow that always points at the input **Port**), **descend** into
+a Component's interior Canvas with breadcrumb navigation, and
 **delete** a Component — cascading to its whole subtree and every incident or interior
 Connection — with one-click **undo**. Every edit is optimistic: it appears instantly and persists
 in the background, with rollback and a toast on failure. **Next up (M2):** markdown export and an
@@ -77,8 +78,9 @@ T3 Stack: **Next.js 16** (App Router + React Server Components), **tRPC v11**, *
 
 A few architectural notes worth knowing before you dig in:
 
-- The **Prisma client is generated to `generated/prisma`** (committed to git), not `node_modules`.
-  Always go through the singleton at `~/server/db` — never import `@prisma/client` directly.
+- The **Prisma client is generated to `generated/prisma`** (git-ignored; regenerated on install
+  via `postinstall`), not `node_modules`. Always go through the singleton at `~/server/db` — never
+  import `@prisma/client` directly.
 - **Environment variables are schema-validated** in `src/env.js` (`@t3-oss/env-nextjs` + Zod); an
   invalid or missing var fails the build.
 - The **Canvas is a client-only island** — dynamically imported with SSR disabled, since the
@@ -188,8 +190,7 @@ so tests must use a **separate** database from your dev data. See
 - `src/lib/schemas.ts` — Zod input schemas, importable as values from client code without pulling
   in the server graph.
 - `src/app/p/[slug]/` — the Project route and the Canvas island (React Flow custom nodes/edges).
-- `prisma/schema.prisma` — the `Project` / `Node` / `Edge` models and the `NodeKind` /
-  `EdgeDirection` enums.
+- `prisma/schema.prisma` — the `Project` / `Node` / `Edge` models and the `NodeKind` enum.
 - [`CONTEXT.md`](CONTEXT.md) — the binding glossary.
 - [`docs/adr/`](docs/adr/) — architecture decision records (service layer, capability-URL sharing,
   test harness, Canvas island, edge scope & invariants).

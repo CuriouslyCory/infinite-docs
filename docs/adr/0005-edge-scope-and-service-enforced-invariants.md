@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted *(amended by ADR-0009 — the "direction is cosmetic / never factors into de-dupe"
+sub-decision below is superseded; the explicit `canvasNodeId` scope, the service-enforced
+invariants, and the `(canvasNodeId, sourceId, targetId)` de-dupe key all remain in force).*
 
 ## Context
 

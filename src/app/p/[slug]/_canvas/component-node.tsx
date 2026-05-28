@@ -147,9 +147,14 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
         data.optimistic ? "opacity-60" : "opacity-100"
       }`}
     >
+      {/* Input Port — the left (target) handle: where Connections arrive.
+          "Port" is the user word; "handle" stays React Flow's code word
+          (CONTEXT.md "Port"). */}
       <Handle
         type="target"
         position={Position.Left}
+        aria-label="Input port"
+        title="Input port"
         className="!h-2 !w-2 !border-white/40 !bg-white/60"
       />
       <Icon
@@ -244,9 +249,12 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           <Trash2 size={14} aria-hidden />
         </button>
       )}
+      {/* Output Port — the right (source) handle: where Connections originate. */}
       <Handle
         type="source"
         position={Position.Right}
+        aria-label="Output port"
+        title="Output port"
         className="!h-2 !w-2 !border-white/40 !bg-white/60"
       />
     </div>

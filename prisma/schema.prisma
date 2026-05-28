@@ -95,17 +95,6 @@ enum NodeKind {
     QUEUE
 }
 
-// Cosmetic orientation of a Connection: drives only how it is drawn (no
-// arrowhead / one / two), never behaviour or de-duplication (see CONTEXT.md
-// "Edge direction"). Mirrored by the Zod enum `edgeDirection` in ~/lib/schemas,
-// the client-safe source of truth; a compile-time parity guard in edge.service
-// keeps the two in lockstep.
-enum EdgeDirection {
-    NONE
-    FORWARD
-    BIDIRECTIONAL
-}
-
 // The data-model representation of a Component (see CONTEXT.md "Component / Node
 // split"); never surfaced to users by this name. Nests via `parentId`: null is
 // the Project's root Canvas, otherwise the id of the containing Component whose
@@ -158,21 +147,21 @@ model Node {
 // (it would also wrongly forbid re-creating a soft-deleted Connection;
 // ADR-0005). The FK cascades are the hard-delete backstop only — the normal
 // removal path is soft-delete via `deletedAt`. `label` is untrusted user
-// content; `direction` is cosmetic (CONTEXT.md "Edge direction").
+// content. The arrow is structural — derived from the sourceId→targetId
+// ordering (output→input), never a stored field (CONTEXT.md "Port"; ADR-0009).
 model Edge {
-    id           String        @id @default(cuid())
+    id           String    @id @default(cuid())
     projectId    String
-    project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
     canvasNodeId String?
-    canvasNode   Node?         @relation("EdgesOnCanvas", fields: [canvasNodeId], references: [id], onDelete: Cascade)
+    canvasNode   Node?     @relation("EdgesOnCanvas", fields: [canvasNodeId], references: [id], onDelete: Cascade)
     sourceId     String
-    source       Node          @relation("EdgesFromNode", fields: [sourceId], references: [id], onDelete: Cascade)
+    source       Node      @relation("EdgesFromNode", fields: [sourceId], references: [id], onDelete: Cascade)
     targetId     String
-    target       Node          @relation("EdgesToNode", fields: [targetId], references: [id], onDelete: Cascade)
+    target       Node      @relation("EdgesToNode", fields: [targetId], references: [id], onDelete: Cascade)
     label        String?
-    direction    EdgeDirection @default(FORWARD)
-    createdAt    DateTime      @default(now())
-    updatedAt    DateTime      @updatedAt
+    createdAt    DateTime  @default(now())
+    updatedAt    DateTime  @updatedAt
     deletedAt    DateTime?
     // Batch id of the cascading Component soft-delete that swept this Edge (see
     // Node.deletionId / ADR-0008); null when live or when removed by a lone
