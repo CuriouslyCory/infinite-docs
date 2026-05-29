@@ -2,6 +2,7 @@ import { type Edge } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
+import { isEdgeDedupCollision } from "./prisma-errors";
 import {
   connectNodesInput,
   deleteEdgeInput,
@@ -17,13 +18,19 @@ import {
  * The Canvas is the EXPLICIT `canvasNodeId` (null => the Project root) — it is
  * supplied, never inferred from the endpoints, so a future refinement
  * Connection can span scope levels without a model change (ADR-0005). Three
- * invariants are enforced here in the service, not by database constraints:
+ * invariants are enforced here in the service; the de-dupe invariant
+ * additionally has the partial unique index `idx_edge_dedup` as a TOCTOU
+ * backstop (ADR-0010), surfaced as the same `ConflictError` shape on both
+ * paths (`details.conflictingEdgeIds` names the active Edge that blocked the
+ * write):
  *
  * 1. no self-Connection (`sourceId !== targetId`);
  * 2. same-Canvas — both endpoints' `parentId` equals `canvasNodeId`;
  * 3. no duplicate ACTIVE Edge sharing source + target + scope (A→B is distinct
  *    from B→A — the ordered pair IS the direction; the label never factors in;
- *    a soft-deleted Edge never blocks re-creation).
+ *    a soft-deleted Edge never blocks re-creation). Fast-path `findFirst`
+ *    throws the readable conflict; the partial unique index catches the
+ *    concurrent racer that slips past, both translated to the same error.
  *
  * Owner-only: the Project is addressed by `projectId` (an internal handle,
  * never the capability slug — writes are never slug-granted, ADR-0002) and the
@@ -82,21 +89,46 @@ export async function connectNodes(
 
   const duplicate = await db.edge.findFirst({
     where: { canvasNodeId, sourceId, targetId, deletedAt: null },
-    select: { id: true },
+    select: { id: true, label: true },
   });
   if (duplicate) {
-    throw new ConflictError("That Connection already exists.");
+    throw new ConflictError(duplicateConnectionMessage(duplicate.label), {
+      conflictingEdgeIds: [duplicate.id],
+    });
   }
 
-  return db.edge.create({
-    data: {
-      projectId: project.id,
-      canvasNodeId,
-      sourceId,
-      targetId,
-      label,
-    },
-  });
+  try {
+    return await db.edge.create({
+      data: {
+        projectId: project.id,
+        canvasNodeId,
+        sourceId,
+        targetId,
+        label,
+      },
+    });
+  } catch (error) {
+    if (!isEdgeDedupCollision(error)) throw error;
+    // The fast-path `findFirst` missed a concurrent racer that committed
+    // first; the partial unique index caught it (ADR-0010). Load the racer
+    // so the catch path produces the same error shape as the fast path.
+    const racer = await db.edge.findFirst({
+      where: { canvasNodeId, sourceId, targetId, deletedAt: null },
+      select: { id: true, label: true },
+    });
+    throw new ConflictError(duplicateConnectionMessage(racer?.label ?? null), {
+      conflictingEdgeIds: racer ? [racer.id] : [],
+    });
+  }
+}
+
+// Untrusted label is interpolated only into this static error string —
+// never near a query or LLM prompt (prompt-injection standing note,
+// CONTEXT.md).
+function duplicateConnectionMessage(label: string | null): string {
+  return label
+    ? `That Connection already exists (labeled "${label}").`
+    : "That Connection already exists.";
 }
 
 /**

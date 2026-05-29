@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { Prisma } from "../../../../generated/prisma/client";
 import { type Actor } from "../actor";
 import {
   ConflictError,
@@ -156,21 +157,102 @@ describe("connectNodes", () => {
 
   it("rejects a duplicate active Connection (same source, target, scope)", async () => {
     const { actor, project, a, b } = await seedTwoRootNodes();
-    await connectNodes(testDb, actor, {
+    const first = await connectNodes(testDb, actor, {
       projectId: project.id,
       sourceId: a.id,
       targetId: b.id,
     });
 
-    await expect(
+    const error = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(ConflictError);
+    // Rich-diagnostic shape (ADR-0010): the conflicting active Edge id flows
+    // to callers (UI + future MCP) via `details.conflictingEdgeIds`.
+    expect((error as ConflictError).details).toEqual({
+      conflictingEdgeIds: [first.id],
+    });
+    expect(await testDb.edge.count({ where: { deletedAt: null } })).toBe(1);
+  });
+
+  it("two concurrent draws never duplicate (service contract under load)", async () => {
+    // Insensitive to which path caught the duplicate (service `findFirst` or
+    // index backstop): in single-fork Vitest the `findFirst` usually wins
+    // the interleaving, so this test does NOT reliably exercise the index —
+    // it's the integration check that the public contract holds under
+    // concurrency, and the canary that catches a future regression where
+    // someone removes the catch around `db.edge.create`. The next test is
+    // the load-bearing proof the index is wired (ADR-0010).
+    const { actor, project, a, b } = await seedTwoRootNodes();
+    const draw = () =>
       connectNodes(testDb, actor, {
         projectId: project.id,
         sourceId: a.id,
         targetId: b.id,
-      }),
-    ).rejects.toBeInstanceOf(ConflictError);
+      });
 
+    const results = await Promise.allSettled([draw(), draw()]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toBeInstanceOf(ConflictError);
     expect(await testDb.edge.count({ where: { deletedAt: null } })).toBe(1);
+  });
+
+  it("the partial unique index rejects a direct duplicate INSERT (DB-enforced backstop)", async () => {
+    // Bypasses the service to prove the index — not test luck — is what
+    // catches a racer the service `findFirst` missed (ADR-0010). If the
+    // migration silently lost its `WHERE deletedAt IS NULL` clause, or the
+    // index name diverged from `idx_edge_dedup`, this test goes red.
+    const { project, a, b } = await seedTwoRootNodes();
+    const first = await testDb.edge.create({
+      data: {
+        projectId: project.id,
+        canvasNodeId: null,
+        sourceId: a.id,
+        targetId: b.id,
+      },
+    });
+
+    const error = await testDb.edge
+      .create({
+        data: {
+          projectId: project.id,
+          canvasNodeId: null,
+          sourceId: a.id,
+          targetId: b.id,
+        },
+      })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    const knownErr = error as Prisma.PrismaClientKnownRequestError;
+    expect(knownErr.code).toBe("P2002");
+    // The repo uses `@prisma/adapter-pg`, which surfaces the constraint name
+    // in `meta.driverAdapterError.cause.originalMessage`. Asserting on the
+    // index name explicitly (rather than going through
+    // `isEdgeDedupCollision`) makes this test a direct shape canary: if
+    // Prisma changes the error shape in a future version, this assertion
+    // turns red and the helper needs updating.
+    const originalMessage = (
+      knownErr.meta as
+        | { driverAdapterError?: { cause?: { originalMessage?: unknown } } }
+        | undefined
+    )?.driverAdapterError?.cause?.originalMessage;
+    expect(typeof originalMessage).toBe("string");
+    expect(originalMessage).toContain("idx_edge_dedup");
+    expect(first.id).toBeDefined();
   });
 
   it("treats A→B and B→A as distinct Connections", async () => {

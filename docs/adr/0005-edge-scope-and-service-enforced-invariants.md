@@ -4,7 +4,9 @@
 
 Accepted *(amended by ADR-0009 — the "direction is cosmetic / never factors into de-dupe"
 sub-decision below is superseded; the explicit `canvasNodeId` scope, the service-enforced
-invariants, and the `(canvasNodeId, sourceId, targetId)` de-dupe key all remain in force).*
+invariants, and the `(canvasNodeId, sourceId, targetId)` de-dupe key all remain in force.
+Amended further by ADR-0010 — the named partial-unique-index hardening of the de-dupe
+rule landed; the service remains the primary enforcement, the index is the backstop).*
 
 ## Context
 
@@ -93,6 +95,11 @@ recoverable.
   adding a naive `@@unique`** — it would also forbid re-creating a Connection
   after soft-delete (the `deletedAt IS NULL` condition a plain unique index
   cannot express).
+  **Realized by ADR-0010**: the partial unique index `idx_edge_dedup` now
+  backstops the race; the service's `findFirst` remains the primary, readable
+  enforcement path and both translate to the same `ConflictError`. The "no
+  naive `@@unique`" caution above still applies — only the
+  `WHERE "deletedAt" IS NULL NULLS NOT DISTINCT` partial form is correct.
 - The shared domain-error vocabulary widens additively: `ConflictError`
   (`CONFLICT`, the duplicate) and `ValidationError` (`BAD_REQUEST`, the self-link
   and cross-Canvas cases) join `ForbiddenError`/`NotFoundError`. Each transport

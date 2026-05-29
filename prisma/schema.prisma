@@ -141,13 +141,20 @@ model Node {
 // EXPLICIT `canvasNodeId` (the Component whose interior Canvas owns it; null =
 // the Project root) — recorded, NOT inferred from the endpoints, so a future
 // refinement Connection can legitimately span scope levels (ADR-0005). The
-// three invariants — both endpoints on the same Canvas, no self-link, and no
-// duplicate ACTIVE Edge sharing source+target+scope — are enforced in
-// `connectNodes`, NOT by database constraints: do not add an `@@unique` here
-// (it would also wrongly forbid re-creating a soft-deleted Connection;
-// ADR-0005). The FK cascades are the hard-delete backstop only — the normal
-// removal path is soft-delete via `deletedAt`. `label` is untrusted user
-// content. The arrow is structural — derived from the sourceId→targetId
+// three invariants — same-Canvas, no self-link, no duplicate ACTIVE Edge
+// sharing source+target+scope — are primarily enforced in `connectNodes`.
+// The de-dupe invariant additionally has a partial unique index
+// `idx_edge_dedup` (in prisma/migrations; ADR-0010) as a TOCTOU backstop —
+// the service emits the readable `ConflictError`, the index catches the
+// concurrent racer the service can't. The index uses `NULLS NOT DISTINCT`
+// so two root-Canvas edges (canvasNodeId = NULL) with the same source+target
+// are correctly rejected (Postgres' default would let them both pass).
+// Do NOT add a plain `@@unique` here — it would wrongly forbid re-creating
+// a Connection after soft-delete; the `deletedAt IS NULL` predicate the
+// partial index expresses cannot be declared in Prisma schema today, so it
+// lives in raw SQL. The FK cascades are the hard-delete backstop only — the
+// normal removal path is soft-delete via `deletedAt`. `label` is untrusted
+// user content. The arrow is structural — derived from the sourceId→targetId
 // ordering (output→input), never a stored field (CONTEXT.md "Port"; ADR-0009).
 model Edge {
     id           String    @id @default(cuid())
@@ -169,7 +176,6 @@ model Edge {
     deletionId   String?
 
     @@index([projectId, canvasNodeId])
-    @@index([canvasNodeId, sourceId, targetId, deletedAt])
     @@index([sourceId])
     @@index([targetId])
     @@index([deletionId])
