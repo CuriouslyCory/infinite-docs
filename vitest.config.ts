@@ -13,5 +13,11 @@ export default defineConfig({
     setupFiles: ["src/test/setup-env.ts"],
     // Run test files sequentially so per-test truncation is race-free.
     fileParallelism: false,
+    // The service-layer suite hits a real Neon test branch (ADR-0003); each
+    // round trip is ~50-150ms. Vitest's 5s default is too tight for tests
+    // that exercise multi-step flows like cascading delete + restore. 15s
+    // gives headroom for transient cloud-DB latency without masking actual
+    // hangs.
+    testTimeout: 15_000,
   },
 });

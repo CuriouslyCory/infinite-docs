@@ -7,6 +7,11 @@ import { ArchitectureError } from "./errors";
  * in the architecture service layer permitted to import `@trpc/server`; the
  * future MCP adapter maps the same {@link ArchitectureError.code} to its own
  * tool-error shape without touching this file.
+ *
+ * Structured `details` on the cause (e.g. `ConflictError.conflictingEdgeIds`)
+ * flow through to the client via the tRPC `errorFormatter` in
+ * `~/server/api/trpc.ts`, which exposes them as `error.data.archDetails`
+ * (ADR-0010). No per-code mapping needed here — `cause: error` carries them.
  */
 export function toTRPCError(error: unknown): TRPCError {
   if (error instanceof TRPCError) {

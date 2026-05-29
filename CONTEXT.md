@@ -87,8 +87,10 @@ endpoints sit on the **same Canvas** as the Edge, an Edge never links a Node to 
 two *active* (non-soft-deleted) Edges share the same source, target, and scope. Never surfaced
 to users by this name. *(The `Edge` model, `connectNodes`/`updateEdge`/`deleteEdge`, and the
 **getCanvas** `interiorEdges` read are realized now; Connection removal as part of a Component
-delete is undoable now (see **Deletion id**), while partial-unique-index hardening of the
-de-dupe rule and undo of a standalone single-Connection `deleteEdge` are later refinements.)*
+delete is undoable now (see **Deletion id**); partial-unique-index hardening of the de-dupe
+rule landed via ADR-0010 — service-primary with a DB backstop that translates to the same
+`ConflictError` — while undo of a standalone single-Connection `deleteEdge` remains a later
+refinement.)*
 
 ### Port
 A Component's connection point — the user-facing name for a React Flow **handle**. Every

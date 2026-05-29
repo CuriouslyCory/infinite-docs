@@ -5,24 +5,39 @@ import { config } from "dotenv";
 import { assertSafeTestDatabase } from "./assert-test-db";
 
 /**
- * Runs once before the whole suite: sync the test database schema with
- * `prisma db push`. The safety guard refuses to run unless DATABASE_URL points
- * at a database other than the dev one, so it can never truncate dev data.
+ * Runs once before the whole suite: applies pending migrations against the
+ * test database. The safety guard refuses to run unless DATABASE_URL points
+ * at a database other than the dev one, so it can never touch dev data.
+ *
+ * `migrate deploy` (not `db push`) is mandatory because the partial unique
+ * index `idx_edge_dedup` (ADR-0010) lives in a raw SQL migration that the
+ * Prisma schema model cannot express. `db push` would sync the model but
+ * silently omit the index, and the de-dupe race tests would pass for the
+ * wrong reason (the service `findFirst` happens to win every interleaving in
+ * a single-fork Vitest run). `migrate deploy` is idempotent and needs no
+ * shadow DB. First run on a fresh test DB requires a one-time
+ * `pnpm prisma migrate resolve --applied <baseline>` to mark the baseline
+ * applied — only the second + later migrations actually execute.
  */
 export default function setup(): void {
   config({ path: ".env.test", override: true });
 
   const databaseUrl = assertSafeTestDatabase(process.env.DATABASE_URL);
 
-  // prisma.config.ts resolves the URL from process.env via dotenv, which does
-  // not override an already-set value — so the explicit DATABASE_URL wins.
-  // (Prisma 7's `db push` only syncs the schema; `generate` is decoupled.)
-  // `--accept-data-loss` lets a destructive schema change (e.g. dropping a
-  // column) sync non-interactively instead of stalling on a confirmation
-  // prompt; it is safe here because `assertSafeTestDatabase` has already proven
-  // this is the disposable test database, never dev/prod.
-  execSync("pnpm prisma db push --accept-data-loss", {
-    stdio: "inherit",
-    env: { ...process.env, DATABASE_URL: databaseUrl },
-  });
+  try {
+    execSync("pnpm prisma migrate deploy", {
+      stdio: "pipe",
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      encoding: "utf-8",
+    });
+  } catch (error: unknown) {
+    const err = error as { stdout?: string; stderr?: string; message?: string };
+    // eslint-disable-next-line no-console -- surface migrate failures in CI/CI logs
+    console.error("[global-setup] migrate deploy failed:", {
+      message: err.message,
+      stdout: err.stdout,
+      stderr: err.stderr,
+    });
+    throw error;
+  }
 }

@@ -1,6 +1,7 @@
-import { Prisma, type Project } from "../../../generated/prisma/client";
+import { type Project } from "../../../generated/prisma/client";
 import type { Actor, Db } from "./actor";
 import { NotFoundError } from "./errors";
+import { isSlugCollision } from "./prisma-errors";
 import {
   createProjectInput,
   getProjectBySlugInput,
@@ -73,14 +74,4 @@ async function createWithUniqueSlug(
   }
   // Unreachable: the loop returns on success or throws on the final attempt.
   throw new Error("Failed to generate a unique project slug.");
-}
-
-// `slug` is the only unique column written here, so a P2002 on create is always
-// a slug collision (astronomically unlikely at 128 bits; the retry just makes
-// the impossible-but-possible case transparent rather than a raw DB error).
-function isSlugCollision(error: unknown): boolean {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2002"
-  );
 }

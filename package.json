@@ -8,7 +8,6 @@
     "check": "eslint . && tsc --noEmit",
     "db:generate": "prisma migrate dev && prisma generate",
     "db:migrate": "prisma migrate deploy",
-    "db:push": "prisma db push && prisma generate",
     "db:studio": "prisma studio",
     "dev": "next dev",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",

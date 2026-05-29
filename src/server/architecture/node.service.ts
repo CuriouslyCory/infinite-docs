@@ -8,6 +8,7 @@ import {
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError } from "./errors";
+import { isEdgeDedupCollision } from "./prisma-errors";
 import {
   createNodeInput,
   deleteNodeInput,
@@ -482,17 +483,62 @@ export async function restoreNode(
 
   const edges = await db.edge.findMany({
     where: { deletionId },
-    select: { id: true },
+    select: { id: true, canvasNodeId: true, sourceId: true, targetId: true },
   });
+
+  // Pre-check the `idx_edge_dedup` invariant (ADR-0010): any active row whose
+  // triple matches one we're about to revive would block the updateMany. Done
+  // BEFORE the updates because Postgres aborts the transaction on P2002 and
+  // we couldn't query for diagnostics from inside the catch.
+  //
+  // Reachable today only via direct DB manipulation — cascading-delete sweeps
+  // an edge alongside at least one of its endpoints, so re-drawing the same
+  // triple while soft-deleted always involves a fresh-id endpoint. The path
+  // becomes reachable in production when slice 3 of the flow-routed plan
+  // lands (`routeFlow` introduces cross-scope inner edges whose triples are
+  // independent of the cascading sweep); the regression test lands with #36.
+  if (edges.length > 0) {
+    const conflicts = await db.edge.findMany({
+      where: {
+        deletedAt: null,
+        OR: edges.map(({ canvasNodeId, sourceId, targetId }) => ({
+          canvasNodeId,
+          sourceId,
+          targetId,
+        })),
+      },
+      select: { id: true },
+    });
+    if (conflicts.length > 0) {
+      const count = conflicts.length;
+      throw new ConflictError(
+        `Can't undo this delete: ${count} Connection${count === 1 ? "" : "s"} cannot be restored because a new Connection now occupies the same source/target slot. Delete the conflicting Connection${count === 1 ? "" : "s"} and retry.`,
+        { conflictingEdgeIds: conflicts.map((e) => e.id) },
+      );
+    }
+  }
 
   await db.node.updateMany({
     where: { deletionId },
     data: { deletedAt: null, deletionId: null },
   });
-  await db.edge.updateMany({
-    where: { deletionId },
-    data: { deletedAt: null, deletionId: null },
-  });
+
+  try {
+    await db.edge.updateMany({
+      where: { deletionId },
+      data: { deletedAt: null, deletionId: null },
+    });
+  } catch (error) {
+    if (!isEdgeDedupCollision(error)) throw error;
+    // Race fallback: the pre-check passed but a concurrent writer slipped a
+    // conflicting active Edge in between. The transaction is now aborted, so
+    // we cannot query for diagnostics here. Throw plain; the caller's retry
+    // will hit the pre-check path and get the rich error.
+    throw new ConflictError(
+      "Undo blocked by a concurrent write — retry to see what conflicts.",
+      { conflictingEdgeIds: [] },
+    );
+  }
 
   return {
     deletionId,
