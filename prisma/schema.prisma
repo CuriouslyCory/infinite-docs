@@ -78,6 +78,8 @@ model Project {
     deletedAt DateTime?
     nodes     Node[]
     edges     Edge[]
+    flowSpecs FlowSpec[]
+    flows     Flow[]
 
     @@index([ownerId])
 }
@@ -93,6 +95,42 @@ enum NodeKind {
     EXTERNAL_API
     HOST
     QUEUE
+}
+
+// A Flow's category — drives palette icons and how a renderer formats the
+// `signature` payload, never authorization or routing. Mirrored by the Zod enum
+// `flowKind` in ~/lib/schemas (the client-safe source of truth); a compile-time
+// parity guard in the service layer keeps the two in lockstep (CONTEXT.md
+// "Flow kind"; ADR-0011).
+enum FlowKind {
+    GENERIC
+    OPENAPI_OPERATION
+    ASYNCAPI_CHANNEL
+    SSE_STREAM
+    WEBSOCKET
+    FUNCTION_CALL
+    EVENT
+}
+
+// A FlowSpec's source format — selects which parser materializes Flows from
+// `source`. Slice 1 implements OPENAPI; ASYNCAPI / TS_SIGNATURE / GRAPHQL /
+// CUSTOM persist source and record `parseError` until their parsers land in
+// later slices (CONTEXT.md "Flow spec kind"; ADR-0011).
+enum FlowSpecKind {
+    OPENAPI
+    ASYNCAPI
+    TS_SIGNATURE
+    GRAPHQL
+    CUSTOM
+}
+
+// A Flow's direction relative to its owner Component (CONTEXT.md "Polarity";
+// ADR-0009 reaffirmed). INBOUND = owner consumes (e.g. GET /pets on an API);
+// OUTBOUND = owner emits (SSE, events). The Edge keeps no stored direction —
+// polarity selects which Edge a Flow rides at routing time (a later slice).
+enum FlowPolarity {
+    INBOUND
+    OUTBOUND
 }
 
 // The data-model representation of a Component (see CONTEXT.md "Component / Node
@@ -130,6 +168,9 @@ model Node {
     edgesOnCanvas Edge[]    @relation("EdgesOnCanvas")
     outgoingEdges Edge[]    @relation("EdgesFromNode")
     incomingEdges Edge[]    @relation("EdgesToNode")
+
+    flowSpec FlowSpec? @relation("FlowSpecOnNode")
+    flows    Flow[]    @relation("FlowOnNode")
 
     @@index([projectId, parentId])
     @@index([parentId])
@@ -178,6 +219,76 @@ model Edge {
     @@index([projectId, canvasNodeId])
     @@index([sourceId])
     @@index([targetId])
+    @@index([deletionId])
+}
+
+// The imported contract on a Component (CONTEXT.md "FlowSpec"; ADR-0011) — an
+// OpenAPI / AsyncAPI / TS-signature / GraphQL document, or hand-authored CUSTOM
+// prose. 1:1 with a Component (`ownerNodeId @unique`): exactly one current
+// FlowSpec per Component. Parsing is server-side, parse-on-write into Flow
+// rows (never on read), with a bounded loader (size + depth caps) so a hostile
+// spec cannot OOM. `source` is UNTRUSTED user-pasted content — stored
+// verbatim, never interpolated (prompt-injection standing note). A malformed
+// spec stores `parseError`, creates zero Flows, and never throws to the
+// caller. Re-pasting is non-destructive: matching keys preserved, dropped keys
+// soft-deleted with a fresh `deletionId` per re-parse batch (ADR-0008 pattern
+// extended additively).
+model FlowSpec {
+    id          String       @id @default(cuid())
+    projectId   String
+    project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    ownerNodeId String       @unique
+    ownerNode   Node         @relation("FlowSpecOnNode", fields: [ownerNodeId], references: [id], onDelete: Cascade)
+    kind        FlowSpecKind
+    source      String
+    parsedAt    DateTime?
+    parseError  String?
+    createdAt   DateTime     @default(now())
+    updatedAt   DateTime     @updatedAt
+    deletedAt   DateTime?
+    deletionId  String?
+    flows       Flow[]       @relation("FlowDerivedFromSpec")
+
+    @@index([projectId])
+    @@index([deletionId])
+}
+
+// A named capability a Component exposes (CONTEXT.md "Flow"; ADR-0011) — an
+// OpenAPI operation, a WS channel, an SSE stream, a function call, an event.
+// Owned by a Component (`ownerNodeId`) and exists on the owner whether or not
+// anything calls it. May be derived from a FlowSpec (`sourceSpecId != null`)
+// or user-authored (`sourceSpecId = null`). `title` is UNTRUSTED display
+// content; `signature` is UNTRUSTED structured content (prompt-injection
+// standing note applies). The de-dupe rule `(ownerNodeId, key)` among active
+// rows follows the ADR-0010 named pattern: service-primary `findFirst` fast
+// path with a partial unique index `idx_flow_dedup` (in prisma/migrations) as
+// a TOCTOU backstop — both translate to the same `ConflictError` shape with
+// `details.conflictingFlowIds`. The partial index expresses
+// `WHERE "deletedAt" IS NULL`, which Prisma schema cannot today; the raw SQL
+// lives in the migration. `NULLS NOT DISTINCT` is intentionally omitted —
+// both columns are NOT NULL, unlike `idx_edge_dedup` where `canvasNodeId` is
+// nullable.
+model Flow {
+    id           String       @id @default(cuid())
+    projectId    String
+    project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    ownerNodeId  String
+    ownerNode    Node         @relation("FlowOnNode", fields: [ownerNodeId], references: [id], onDelete: Cascade)
+    sourceSpecId String?
+    sourceSpec   FlowSpec?    @relation("FlowDerivedFromSpec", fields: [sourceSpecId], references: [id], onDelete: SetNull)
+    kind         FlowKind     @default(GENERIC)
+    key          String
+    title        String
+    polarity     FlowPolarity
+    signature    Json?
+    createdAt    DateTime     @default(now())
+    updatedAt    DateTime     @updatedAt
+    deletedAt    DateTime?
+    deletionId   String?
+
+    @@index([projectId, ownerNodeId])
+    @@index([ownerNodeId])
+    @@index([sourceSpecId])
     @@index([deletionId])
 }
 

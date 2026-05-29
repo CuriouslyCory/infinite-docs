@@ -289,16 +289,23 @@ model becomes *"Components own contracts; Connections route them."*
 ## Implementation sequence (5 slices)
 
 **Slice 1 — Flows on Components.** Schema additions (authored via
-`prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script`
-then hand-edited; applied via `migrate deploy` — never `db push` or
-`migrate dev`, per ADR-0010), the `idx_flow_dedup` partial unique index +
-`isFlowDedupCollision` helper, `attachFlowSpec` / `addFlow` / `updateFlow` /
-`deleteFlow` services translating `P2002` to `ConflictError` with
-`details.conflictingFlowIds`, cascade-sweep arms in `deleteNode`, paste-spec
-UI on Component detail, MCP tools, Vitest at the service seam (including a
-concurrency regression test for the new index, mirroring
-`edge.service.test.ts`'s pattern). **Ships value alone before M3** — MCP
-agents can model contracts immediately. M3-independent.
+`pnpm db:author <name>`, which scaffolds the migration directory and seeds it
+with the live-DB-to-schema diff — hand-edit for raw SQL Prisma cannot express,
+then apply with `pnpm db:migrate`; the long-form `prisma migrate diff`,
+`db push`, and `migrate dev` invocations are retired per ADR-0010 and commit
+`b8305c6`), the `idx_flow_dedup` partial unique index + `isFlowDedupCollision`
+helper, `attachFlowSpec` / `addFlow` / `updateFlow` / `deleteFlow` services
+translating `P2002` to `ConflictError` with `details.conflictingFlowIds`,
+cascade-sweep arms in `deleteNode`, paste-spec UI on the Component-detail
+panel, the "N flows" pill on the Component body, Vitest at the service seam
+(including a concurrency regression test for the new index, mirroring
+`edge.service.test.ts`'s pattern), CONTEXT.md updates, and ADR-0011
+("Flows as first-class, owned by Components") — landing here rather than
+with Slice 3 per the "docs travel with code slices" convention (the
+first-class-Flow decision is what this slice makes). **MCP tools split off
+to a follow-up issue** gated on #18 so the slice can ship its schema +
+service + UI without also waiting on the MCP route. **Ships value alone before
+M3.** M3-independent.
 
 **Slice 2 — Same-Canvas baseline routing.** `routeFlow` without inner edge
 ("this pipe carries this Flow"), the `idx_flow_route_dedup` partial unique
@@ -331,11 +338,14 @@ MCP resources `flow/:id` / `flow-route/:id`. The curmudgeon's "yes."
 > (issue #25). The reservations below shift by one.
 
 - **ADR-0011 — Flows as first-class, owned by Components.** Why Flow is its own
-  row (not Edge metadata, not Component Ports).
+  row (not Edge metadata, not Component Ports). **Lands with Slice 1**
+  (overrides the earlier "ADRs land per slice" sketch above — the architectural
+  decision Slice 1 makes is exactly what ADR-0011 justifies, so it travels with
+  the slice rather than being deferred).
 - **ADR-0012 — `routeFlow` is the sole cross-scope Edge writer.** The single
-  gated exception to ADR-0005.
+  gated exception to ADR-0005. Lands with Slice 3.
 - **ADR-0013 — Polarity, not stored direction.** Reaffirms ADR-0009; explains
-  why bidirectional pipes are still two Edges.
+  why bidirectional pipes are still two Edges. Lands with Slice 4.
 
 ## Open questions (must be answered before Slice 1)
 

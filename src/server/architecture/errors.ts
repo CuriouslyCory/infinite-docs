@@ -54,6 +54,11 @@ export interface ConflictErrorDetails {
   // duplicate `connectNodes` targets, or the rows holding triples a
   // `restoreNode` cannot revive (ADR-0010).
   conflictingEdgeIds?: string[];
+  // The active Flow(s) that block the write — duplicate `(ownerNodeId, key)`
+  // on `addFlow` / `attachFlowSpec`, or rows a `restoreNode` cannot revive
+  // because the same owner/key slot is occupied (ADR-0010 named pattern,
+  // ADR-0011).
+  conflictingFlowIds?: string[];
 }
 
 /**

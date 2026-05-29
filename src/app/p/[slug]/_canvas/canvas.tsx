@@ -18,7 +18,7 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import { useRouter } from "next/navigation";
-import { Suspense, useCallback, useMemo } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { Toaster, toast } from "sonner";
 
 import { canConnect } from "~/lib/connection-rules";
@@ -27,6 +27,7 @@ import { type CanvasData, type CanvasEdge, type CanvasNode } from "~/lib/types";
 import { api } from "~/trpc/react";
 
 import { AddComponent } from "./add-component";
+import { ComponentDetailPanel } from "./component-detail-panel";
 import {
   CanEditContext,
   ComponentNodeView,
@@ -83,6 +84,7 @@ function toRFNode(n: CanvasNode): ComponentNode {
       title: n.title,
       kind: n.kind,
       optimistic: n.id.startsWith("temp_"),
+      flowCount: n._count.flows,
     },
   };
 }
@@ -123,6 +125,9 @@ function optimisticCanvasNode(
     updatedAt: now,
     deletedAt: null,
     deletionId: null,
+    // A freshly-created Component owns no Flows yet (ADR-0011); the "N flows"
+    // pill renders only when the count is non-zero, so a 0 is correct here.
+    _count: { flows: 0 },
   };
 }
 
@@ -255,11 +260,17 @@ function CanvasInner({
           posX: position.x,
           posY: position.y,
         });
-        // Reconcile temp → real id in both stores, atomically by id.
-        setNodes((ns) => ns.map((n) => (n.id === tempId ? toRFNode(real) : n)));
+        // Reconcile temp → real id in both stores, atomically by id. The
+        // `createNode` service returns the bare Node row; a fresh Node owns
+        // zero Flows, so we hydrate `_count` to keep the CanvasNode shape
+        // intact (ADR-0011).
+        const realWithCount: CanvasNode = { ...real, _count: { flows: 0 } };
+        setNodes((ns) =>
+          ns.map((n) => (n.id === tempId ? toRFNode(realWithCount) : n)),
+        );
         patchCanvas((c) => ({
           interiorNodes: c.interiorNodes.map((n) =>
-            n.id === tempId ? real : n,
+            n.id === tempId ? realWithCount : n,
           ),
         }));
       } catch {
@@ -658,6 +669,14 @@ function CanvasInner({
     [utils, canvasInput, setEdges, patchCanvas, editEdge],
   );
 
+  // Component-detail panel: opens when the owner single-selects a real (non-
+  // temp_) Component. Sourced from React Flow's selection events rather than
+  // from React Flow's internal selection state so a node added optimistically
+  // never auto-opens the panel before its server id arrives (ADR-0011 / Slice
+  // 1 detail panel scaffold). Cleared on pane click or scope change.
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const closeDetailPanel = useCallback(() => setSelectedNodeId(null), []);
+
   // Descent: open a Component's interior Canvas. One callback shared by the
   // node's "Open" button (via DescendComponentContext) and the flow's
   // double-click handler, so the route + prefetch logic lives in one place.
@@ -706,6 +725,15 @@ function CanvasInner({
                   return canConnect({ source, target }, []).ok;
                 }}
                 onEdgesDelete={handleEdgesDelete}
+                onNodeClick={(_event, node) => {
+                  // A `temp_…` Component has no server id yet; opening the
+                  // detail panel would query for a node the server cannot
+                  // find. Single-click selection only — double-click still
+                  // descends.
+                  if (node.id.startsWith("temp_")) return;
+                  setSelectedNodeId(node.id);
+                }}
+                onPaneClick={() => setSelectedNodeId(null)}
                 onNodeDoubleClick={(_event, node) => descend(node.id)}
                 onNodeMouseEnter={(_event, node) => {
                   // Make Descent feel instant: warm the interior Canvas payload (tRPC
@@ -737,6 +765,18 @@ function CanvasInner({
                     <AddComponent
                       onAdd={addComponent}
                       pending={createNode.isPending}
+                    />
+                  </Panel>
+                )}
+                {canEdit && selectedNodeId !== null && (
+                  <Panel
+                    position="top-right"
+                    className="!top-0 !right-0 !bottom-0 !m-0 flex"
+                  >
+                    <ComponentDetailPanel
+                      slug={slug}
+                      ownerNodeId={selectedNodeId}
+                      onClose={closeDetailPanel}
                     />
                   </Panel>
                 )}

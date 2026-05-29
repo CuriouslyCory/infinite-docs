@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { type Actor } from "../actor";
 import { connectNodes, deleteEdge } from "../edge.service";
 import { ConflictError, ForbiddenError, NotFoundError } from "../errors";
+import { addFlow, attachFlowSpec, deleteFlow } from "../flow.service";
 import {
   assertNoOrphanedChildren,
   createNode,
@@ -1080,5 +1081,279 @@ describe("restoreNode", () => {
     await expect(
       restoreNode(testDb, actor, { deletionId: del.deletionId }),
     ).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("deleteNode cascade — Flows & FlowSpec (ADR-0011)", () => {
+  const SMALL_OPENAPI_YAML = `
+openapi: 3.0.0
+paths:
+  /pets:
+    get: { summary: List pets }
+    post: { summary: Create pet }
+`;
+
+  it("stamps owned Flows and the owned FlowSpec with the same deletionId", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "API",
+    });
+    await attachFlowSpec(testDb, actor, {
+      ownerNodeId: node.id,
+      kind: "OPENAPI",
+      source: SMALL_OPENAPI_YAML,
+    });
+
+    const del = await deleteNode(testDb, actor, { id: node.id });
+
+    expect(del.flowIds).toHaveLength(2);
+    expect(del.flowSpecIds).toHaveLength(1);
+
+    const sweptFlows = await testDb.flow.findMany({
+      where: { id: { in: del.flowIds } },
+    });
+    for (const flow of sweptFlows) {
+      expect(flow.deletionId).toBe(del.deletionId);
+      expect(flow.deletedAt).not.toBeNull();
+    }
+    const sweptSpecs = await testDb.flowSpec.findMany({
+      where: { id: { in: del.flowSpecIds } },
+    });
+    for (const spec of sweptSpecs) {
+      expect(spec.deletionId).toBe(del.deletionId);
+      expect(spec.deletedAt).not.toBeNull();
+    }
+  });
+
+  it("does not sweep Flows owned by Nodes outside the subtree", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "B",
+    });
+    await addFlow(testDb, actor, {
+      ownerNodeId: a.id,
+      kind: "GENERIC",
+      key: "a-flow",
+      title: "A-Flow",
+      polarity: "INBOUND",
+    });
+    const bFlow = await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "GENERIC",
+      key: "b-flow",
+      title: "B-Flow",
+      polarity: "INBOUND",
+    });
+
+    await deleteNode(testDb, actor, { id: a.id });
+
+    const survivor = await testDb.flow.findUniqueOrThrow({
+      where: { id: bFlow.id },
+    });
+    expect(survivor.deletedAt).toBeNull();
+    expect(survivor.deletionId).toBeNull();
+  });
+
+  it("does not re-stamp a Flow already soft-deleted by a lone deleteFlow", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "API",
+    });
+    const flow = await addFlow(testDb, actor, {
+      ownerNodeId: node.id,
+      kind: "GENERIC",
+      key: "manual",
+      title: "Manual",
+      polarity: "INBOUND",
+    });
+
+    // Lone delete: soft-deletes with NO deletionId (ADR-0008).
+    await deleteFlow(testDb, actor, { id: flow.id });
+    const afterLone = await testDb.flow.findUniqueOrThrow({
+      where: { id: flow.id },
+    });
+    expect(afterLone.deletionId).toBeNull();
+
+    await deleteNode(testDb, actor, { id: node.id });
+
+    const afterCascade = await testDb.flow.findUniqueOrThrow({
+      where: { id: flow.id },
+    });
+    // Still null — the cascade's `deletedAt: null` filter excluded this row.
+    expect(afterCascade.deletionId).toBeNull();
+  });
+
+  it("restoreNode revives owned Flows and FlowSpec in lockstep with the parent", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "API",
+    });
+    await attachFlowSpec(testDb, actor, {
+      ownerNodeId: node.id,
+      kind: "OPENAPI",
+      source: SMALL_OPENAPI_YAML,
+    });
+
+    const del = await deleteNode(testDb, actor, { id: node.id });
+    const res = await restoreNode(testDb, actor, {
+      deletionId: del.deletionId,
+    });
+
+    expect(res.flowIds).toEqual(del.flowIds);
+    expect(res.flowSpecIds).toEqual(del.flowSpecIds);
+    const flows = await testDb.flow.findMany({
+      where: { id: { in: del.flowIds } },
+    });
+    for (const flow of flows) {
+      expect(flow.deletedAt).toBeNull();
+      expect(flow.deletionId).toBeNull();
+    }
+    const specs = await testDb.flowSpec.findMany({
+      where: { id: { in: del.flowSpecIds } },
+    });
+    for (const spec of specs) {
+      expect(spec.deletedAt).toBeNull();
+      expect(spec.deletionId).toBeNull();
+    }
+  });
+
+  it("restoreNode rejects when a stamped Flow's (ownerNodeId, key) slot is occupied", async () => {
+    // Reachable today only via direct DB manipulation — cascading-delete
+    // sweeps a Flow alongside its owner Node, so re-adding the same
+    // (ownerNodeId, key) while soft-deleted always involves a fresh-id Node
+    // (different ownerNodeId). The path becomes reachable in production when
+    // future slices add concurrent writers that can slip a Flow in between
+    // operations. Same defensive posture as the Edge pre-check at
+    // node.service.ts:489-519. We construct the state by manually stamping
+    // the rows so the pre-check has something to find.
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "API",
+    });
+    const original = await addFlow(testDb, actor, {
+      ownerNodeId: node.id,
+      kind: "GENERIC",
+      key: "collide",
+      title: "Original",
+      polarity: "INBOUND",
+    });
+
+    // Mint a fake batch id and stamp Node + Flow as if they were swept
+    // together by a cascade. We bypass deleteNode so the Node ends up
+    // available for the conflicting Flow we create below.
+    const deletionId = "test-batch-id";
+    const now = new Date();
+    await testDb.flow.update({
+      where: { id: original.id },
+      data: { deletedAt: now, deletionId },
+    });
+    // restoreNode looks for at least one Node with the deletionId; without
+    // one it returns NotFoundError before reaching the Flow pre-check.
+    await testDb.node.update({
+      where: { id: node.id },
+      data: { deletedAt: now, deletionId },
+    });
+
+    // The conflicting active Flow: the partial unique index allows it
+    // because `original` is now soft-deleted. Direct create — addFlow would
+    // reject because the owner Node is soft-deleted.
+    const conflicting = await testDb.flow.create({
+      data: {
+        projectId: project.id,
+        ownerNodeId: node.id,
+        kind: "GENERIC",
+        key: "collide",
+        title: "Conflicting",
+        polarity: "INBOUND",
+      },
+    });
+
+    const error = await restoreNode(testDb, actor, { deletionId }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ConflictError);
+    expect((error as ConflictError).details).toEqual({
+      conflictingFlowIds: [conflicting.id],
+    });
+  });
+
+  // NOTE: a parallel "restoreNode rejects when a stamped FlowSpec's owner
+  // slot is occupied" test is intentionally omitted. FlowSpec.ownerNodeId is
+  // a regular @unique constraint (not partial), so two FlowSpec rows on the
+  // same Node — even one soft-deleted — cannot coexist; the unreachable
+  // state can only be constructed by bypassing Postgres's unique constraint
+  // entirely. The pre-check in restoreNode is kept as defense-in-depth
+  // (cheap, parallel to the Edge and Flow guards), but it is not testable
+  // through normal paths.
+});
+
+describe("getCanvas — _count.flows aggregate (ADR-0011)", () => {
+  it("interiorNodes[i]._count.flows equals the active Flow count for that owner", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "B",
+    });
+    await addFlow(testDb, actor, {
+      ownerNodeId: a.id,
+      kind: "GENERIC",
+      key: "a1",
+      title: "T",
+      polarity: "INBOUND",
+    });
+    await addFlow(testDb, actor, {
+      ownerNodeId: a.id,
+      kind: "GENERIC",
+      key: "a2",
+      title: "T",
+      polarity: "OUTBOUND",
+    });
+    await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "GENERIC",
+      key: "b1",
+      title: "T",
+      polarity: "INBOUND",
+    });
+    // Soft-delete one of A's: count must drop to 1.
+    const soft = await addFlow(testDb, actor, {
+      ownerNodeId: a.id,
+      kind: "GENERIC",
+      key: "a3",
+      title: "T",
+      polarity: "INBOUND",
+    });
+    await deleteFlow(testDb, actor, { id: soft.id });
+
+    const canvas = await getCanvas(testDb, null, { slug: project.slug });
+    const byId = new Map(canvas.interiorNodes.map((n) => [n.id, n]));
+    expect(byId.get(a.id)?._count.flows).toBe(2);
+    expect(byId.get(b.id)?._count.flows).toBe(1);
   });
 });
