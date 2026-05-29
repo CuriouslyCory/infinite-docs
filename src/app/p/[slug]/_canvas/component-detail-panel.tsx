@@ -28,10 +28,18 @@ export function ComponentDetailPanel({
   slug,
   ownerNodeId,
   onClose,
+  onFlowCountChange,
 }: {
   slug: string;
   ownerNodeId: string;
   onClose: () => void;
+  /**
+   * Called when the server returns a new flow count for the selected
+   * Component, so the canvas can update the React Flow store and the
+   * "N flows" pill on the same frame. The query-cache invalidation alone
+   * does NOT reach the RF store (the seed is fire-and-forget by design).
+   */
+  onFlowCountChange: (ownerNodeId: string, flowCount: number) => void;
 }) {
   return (
     <div
@@ -53,7 +61,11 @@ export function ComponentDetailPanel({
         </button>
       </header>
 
-      <AttachSpecSection ownerNodeId={ownerNodeId} slug={slug} />
+      <AttachSpecSection
+        ownerNodeId={ownerNodeId}
+        slug={slug}
+        onFlowCountChange={onFlowCountChange}
+      />
 
       <section className="flex flex-col gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
@@ -76,9 +88,11 @@ export function ComponentDetailPanel({
 function AttachSpecSection({
   ownerNodeId,
   slug,
+  onFlowCountChange,
 }: {
   ownerNodeId: string;
   slug: string;
+  onFlowCountChange: (ownerNodeId: string, flowCount: number) => void;
 }) {
   const utils = api.useUtils();
   const [kind, setKind] = useState<FlowSpecKind>("OPENAPI");
@@ -97,13 +111,15 @@ function AttachSpecSection({
         kind,
         source: trimmed,
       });
-      // The pill and palette both depend on server-side state — invalidate so
-      // they refresh in lockstep. Parse failures still persist the FlowSpec
-      // (with `parseError`) and surface as a non-blocking toast.
-      await Promise.all([
-        utils.architecture.getCanvas.invalidate(),
-        utils.architecture.getFlowsForNode.invalidate({ ownerNodeId, slug }),
-      ]);
+      // Update the React Flow store + cache mirror so the "N flows" pill
+      // reflects the new count on the same frame. Then invalidate the
+      // palette so the list re-fetches. Parse failures still persist the
+      // FlowSpec (with `parseError`) and surface as a non-blocking toast.
+      onFlowCountChange(ownerNodeId, result.flowCount);
+      await utils.architecture.getFlowsForNode.invalidate({
+        ownerNodeId,
+        slug,
+      });
       if (result.parseError !== null) {
         toast.warning(`Spec saved with parse error: ${result.parseError}`);
       } else {

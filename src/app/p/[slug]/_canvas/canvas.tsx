@@ -677,6 +677,28 @@ function CanvasInner({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const closeDetailPanel = useCallback(() => setSelectedNodeId(null), []);
 
+  // After the detail panel runs an attach + parse, the server's new flow
+  // count needs to land in BOTH the React Flow store (so the pill updates
+  // this frame on the same Component) and the cache mirror (so a remount
+  // re-seeds correctly). Cache invalidation alone doesn't reach the RF store
+  // — the seed is fire-and-forget by design (ADR-0004 island model). One
+  // stable callback the panel calls when the server responds.
+  const commitFlowCount = useCallback(
+    (id: string, flowCount: number) => {
+      setNodes((ns) =>
+        ns.map((n) =>
+          n.id === id ? { ...n, data: { ...n.data, flowCount } } : n,
+        ),
+      );
+      patchCanvas((c) => ({
+        interiorNodes: c.interiorNodes.map((n) =>
+          n.id === id ? { ...n, _count: { flows: flowCount } } : n,
+        ),
+      }));
+    },
+    [setNodes, patchCanvas],
+  );
+
   // Descent: open a Component's interior Canvas. One callback shared by the
   // node's "Open" button (via DescendComponentContext) and the flow's
   // double-click handler, so the route + prefetch logic lives in one place.
@@ -777,6 +799,7 @@ function CanvasInner({
                       slug={slug}
                       ownerNodeId={selectedNodeId}
                       onClose={closeDetailPanel}
+                      onFlowCountChange={commitFlowCount}
                     />
                   </Panel>
                 )}
