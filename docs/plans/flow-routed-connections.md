@@ -24,7 +24,9 @@ current model lacks:
 Two new entities (`Flow`, `FlowRoute`) plus a new `FlowSpec` source-of-truth.
 Zero changes to today's `Edge` shape. Direction stays structural (ADR-0009).
 Same-Canvas stays the rule (ADR-0005) with one explicit exception isolated in
-one named service function.
+one named service function. Edge de-dupe is now backstopped by a partial unique
+index per ADR-0010's named pattern (`idx_edge_dedup`), and every new
+soft-deletable de-dupe rule below MUST adopt that pattern.
 
 ## Vocabulary additions (will land in CONTEXT.md per slice)
 
@@ -92,7 +94,11 @@ model FlowRoute {
   outerEdgeId String                                       // the pipe at this scope
   innerEdgeId String?                                      // the refinement, one scope deeper
   // ... timestamps, deletedAt, deletionId
-  // de-dupe: (outerEdgeId, flowId) among active rows
+  // de-dupe: (outerEdgeId, flowId) among active rows; same ADR-0010 pattern as
+  //   Flow above — partial unique index `idx_flow_route_dedup` WHERE deletedAt
+  //   IS NULL, a narrowed `isFlowRouteDedupCollision` in `prisma-errors.ts`, and
+  //   `ConflictError.details.conflictingFlowRouteIds` (additive extension of
+  //   `ConflictErrorDetails`).
 }
 
 // Edge unchanged in shape; only relation arms widen.
@@ -211,7 +217,10 @@ routed". Two arrows, two stories, each enumerable. ADR-0009 vindicated.
    (INBOUND) or producer (OUTBOUND). Its cross-scope end is a boundary proxy
    of the owner.
 4. **`connectNodes` is strict, `routeFlow` is the only bounded-loose writer.**
-   Reviewable invariant.
+   Reviewable invariant. Both share the same Edge de-dupe catch path —
+   `routeFlow`'s inner-Edge `create` MUST run through `isEdgeDedupCollision`
+   and translate to the same `ConflictError` shape (ADR-0010 names this
+   second writer by name; convergence is correctness-defining, not cosmetic).
 5. **No cycles in refinement chains.** Inner Edges can themselves be outer
    Edges deeper down (refinement all the way to function-level) — acyclic by
    construction since `canvasNodeId` strictly descends.
@@ -279,22 +288,33 @@ model becomes *"Components own contracts; Connections route them."*
 
 ## Implementation sequence (5 slices)
 
-**Slice 1 — Flows on Components.** Schema additions, `attachFlowSpec` /
-`addFlow` / `updateFlow` / `deleteFlow` services, cascade-sweep arms in
-`deleteNode`, paste-spec UI on Component detail, MCP tools, Vitest at the
-service seam. **Ships value alone before M3** — MCP agents can model contracts
-immediately. M3-independent.
+**Slice 1 — Flows on Components.** Schema additions (authored via
+`prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script`
+then hand-edited; applied via `migrate deploy` — never `db push` or
+`migrate dev`, per ADR-0010), the `idx_flow_dedup` partial unique index +
+`isFlowDedupCollision` helper, `attachFlowSpec` / `addFlow` / `updateFlow` /
+`deleteFlow` services translating `P2002` to `ConflictError` with
+`details.conflictingFlowIds`, cascade-sweep arms in `deleteNode`, paste-spec
+UI on Component detail, MCP tools, Vitest at the service seam (including a
+concurrency regression test for the new index, mirroring
+`edge.service.test.ts`'s pattern). **Ships value alone before M3** — MCP
+agents can model contracts immediately. M3-independent.
 
 **Slice 2 — Same-Canvas baseline routing.** `routeFlow` without inner edge
-("this pipe carries this Flow"), `edgeFlows` count in `getCanvas`, a "+ flow"
-affordance on a selected Connection. The "draw Connection, see 14 flows
-available" moment. M3-independent.
+("this pipe carries this Flow"), the `idx_flow_route_dedup` partial unique
+index + `isFlowRouteDedupCollision` helper + `details.conflictingFlowRouteIds`
+on conflict, `edgeFlows` count in `getCanvas`, a "+ flow" affordance on a
+selected Connection. The "draw Connection, see 14 flows available" moment.
+M3-independent.
 
 **Slice 3 — M3 boundary proxies + refinement.** Boundary derivation (M3 was
 already planned), palette on boundary proxies, `routeFlow` with inner edge
-(the gated ADR-0005 exception — ADR-0012 documents it).
-Drag-from-palette-to-child synthesizes the optimistic interior Edge +
-FlowRoute. **This is the delight slice.**
+(the gated ADR-0005 exception — ADR-0012 documents it). The inner-Edge
+`db.edge.create` reuses `isEdgeDedupCollision` verbatim and surfaces the
+same `ConflictError { details.conflictingEdgeIds }` shape `connectNodes`
+produces — ADR-0010 names `routeFlow` as the second Edge writer that
+closes this race. Drag-from-palette-to-child synthesizes the optimistic
+interior Edge + FlowRoute. **This is the delight slice.**
 
 **Slice 4 — Bidirectional reconciliation.** Polarity validation in
 `routeFlow`; the "create reverse Connection?" canvas UX; tests for
