@@ -48,9 +48,9 @@ Adopt **Vitest** as the test runner, exposed via a `pnpm test` script, and use *
 - Each test starts from a clean state via **truncation** of all application tables (a shared
   `resetDb` helper run in a `beforeEach` hook). This keeps real `db.$transaction(...)` semantics
   intact inside the code under test.
-- The test database schema is synced once before the suite with `prisma db push` against the test
-  `DATABASE_URL` (in Vitest's global setup). Test files run in a single fork (no cross-file
-  parallelism) so per-test truncation is race-free.
+- The test database schema is synced once before the suite with `pnpm prisma migrate deploy`
+  against the test `DATABASE_URL` (in Vitest's global setup), per ADR-0010. Test files run in a
+  single fork (no cross-file parallelism) so per-test truncation is race-free.
 
 ## Consequences
 

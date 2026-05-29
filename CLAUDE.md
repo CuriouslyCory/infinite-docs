@@ -55,10 +55,12 @@ T3 Stack app: Next.js 16 (App Router + React Server Components), tRPC v11, Prism
 
 Database:
 
-- `pnpm db:push` — push schema to the DB without a migration (fast iteration)
-- `pnpm db:generate` — `prisma migrate dev && prisma generate` (create + apply a migration, then refresh the generated client)
-- `pnpm db:migrate` — `prisma migrate deploy` (apply migrations, prod)
+- `pnpm db:author <name>` — scaffold a new migration directory and seed it with the incremental SQL diff between the live dev DB and `prisma/schema.prisma`
+- `pnpm db:check` — drift gate: prints the SQL diff and exits 2 if `prisma/schema.prisma` is ahead of the live DB (run `pnpm db:migrate` to catch up, or `pnpm db:author <name>` to author a migration for the diff)
+- `pnpm db:migrate` — `prisma migrate deploy && prisma generate` (idempotent; the only schema-sync command everywhere — dev, test, and prod — per ADR-0010; regenerates the client on the way out)
 - `pnpm db:studio` — Prisma Studio
+
+Authoring a new migration: run `pnpm db:author <name>`, which creates `prisma/migrations/<ts>_<name>/migration.sql` populated with the live-DB-to-schema diff. Hand-edit the file for any raw SQL Prisma cannot express (e.g. partial unique indexes), then apply with `pnpm db:migrate`. The author/check commands compare against the live dev DB (not migration history) because `--from-migrations` requires a shadow DB that this repo deliberately does not configure; for that to be accurate, the dev DB must be at the head of the migration history (run `pnpm db:migrate` if it has fallen behind). Never use `prisma migrate dev` (needs a shadow DB) or `prisma db push` (desyncs migration history) — see ADR-0010.
 
 There are no automated tests in this repo; `pnpm check` is the closest thing to CI validation.
 

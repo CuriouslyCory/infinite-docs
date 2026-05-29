@@ -53,7 +53,7 @@ Direct each specialist to **challenge assumptions** and return: findings, assump
 
 ### Phase 3 — Present to build
 
-Write the finalized plan to the plan file, then call `ExitPlanMode` to gate on approval before implementing (it reads the plan from the file — no plan content is passed as an argument). Pre-declare the build commands you'll need as `allowedPrompts` (e.g. `pnpm check`, `pnpm db:push`) to cut prompts later.
+Write the finalized plan to the plan file, then call `ExitPlanMode` to gate on approval before implementing (it reads the plan from the file — no plan content is passed as an argument). Pre-declare the build commands you'll need as `allowedPrompts` (e.g. `pnpm check`, `pnpm db:migrate`) to cut prompts later.
 
 Structure the plan: **goal · the vertical slice · ordered steps (each naming its files) · risks + mitigations · assumptions & open questions · docs to update.**
 

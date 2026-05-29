@@ -6,8 +6,9 @@
   "scripts": {
     "build": "next build",
     "check": "eslint . && tsc --noEmit",
-    "db:generate": "prisma migrate dev && prisma generate",
-    "db:migrate": "prisma migrate deploy",
+    "db:author": "node scripts/author-migration.mjs",
+    "db:check": "prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script --exit-code",
+    "db:migrate": "prisma migrate deploy && prisma generate",
     "db:studio": "prisma studio",
     "dev": "next dev",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",

@@ -115,11 +115,13 @@ a hosted branch such as [Neon](https://neon.tech)).
    ./start-database.sh
    ```
 
-4. **Push the schema** to your database:
+4. **Apply the schema migrations** to your database:
 
    ```bash
-   pnpm db:push
+   pnpm db:migrate
    ```
+
+   This runs `prisma migrate deploy`, which is idempotent and the only supported schema-sync command per ADR-0010 (it applies the raw-SQL partial unique index that `db push` cannot).
 
 5. **Run the dev server:**
 
@@ -140,10 +142,12 @@ a hosted branch such as [Neon](https://neon.tech)).
 | `pnpm format:write` / `pnpm format:check` | Prettier |
 | `pnpm test` / `pnpm test:watch` | Vitest (see below) |
 | `pnpm build` / `pnpm preview` | Production build / build + start |
-| `pnpm db:push` | Push schema to the DB without a migration (fast iteration) |
-| `pnpm db:generate` | Create + apply a migration, then refresh the client |
-| `pnpm db:migrate` | Apply migrations (production) |
+| `pnpm db:author <name>` | Scaffold a migration directory seeded with the live-DB-to-schema diff (hand-edit for raw SQL afterwards) |
+| `pnpm db:check` | Drift gate: prints the SQL diff and exits 2 if `prisma/schema.prisma` is ahead of the live DB |
+| `pnpm db:migrate` | `prisma migrate deploy && prisma generate` — apply pending migrations and refresh the client (dev, test, prod) per [ADR-0010](docs/adr/0010-edge-dedup-partial-unique-index.md) |
 | `pnpm db:studio` | Prisma Studio |
+
+Authoring a new migration: run `pnpm db:author <name>` (e.g. `pnpm db:author add_flow_models`); it creates `prisma/migrations/<ts>_<name>/migration.sql` populated with the live-DB-to-schema diff. Hand-edit for any raw SQL Prisma cannot express (partial unique indexes, `DO $$` guards), then apply with `pnpm db:migrate` (which deploys and regenerates the client). The author/check commands diff against the live dev DB rather than the migration history because `--from-migrations` would require a shadow DB this repo deliberately does not configure — so the dev DB must be at the head of migrations first (run `pnpm db:migrate` if it has fallen behind). Never use `prisma migrate dev` (needs a shadow DB) or `prisma db push` (desyncs migration history) — see ADR-0010.
 
 > `pnpm check` cannot catch a client/server bundle leak or a query waterfall — for Canvas and
 > data-layer changes, **verify by running the app**, not just by checking.
@@ -178,8 +182,11 @@ so tests must use a **separate** database from your dev data. See
    pnpm test
    ```
 
-   Vitest's global setup syncs the schema to the test database with `prisma db push` before the
-   suite runs, so there is no separate migrate step.
+   Vitest's global setup applies pending migrations to the test database with `prisma migrate
+   deploy` before the suite runs (idempotent; no shadow DB). Per ADR-0010, `db push` is not used
+   because it would silently skip the raw-SQL partial unique index `idx_edge_dedup` that backstops
+   the Edge de-dupe rule. On a fresh test DB, run `pnpm prisma migrate resolve --applied <baseline>`
+   once to mark the baseline applied before the first `pnpm test`.
 
 ## Project layout
 
