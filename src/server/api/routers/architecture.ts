@@ -23,15 +23,27 @@ import {
   updateEdge,
 } from "~/server/architecture/edge.service";
 import {
+  addFlow,
+  attachFlowSpec,
+  deleteFlow,
+  getFlowsForNode,
+  updateFlow,
+} from "~/server/architecture/flow.service";
+import {
+  addFlowInput,
+  attachFlowSpecInput,
   connectNodesInput,
   createNodeInput,
   createProjectInput,
   deleteEdgeInput,
+  deleteFlowInput,
   deleteNodeInput,
   getCanvasInput,
+  getFlowsForNodeInput,
   getProjectBySlugInput,
   restoreNodeInput,
   updateEdgeInput,
+  updateFlowInput,
   updateNodeInput,
   updatePositionsInput,
 } from "~/lib/schemas";
@@ -198,6 +210,77 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await ctx.db.$transaction((tx) => restoreNode(tx, actor, input));
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: parse-on-write attach (or re-attach) of a FlowSpec
+  // on a Component, reconciling derived Flow rows. Wrapped in a transaction
+  // so the upsert + reconciliation commit atomically (ADR-0011).
+  attachFlowSpec: protectedProcedure
+    .input(attachFlowSpecInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await ctx.db.$transaction((tx) =>
+          attachFlowSpec(tx, actor, input),
+        );
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: add a user-authored Flow (no FlowSpec). Owner
+  // access is enforced in the service (ADR-0001 + ADR-0011).
+  addFlow: protectedProcedure
+    .input(addFlowInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await addFlow(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: edit a Flow's title/signature. Spec-derived Flows
+  // reject (ADR-0011). Owner access is enforced in the service.
+  updateFlow: protectedProcedure
+    .input(updateFlowInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await updateFlow(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: soft-delete a Flow (no deletionId minted; that
+  // handle ties cascading-batch deletes only — ADR-0008 + ADR-0011).
+  deleteFlow: protectedProcedure
+    .input(deleteFlowInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await deleteFlow(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Public: a Component's Flow palette is readable via the capability slug
+  // (ADR-0002), so the detail panel works for shared-view sessions too. The
+  // service confirms the ownerNodeId belongs to the slugged Project.
+  getFlowsForNode: publicProcedure
+    .input(getFlowsForNodeInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor | null = ctx.session?.user
+        ? { userId: ctx.session.user.id, via: "session" }
+        : null;
+      try {
+        return await getFlowsForNode(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

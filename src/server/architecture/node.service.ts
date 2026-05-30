@@ -4,11 +4,12 @@ import {
   type Edge,
   type Node,
   type NodeKind as PrismaNodeKind,
+  type Prisma,
 } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError } from "./errors";
-import { isEdgeDedupCollision } from "./prisma-errors";
+import { isEdgeDedupCollision, isFlowDedupCollision } from "./prisma-errors";
 import {
   createNodeInput,
   deleteNodeInput,
@@ -132,12 +133,20 @@ export async function createNode(
  * PascalCase (`"Node"`, `"parentId"`, ...); the scope id and project id are
  * bound parameters, never string-interpolated. See ADR-0006.
  */
+// Shape of an `interiorNode` in the `getCanvas` payload: the Node plus the
+// `_count.flows` aggregate that drives the "N flows" pill on the Component
+// body. Folded into the same `findMany` so the count costs no extra round
+// trip (ADR-0001 single-round-trip read; ADR-0011 — Flow as first-class).
+export type CanvasInteriorNode = Prisma.NodeGetPayload<{
+  include: { _count: { select: { flows: true } } };
+}>;
+
 export async function getCanvas(
   db: Db,
   _actor: Actor | null,
   input: GetCanvasInput,
 ): Promise<{
-  interiorNodes: Node[];
+  interiorNodes: CanvasInteriorNode[];
   interiorEdges: Edge[];
   breadcrumbs: { id: string; title: string }[];
 }> {
@@ -155,6 +164,13 @@ export async function getCanvas(
     db.node.findMany({
       where: { projectId: project.id, parentId: canvasNodeId, deletedAt: null },
       orderBy: { createdAt: "asc" },
+      // Active Flow count per Node — drives the "N flows" pill on the
+      // Component body. `where: { deletedAt: null }` on the relation count
+      // excludes soft-deleted Flows, so the pill reflects what the user
+      // sees in the Flow palette (ADR-0011).
+      include: {
+        _count: { select: { flows: { where: { deletedAt: null } } } },
+      },
     }),
     db.edge.findMany({
       where: { projectId: project.id, canvasNodeId, deletedAt: null },
@@ -316,11 +332,12 @@ export async function assertNoOrphanedChildren(
 
 /**
  * Deletes a Component via a cascading soft-delete: the target Node, its entire
- * subtree (every Node descending through `parentId`), and every incident or
- * interior Connection are flagged `deletedAt` in ONE atomic operation, all
- * stamped with one fresh `deletionId` so the whole set can be undone as a unit
- * (`restoreNode`; ADR-0008). The safety net that matters because AI agents
- * mutate the graph (CONTEXT.md "Soft-delete + undo").
+ * subtree (every Node descending through `parentId`), every incident or
+ * interior Connection, AND every owned Flow + owned FlowSpec on any Node in
+ * the subtree are flagged `deletedAt` in ONE atomic operation, all stamped
+ * with one fresh `deletionId` so the whole set can be undone as a unit
+ * (`restoreNode`; ADR-0008 + ADR-0011). The safety net that matters because
+ * AI agents mutate the graph (CONTEXT.md "Soft-delete + undo").
  *
  * Addressed by the Node `id`; loaded, its Project resolved, and authorized
  * owner-only through `access.assertCanWrite` BEFORE the subtree is gathered
@@ -341,19 +358,27 @@ export async function assertNoOrphanedChildren(
  * Component up to a SURVIVING sibling lives on the parent's Canvas
  * (`canvasNodeId ∉ S`) yet must still be swept, or it would dangle to a deleted
  * endpoint forever. ADR-0005 made all three Edge columns first-class precisely so
- * this cannot be reduced to scope. Both `updateMany`s filter `deletedAt: null`,
- * so a Connection the user had already removed via `deleteEdge` is NOT re-stamped
- * — and so `restoreNode` never revives it.
+ * this cannot be reduced to scope. The Flow / FlowSpec sweeps are simpler — both
+ * have only one FK into Node (`ownerNodeId`), so the union widens to Edge only.
+ * All `updateMany`s filter `deletedAt: null`, so a Connection / Flow / FlowSpec
+ * the user had already removed via its own lone delete is NOT re-stamped — and
+ * so `restoreNode` never revives it.
  *
  * Runs inside the caller's transaction (the router wraps it in
- * `db.$transaction`, like `updatePositions`), so the recursive read and both
- * sweeps commit atomically.
+ * `db.$transaction`, like `updatePositions`), so the recursive read and every
+ * sweep commit atomically.
  */
 export async function deleteNode(
   db: Db,
   actor: Actor,
   input: DeleteNodeInput,
-): Promise<{ deletionId: string; nodeIds: string[]; edgeIds: string[] }> {
+): Promise<{
+  deletionId: string;
+  nodeIds: string[];
+  edgeIds: string[];
+  flowIds: string[];
+  flowSpecIds: string[];
+}> {
   const { id } = deleteNodeInput.parse(input);
 
   const node = await db.node.findFirst({
@@ -418,12 +443,46 @@ export async function deleteNode(
   });
   const edgeIds = sweptEdges.map((edge) => edge.id);
 
+  // Flow / FlowSpec sweep (ADR-0011): owned by any Node in the subtree. Only
+  // one FK column to union over (`ownerNodeId`), unlike Edge's three. The
+  // `deletedAt: null` filter is load-bearing — a Flow already removed by a
+  // lone `deleteFlow` (which mints no `deletionId`) must NOT be re-stamped,
+  // or `restoreNode` would wrongly revive it as part of this batch.
+  const flowWhere = {
+    projectId: node.projectId,
+    ownerNodeId: { in: nodeIds },
+    deletedAt: null,
+  };
+  const flowSpecWhere = {
+    projectId: node.projectId,
+    ownerNodeId: { in: nodeIds },
+    deletedAt: null,
+  };
+  const sweptFlows = await db.flow.findMany({
+    where: flowWhere,
+    select: { id: true },
+  });
+  const flowIds = sweptFlows.map((f) => f.id);
+  const sweptFlowSpecs = await db.flowSpec.findMany({
+    where: flowSpecWhere,
+    select: { id: true },
+  });
+  const flowSpecIds = sweptFlowSpecs.map((s) => s.id);
+
   await db.node.updateMany({
     where: { id: { in: nodeIds }, deletedAt: null },
     data: { deletedAt, deletionId },
   });
   await db.edge.updateMany({
     where: edgeWhere,
+    data: { deletedAt, deletionId },
+  });
+  await db.flow.updateMany({
+    where: flowWhere,
+    data: { deletedAt, deletionId },
+  });
+  await db.flowSpec.updateMany({
+    where: flowSpecWhere,
     data: { deletedAt, deletionId },
   });
 
@@ -433,7 +492,7 @@ export async function deleteNode(
   // commit. Fail loud rather than leave a silent, unrecoverable orphan.
   await assertNoOrphanedChildren(db, nodeIds);
 
-  return { deletionId, nodeIds, edgeIds };
+  return { deletionId, nodeIds, edgeIds, flowIds, flowSpecIds };
 }
 
 /**
@@ -459,7 +518,13 @@ export async function restoreNode(
   db: Db,
   actor: Actor,
   input: RestoreNodeInput,
-): Promise<{ deletionId: string; nodeIds: string[]; edgeIds: string[] }> {
+): Promise<{
+  deletionId: string;
+  nodeIds: string[];
+  edgeIds: string[];
+  flowIds: string[];
+  flowSpecIds: string[];
+}> {
   const { deletionId } = restoreNodeInput.parse(input);
 
   const nodes = await db.node.findMany({
@@ -484,6 +549,14 @@ export async function restoreNode(
   const edges = await db.edge.findMany({
     where: { deletionId },
     select: { id: true, canvasNodeId: true, sourceId: true, targetId: true },
+  });
+  const stampedFlows = await db.flow.findMany({
+    where: { deletionId },
+    select: { id: true, ownerNodeId: true, key: true },
+  });
+  const stampedFlowSpecs = await db.flowSpec.findMany({
+    where: { deletionId },
+    select: { id: true, ownerNodeId: true },
   });
 
   // Pre-check the `idx_edge_dedup` invariant (ADR-0010): any active row whose
@@ -518,6 +591,48 @@ export async function restoreNode(
     }
   }
 
+  // Pre-check the `idx_flow_dedup` invariant (ADR-0010 + ADR-0011): a stamped
+  // Flow's (ownerNodeId, key) slot may now be occupied by a hand-authored
+  // Flow created since the delete. Same posture as the Edge pre-check above;
+  // surfaces a readable ConflictError with the conflicting Flow id(s) so the
+  // user can resolve and retry.
+  if (stampedFlows.length > 0) {
+    const conflicts = await db.flow.findMany({
+      where: {
+        deletedAt: null,
+        OR: stampedFlows.map(({ ownerNodeId, key }) => ({ ownerNodeId, key })),
+      },
+      select: { id: true },
+    });
+    if (conflicts.length > 0) {
+      const count = conflicts.length;
+      throw new ConflictError(
+        `Can't undo this delete: ${count} Flow${count === 1 ? "" : "s"} cannot be restored because a new Flow now occupies the same owner/key slot. Delete the conflicting Flow${count === 1 ? "" : "s"} and retry.`,
+        { conflictingFlowIds: conflicts.map((f) => f.id) },
+      );
+    }
+  }
+
+  // FlowSpec is 1:1 with its owner Node (`ownerNodeId @unique`); restoring a
+  // stamped FlowSpec collides if the user attached a fresh FlowSpec to the
+  // same Node since the delete. Same readable-error posture as the Flow case.
+  if (stampedFlowSpecs.length > 0) {
+    const conflicts = await db.flowSpec.findMany({
+      where: {
+        deletedAt: null,
+        ownerNodeId: { in: stampedFlowSpecs.map((s) => s.ownerNodeId) },
+      },
+      select: { id: true },
+    });
+    if (conflicts.length > 0) {
+      const count = conflicts.length;
+      throw new ConflictError(
+        `Can't undo this delete: ${count} FlowSpec${count === 1 ? "" : "s"} cannot be restored because a new FlowSpec now occupies the same Component. Delete the conflicting FlowSpec${count === 1 ? "" : "s"} and retry.`,
+        { conflictingFlowSpecIds: conflicts.map((s) => s.id) },
+      );
+    }
+  }
+
   await db.node.updateMany({
     where: { deletionId },
     data: { deletedAt: null, deletionId: null },
@@ -540,9 +655,29 @@ export async function restoreNode(
     );
   }
 
+  try {
+    await db.flow.updateMany({
+      where: { deletionId },
+      data: { deletedAt: null, deletionId: null },
+    });
+  } catch (error) {
+    if (!isFlowDedupCollision(error)) throw error;
+    throw new ConflictError(
+      "Undo blocked by a concurrent write — retry to see what conflicts.",
+      { conflictingFlowIds: [] },
+    );
+  }
+
+  await db.flowSpec.updateMany({
+    where: { deletionId },
+    data: { deletedAt: null, deletionId: null },
+  });
+
   return {
     deletionId,
     nodeIds: nodes.map((n) => n.id),
     edgeIds: edges.map((e) => e.id),
+    flowIds: stampedFlows.map((f) => f.id),
+    flowSpecIds: stampedFlowSpecs.map((s) => s.id),
   };
 }

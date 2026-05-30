@@ -80,3 +80,47 @@ function matchesEdgeColumns(raw: readonly unknown[]): boolean {
   );
   return EDGE_DEDUP_COLUMNS.every((c) => normalized.includes(c));
 }
+
+const FLOW_DEDUP_INDEX_NAME = "idx_flow_dedup";
+const FLOW_DEDUP_COLUMNS = ["ownerNodeId", "key"] as const;
+
+// Matches the `idx_flow_dedup` partial unique index (ADR-0010 named pattern,
+// second adopter; ADR-0011). Same two-shape match logic as
+// `isEdgeDedupCollision` — narrowed on the constraint identifier so an
+// unrelated future P2002 on Flow is not silently swallowed.
+export function isFlowDedupCollision(error: unknown): boolean {
+  if (!isPrismaUniqueViolation(error)) return false;
+  const meta = error.meta;
+  if (!meta || typeof meta !== "object") return false;
+
+  const target = (meta as { target?: unknown }).target;
+  if (target === FLOW_DEDUP_INDEX_NAME) return true;
+  if (Array.isArray(target) && matchesFlowColumns(target)) return true;
+
+  const driverCause = (
+    meta as { driverAdapterError?: { cause?: unknown } }
+  ).driverAdapterError?.cause;
+  if (!driverCause || typeof driverCause !== "object") return false;
+
+  const originalMessage = (driverCause as { originalMessage?: unknown })
+    .originalMessage;
+  if (
+    typeof originalMessage === "string" &&
+    originalMessage.includes(FLOW_DEDUP_INDEX_NAME)
+  ) {
+    return true;
+  }
+
+  const fields = (
+    driverCause as { constraint?: { fields?: unknown } }
+  ).constraint?.fields;
+  return Array.isArray(fields) && matchesFlowColumns(fields);
+}
+
+function matchesFlowColumns(raw: readonly unknown[]): boolean {
+  if (raw.length !== FLOW_DEDUP_COLUMNS.length) return false;
+  const normalized = raw.map((f) =>
+    typeof f === "string" ? f.replace(/^"|"$/g, "") : f,
+  );
+  return FLOW_DEDUP_COLUMNS.every((c) => normalized.includes(c));
+}
