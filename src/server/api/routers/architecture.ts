@@ -27,6 +27,7 @@ import {
   addFlow,
   attachFlowSpec,
   deleteFlow,
+  getFlowPalette,
   getFlowsForNode,
   updateFlow,
 } from "~/server/architecture/flow.service";
@@ -45,6 +46,7 @@ import {
   deleteFlowInput,
   deleteNodeInput,
   getCanvasInput,
+  getFlowPaletteInput,
   getFlowsForNodeInput,
   getProjectBySlugInput,
   getRoutedFlowIdsForEdgeInput,
@@ -319,29 +321,51 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: bind a Flow to a Connection on the same Canvas
-  // (creates a FlowRoute). Slice 2 of the flow-routed-connections plan;
-  // owner access is enforced in the service (ADR-0001).
-  routeFlow: protectedProcedure
-    .input(routeFlowInput)
-    .mutation(async ({ ctx, input }) => {
-      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+  // Public: pages a boundary proxy's Flow palette when it overflows the bundle
+  // `getCanvas` ships (Slice 3 / #36). Slug-readable per ADR-0002, like
+  // `getFlowsForNode`.
+  getFlowPalette: publicProcedure
+    .input(getFlowPaletteInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor | null = ctx.session?.user
+        ? { userId: ctx.session.user.id, via: "session" }
+        : null;
       try {
-        return await routeFlow(ctx.db, actor, input);
+        return await getFlowPalette(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }
     }),
 
-  // Owner-only mutation: remove a FlowRoute via soft-delete. A lone
-  // `unrouteFlow` mints no deletionId (matches `deleteEdge` / `deleteFlow`
-  // lone behavior — ADR-0008). Owner access is enforced in the service.
+  // Owner-only mutation: bind a Flow to a Connection — same-Canvas (Slice 2)
+  // or cross-scope refinement that find-or-creates the inner Edge (Slice 3 /
+  // ADR-0012). Wrapped in $transaction so the inner-Edge write and the
+  // FlowRoute write commit atomically; the service's ON CONFLICT DO NOTHING
+  // writes never abort the transaction, so no retry is needed. Owner access is
+  // enforced in the service (ADR-0001).
+  routeFlow: protectedProcedure
+    .input(routeFlowInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await ctx.db.$transaction((tx) => routeFlow(tx, actor, input));
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: remove a FlowRoute via soft-delete. A cross-scope
+  // route also sweeps its inner Edge when no other active FlowRoute shares it
+  // (Slice 3 / ADR-0012), minting a deletionId for batch restore; the lone
+  // case mints none (ADR-0008). Wrapped in $transaction so the FlowRoute and
+  // inner-Edge sweeps commit atomically. Owner access is enforced in the
+  // service.
   unrouteFlow: protectedProcedure
     .input(unrouteFlowInput)
     .mutation(async ({ ctx, input }) => {
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
-        return await unrouteFlow(ctx.db, actor, input);
+        return await ctx.db.$transaction((tx) => unrouteFlow(tx, actor, input));
       } catch (error) {
         throw toTRPCError(error);
       }

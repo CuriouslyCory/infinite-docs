@@ -24,10 +24,26 @@ export type CanvasEdge =
   RouterOutputs["architecture"]["getCanvas"]["interiorEdges"][number];
 
 /**
- * The full Canvas read payload — interior Components, Connections, and the
- * breadcrumb trail. Derived from the router output so it tracks every key
- * `getCanvas` returns (today `interiorNodes`/`interiorEdges`/`breadcrumbs`;
- * `boundaryProxies` in M3), which is what lets the cache-merge helper preserve
- * sibling keys instead of a hand-maintained subset drifting out of sync.
+ * A boundary proxy as the Canvas read returns it — a read-only stand-in for an
+ * external Component this scope (or an ancestor) connects to, projected inward
+ * (CONTEXT.md "Boundary proxy"; #13/#14). `outerEdgeId` is the routable outer
+ * Connection (non-null only for `origin: "direct"`; Slice 3 / ADR-0012).
+ */
+export type CanvasBoundaryProxy =
+  RouterOutputs["architecture"]["getCanvas"]["boundaryProxies"][number];
+
+/** One in-scope boundary proxy's bundled Flow palette ({ flows, hasMore }). */
+export type CanvasFlowPalette =
+  RouterOutputs["architecture"]["getCanvas"]["flowPalettes"][string];
+
+/** A single Flow as the boundary-proxy palette renders it. */
+export type CanvasFlowPaletteItem = CanvasFlowPalette["flows"][number];
+
+/**
+ * The full Canvas read payload — interior Components, Connections, boundary
+ * proxies, their Flow palettes, and the breadcrumb trail. Derived from the
+ * router output so it tracks every key `getCanvas` returns, which is what lets
+ * the cache-merge helper preserve sibling keys instead of a hand-maintained
+ * subset drifting out of sync.
  */
 export type CanvasData = RouterOutputs["architecture"]["getCanvas"];

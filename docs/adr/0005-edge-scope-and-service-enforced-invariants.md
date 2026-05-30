@@ -6,7 +6,10 @@ Accepted *(amended by ADR-0009 — the "direction is cosmetic / never factors in
 sub-decision below is superseded; the explicit `canvasNodeId` scope, the service-enforced
 invariants, and the `(canvasNodeId, sourceId, targetId)` de-dupe key all remain in force.
 Amended further by ADR-0010 — the named partial-unique-index hardening of the de-dupe
-rule landed; the service remains the primary enforcement, the index is the backstop).*
+rule landed; the service remains the primary enforcement, the index is the backstop.
+Amended further by [ADR-0012](0012-routeflow-sole-cross-scope-edge-writer.md) — the
+anticipated same-Canvas loosening for the refinement Connection landed: `routeFlow` is
+the sole bounded-loose cross-scope Edge writer, `connectNodes` stays strict).*
 
 ## Context
 

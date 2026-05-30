@@ -11,11 +11,16 @@ import { assertCanRead, assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { parseFlowSpec, type ParsedFlow } from "./flow-parser";
+import {
+  FLOW_PALETTE_PAGE_SIZE,
+  type FlowPaletteItem,
+} from "./node.service";
 import { isFlowDedupCollision } from "./prisma-errors";
 import {
   addFlowInput,
   attachFlowSpecInput,
   deleteFlowInput,
+  getFlowPaletteInput,
   getFlowsForNodeInput,
   updateFlowInput,
   type AddFlowInput,
@@ -24,6 +29,7 @@ import {
   type FlowKind,
   type FlowPolarity,
   type FlowSpecKind,
+  type GetFlowPaletteInput,
   type GetFlowsForNodeInput,
   type UpdateFlowInput,
 } from "~/lib/schemas";
@@ -444,4 +450,64 @@ export async function getFlowsForNode(
     orderBy: { createdAt: "asc" },
     take: 200,
   });
+}
+
+/**
+ * Pages a Component's Flow palette as lean `FlowPaletteItem`s (Slice 3 / #36).
+ * `getCanvas` bundles the first `FLOW_PALETTE_PAGE_SIZE` Flows of each in-scope
+ * boundary proxy; when an owner exposes more, the inspector pages the rest in
+ * through here. Slug-readable (ADR-0002), same posture as `getFlowsForNode`:
+ * possession of the slug grants the read, and the requested Component must live
+ * in the slugged Project.
+ *
+ * Cursor pagination on `(createdAt, id)`: pass the previous page's
+ * `nextCursor` (the last Flow's id) to fetch the next page. `nextCursor` is
+ * null on the final page. The lean projection matches the bundled palette so
+ * the client renders one shape regardless of how a Flow arrived.
+ */
+export async function getFlowPalette(
+  db: Db,
+  actor: Actor | null,
+  input: GetFlowPaletteInput,
+): Promise<{ flows: FlowPaletteItem[]; nextCursor: string | null }> {
+  const { ownerNodeId, slug, cursor } = getFlowPaletteInput.parse(input);
+
+  const project = await db.project.findFirst({
+    where: { slug, deletedAt: null },
+    select: { id: true, ownerId: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanRead(actor, project, { viaCapabilitySlug: true });
+
+  const node = await db.node.findFirst({
+    where: { id: ownerNodeId, projectId: project.id, deletedAt: null },
+    select: { id: true },
+  });
+  if (!node) {
+    throw new NotFoundError();
+  }
+
+  // Fetch one past the page so a full page reveals whether more remain. The
+  // `(createdAt, id)` order gives a stable cursor even when several Flows share
+  // a createdAt (a re-parse materializes many in one batch).
+  const rows = await db.flow.findMany({
+    where: { ownerNodeId: node.id, deletedAt: null },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: FLOW_PALETTE_PAGE_SIZE + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    select: {
+      id: true,
+      ownerNodeId: true,
+      kind: true,
+      key: true,
+      title: true,
+      polarity: true,
+    },
+  });
+  const hasMore = rows.length > FLOW_PALETTE_PAGE_SIZE;
+  const flows = hasMore ? rows.slice(0, FLOW_PALETTE_PAGE_SIZE) : rows;
+  const nextCursor = hasMore ? (flows[flows.length - 1]?.id ?? null) : null;
+  return { flows, nextCursor };
 }

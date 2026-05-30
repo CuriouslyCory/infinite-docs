@@ -314,6 +314,21 @@ export const getFlowsForNodeInput = z.object({
 export type GetFlowsForNodeInput = z.infer<typeof getFlowsForNodeInput>;
 
 /**
+ * Input for paging a boundary proxy's Flow palette (Slice 3 / #36). `getCanvas`
+ * bundles the first page of each in-scope proxy's palette; the inspector pages
+ * the remainder through this procedure when an owner exposes more Flows than
+ * the bundle carries. Addressed by `ownerNodeId` + `slug` (slug-readable per
+ * ADR-0002, like `getFlowsForNode`); `cursor` is the last Flow id from the
+ * previous page (omit for the first page).
+ */
+export const getFlowPaletteInput = z.object({
+  ownerNodeId: z.string().min(1),
+  slug: z.string().min(1),
+  cursor: z.string().min(1).optional(),
+});
+export type GetFlowPaletteInput = z.infer<typeof getFlowPaletteInput>;
+
+/**
  * Input for routing a Flow onto a Connection (creating a FlowRoute). Addressed
  * by `flowId` and `outerEdgeId`; the service loads both, asserts they share a
  * Project, authorizes owner-only against that Project (ADR-0001), and rejects
@@ -323,14 +338,41 @@ export type GetFlowsForNodeInput = z.infer<typeof getFlowsForNodeInput>;
  * pattern with the `idx_flow_route_dedup` partial unique index as the TOCTOU
  * backstop.
  *
- * Same-Canvas baseline only: there is intentionally no `innerEdgeId` field
- * yet — Slice 3 (#36) adds it additively when the gated cross-scope writer
- * lands (ADR-0012). Memory: "prefer narrow required inputs."
+ * Two shapes, discriminated by whether `sourceNodeId` / `targetNodeId` are
+ * present:
+ *
+ * - **Same-Canvas baseline** (both absent): "this pipe carries this Flow."
+ *   Creates a FlowRoute with `innerEdgeId = null`. The Slice-2 path, unchanged.
+ * - **Cross-scope refinement** (both present): "this Flow, one scope deeper,
+ *   continues as the interior Connection between the interior Component and
+ *   the boundary proxy." `sourceNodeId` / `targetNodeId` are the inner Edge's
+ *   endpoints exactly as the UI synthesizes them (direction-blind here —
+ *   polarity is Slice 4). Exactly one of them must be the **boundary
+ *   endpoint** (the Flow's owner, which is an endpoint of the outer Edge); the
+ *   other is the **interior endpoint** that must sit on the interior Canvas of
+ *   the outer Edge's other endpoint. The service find-or-creates the inner
+ *   Edge — the sole gated exception to ADR-0005's same-Canvas rule (ADR-0012).
+ *
+ * Both-or-neither: supplying just one endpoint is rejected — the inner Edge
+ * needs both, and a half-specified route would be ambiguous (memory: "prefer
+ * narrow required inputs"). `innerEdgeId` is never an input — the service
+ * derives it, so a client can never name a cross-scope Edge directly.
  */
-export const routeFlowInput = z.object({
-  flowId: z.string().min(1),
-  outerEdgeId: z.string().min(1),
-});
+export const routeFlowInput = z
+  .object({
+    flowId: z.string().min(1),
+    outerEdgeId: z.string().min(1),
+    sourceNodeId: z.string().min(1).optional(),
+    targetNodeId: z.string().min(1).optional(),
+  })
+  .refine(
+    (v) => (v.sourceNodeId === undefined) === (v.targetNodeId === undefined),
+    {
+      message:
+        "Cross-scope refinement routing needs both the interior Component and the boundary endpoint (sourceNodeId + targetNodeId), or neither for same-Canvas routing.",
+      path: ["sourceNodeId"],
+    },
+  );
 export type RouteFlowInput = z.infer<typeof routeFlowInput>;
 
 /**

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   type Edge,
   type FlowKind as PrismaFlowKind,
+  type FlowPolarity as PrismaFlowPolarity,
   type Node,
   type NodeKind as PrismaNodeKind,
   type Prisma,
@@ -171,6 +172,70 @@ export interface EdgeFlowsEntry {
   byKind: Partial<Record<PrismaFlowKind, number>>;
 }
 
+// A boundary proxy on the requested Canvas scope (M3 / #13): a read-only
+// stand-in for an external Component this scope (or an ancestor) connects to on
+// its parent Canvas, projected inward. Derived transitively, never persisted —
+// `boundary(H) = directBoundary(H) ∪ boundary(H.parent)`.
+//
+// - `origin: "direct"` — an external the CURRENT scope's Component connects to
+//   on its own parent Canvas. `"inherited"` — projected down from an ancestor.
+//   Drives the collapse/group UX (#14): inherited proxies fold away to keep a
+//   deep Canvas uncluttered.
+export interface BoundaryProxyEntry {
+  nodeId: string;
+  title: string;
+  kind: PrismaNodeKind;
+  origin: "direct" | "inherited";
+  // The Connection between the current scope's Component and this proxy on the
+  // scope's parent Canvas — the outer Edge a palette drag refines (Slice 3 /
+  // ADR-0012). Non-null only for `origin: "direct"` proxies: refinement routing
+  // binds an outer Edge incident to the current scope, which exists only when
+  // the scope connects to the proxy directly. Inherited proxies are
+  // context-only here; route them at the scope where the direct Connection
+  // lives. When two Connections join the pair (e.g. A→B and B→A), the
+  // lexically-first id is chosen — polarity picks the right one in Slice 4.
+  outerEdgeId: string | null;
+}
+
+// One Flow as the boundary-proxy palette renders it (Slice 3 / ADR-0012). A
+// lean projection of `Flow` — the palette needs identity, render labels, and
+// the polarity that orients a drag, not the full `signature` Json. `getCanvas`
+// bundles the first `FLOW_PALETTE_PAGE_SIZE` per in-scope proxy; the rest page
+// in through `getFlowPalette`.
+export interface FlowPaletteItem {
+  id: string;
+  ownerNodeId: string;
+  kind: PrismaFlowKind;
+  key: string;
+  title: string;
+  polarity: PrismaFlowPolarity;
+}
+
+export interface FlowPalette {
+  flows: FlowPaletteItem[];
+  // `true` when the owner has more active Flows than the bundled page — the
+  // inspector pages the remainder in via `getFlowPalette`.
+  hasMore: boolean;
+}
+
+// First page of a boundary proxy's Flow palette bundled into `getCanvas`. The
+// worst case (a 200-operation OpenAPI spec) ships 50 here and the rest behind
+// `hasMore` — the bundled read stays O(boundary proxies on this scope), never
+// O(project) (master plan perf posture).
+export const FLOW_PALETTE_PAGE_SIZE = 50;
+
+// Raw shape of one row from the boundary-derivation query. `palette` is a
+// Postgres `json` column (parsed to a JS array by the pg adapter) holding up to
+// FLOW_PALETTE_PAGE_SIZE + 1 items so the caller can compute `hasMore`.
+interface BoundaryProxyRow {
+  node_id: string;
+  title: string;
+  kind: PrismaNodeKind;
+  is_direct: boolean;
+  outer_edge_id: string | null;
+  palette: FlowPaletteItem[];
+}
+
 export async function getCanvas(
   db: Db,
   _actor: Actor | null,
@@ -179,6 +244,8 @@ export async function getCanvas(
   interiorNodes: CanvasInteriorNode[];
   interiorEdges: Edge[];
   edgeFlows: EdgeFlowsEntry[];
+  boundaryProxies: BoundaryProxyEntry[];
+  flowPalettes: Record<string, FlowPalette>;
   breadcrumbs: { id: string; title: string }[];
 }> {
   const { slug, canvasNodeId } = getCanvasInput.parse(input);
@@ -204,8 +271,14 @@ export async function getCanvas(
   //      root Canvas's scope is null — a plain `=` against null is falsy
   //      and root-Canvas edges would be silently filtered out. Same trap
   //      `idx_edge_dedup`'s `NULLS NOT DISTINCT` documents (ADR-0010).
-  const [interiorNodes, interiorEdges, breadcrumbs, routeRows, totalRows] =
-    await Promise.all([
+  const [
+    interiorNodes,
+    interiorEdges,
+    breadcrumbs,
+    routeRows,
+    totalRows,
+    boundaryRows,
+  ] = await Promise.all([
       db.node.findMany({
         where: { projectId: project.id, parentId: canvasNodeId, deletedAt: null },
         orderBy: { createdAt: "asc" },
@@ -288,6 +361,78 @@ export async function getCanvas(
           AND e."deletedAt" IS NULL
           AND f."deletedAt" IS NULL
         GROUP BY e.id`,
+      // Boundary proxies + their Flow palettes for this scope (M3 / #13 +
+      // Slice 3 / ADR-0012), in ONE statement so the single-round-trip read
+      // holds (ADR-0001). The recursive CTE walks the ancestor chain (the
+      // same shape as the breadcrumb query, ADR-0006); for each ancestor `a`
+      // it pulls the Edges on `a`'s parent Canvas incident to `a` and takes
+      // the OTHER endpoint — that is `directBoundary(a)`. Unioned over the
+      // whole chain that is `boundary(scope)`. `is_direct` (depth 0) marks the
+      // proxies of the current scope itself vs inherited ones (#14 collapse).
+      // The palette is a correlated `json_agg` of the proxy's first
+      // FLOW_PALETTE_PAGE_SIZE + 1 active Flows (the +1 reveals `hasMore`).
+      // The root scope has no ancestors, so it has no boundary proxies.
+      canvasNodeId === null
+        ? Promise.resolve<BoundaryProxyRow[]>([])
+        : db.$queryRaw<BoundaryProxyRow[]>`
+            WITH RECURSIVE ancestry AS (
+              SELECT n.id, n."parentId", 0 AS depth
+              FROM "Node" n
+              WHERE n.id = ${canvasNodeId}
+                AND n."projectId" = ${project.id}
+                AND n."deletedAt" IS NULL
+              UNION ALL
+              SELECT p.id, p."parentId", a.depth + 1
+              FROM "Node" p
+              JOIN ancestry a ON p.id = a."parentId"
+              WHERE p."projectId" = ${project.id}
+                AND p."deletedAt" IS NULL
+                AND a.depth < 256
+            )
+            SELECT
+              proxy.id AS node_id,
+              proxy.title AS title,
+              proxy.kind AS kind,
+              BOOL_OR(a.depth = 0) AS is_direct,
+              MIN(CASE WHEN a.depth = 0 THEN e.id END) AS outer_edge_id,
+              (
+                SELECT COALESCE(
+                  json_agg(
+                    json_build_object(
+                      'id', pf.id,
+                      'ownerNodeId', pf."ownerNodeId",
+                      'kind', pf.kind,
+                      'key', pf.key,
+                      'title', pf.title,
+                      'polarity', pf.polarity
+                    )
+                    ORDER BY pf."createdAt"
+                  ),
+                  '[]'::json
+                )
+                FROM (
+                  SELECT f.id, f."ownerNodeId", f.kind, f.key, f.title,
+                         f.polarity, f."createdAt"
+                  FROM "Flow" f
+                  WHERE f."ownerNodeId" = proxy.id AND f."deletedAt" IS NULL
+                  ORDER BY f."createdAt" ASC
+                  LIMIT ${FLOW_PALETTE_PAGE_SIZE + 1}
+                ) pf
+              ) AS palette
+            FROM ancestry a
+            JOIN "Edge" e
+              ON e."canvasNodeId" IS NOT DISTINCT FROM a."parentId"
+              AND e."deletedAt" IS NULL
+              AND (e."sourceId" = a.id OR e."targetId" = a.id)
+            JOIN "Node" proxy
+              ON proxy.id = CASE
+                WHEN e."sourceId" = a.id THEN e."targetId"
+                ELSE e."sourceId"
+              END
+              AND proxy."deletedAt" IS NULL
+            WHERE proxy.id NOT IN (SELECT id FROM ancestry)
+            GROUP BY proxy.id, proxy.title, proxy.kind
+            ORDER BY BOOL_OR(a.depth = 0) DESC, proxy.title ASC`,
     ]);
 
   // A non-null scope with no breadcrumbs never resolved to a live Node in
@@ -355,7 +500,46 @@ export async function getCanvas(
     },
   );
 
-  return { interiorNodes, interiorEdges, edgeFlows, breadcrumbs };
+  // Split the one boundary query into the two payload fields: the proxy list
+  // (#13/#14) and the per-proxy palette map (Slice 3). The query bundled
+  // FLOW_PALETTE_PAGE_SIZE + 1 Flows per proxy, so an over-long page reveals
+  // `hasMore` and is trimmed to the page size; the rest page in via
+  // `getFlowPalette`.
+  const boundaryProxies: BoundaryProxyEntry[] = [];
+  const flowPalettes: Record<string, FlowPalette> = {};
+  for (const row of boundaryRows) {
+    boundaryProxies.push({
+      nodeId: row.node_id,
+      title: row.title,
+      kind: row.kind,
+      origin: row.is_direct ? "direct" : "inherited",
+      outerEdgeId: row.outer_edge_id,
+    });
+    const items = row.palette ?? [];
+    const hasMore = items.length > FLOW_PALETTE_PAGE_SIZE;
+    flowPalettes[row.node_id] = {
+      flows: (hasMore ? items.slice(0, FLOW_PALETTE_PAGE_SIZE) : items).map(
+        (f) => ({
+          id: f.id,
+          ownerNodeId: f.ownerNodeId,
+          kind: f.kind,
+          key: f.key,
+          title: f.title,
+          polarity: f.polarity,
+        }),
+      ),
+      hasMore,
+    };
+  }
+
+  return {
+    interiorNodes,
+    interiorEdges,
+    edgeFlows,
+    boundaryProxies,
+    flowPalettes,
+    breadcrumbs,
+  };
 }
 
 /**

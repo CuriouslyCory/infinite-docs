@@ -61,6 +61,23 @@ async function seedAToB() {
   return { user, actor, project, a, b, edge, flow };
 }
 
+/**
+ * Extends `seedAToB` with a `child` Component (SearchHandler) inside A's
+ * interior Canvas — the scene Slice 3 refines: descend into A (Web Server),
+ * route B's (API) `POST /pets` Flow from the API boundary proxy onto the
+ * child. The cross-scope inner Edge then lives on A's Canvas between the child
+ * and the API boundary proxy.
+ */
+async function seedRefinement() {
+  const base = await seedAToB();
+  const child = await createNode(testDb, base.actor, {
+    projectId: base.project.id,
+    parentId: base.a.id,
+    title: "SearchHandler",
+  });
+  return { ...base, child };
+}
+
 describe("routeFlow", () => {
   it("happy path: routes a Flow whose owner is the target endpoint", async () => {
     const { actor, edge, flow, project, b } = await seedAToB();
@@ -648,5 +665,334 @@ describe("getRoutedFlowIdsForEdge (popover helper)", () => {
       slug: project.slug,
     });
     expect(ids).toEqual([flow.id]);
+  });
+});
+
+describe("routeFlow cross-scope refinement (Slice 3 / ADR-0012)", () => {
+  it("creates the inner Edge + FlowRoute and refines the parent pipe", async () => {
+    const { actor, project, a, b, edge, flow, child } = await seedRefinement();
+
+    const route = await routeFlow(testDb, actor, {
+      flowId: flow.id,
+      outerEdgeId: edge.id,
+      sourceNodeId: child.id, // interior endpoint (child of A)
+      targetNodeId: b.id, // boundary endpoint (the Flow's owner, API)
+    });
+
+    expect(route.innerEdgeId).not.toBeNull();
+    const inner = await testDb.edge.findUniqueOrThrow({
+      where: { id: route.innerEdgeId! },
+    });
+    // The inner Edge sits on A's interior Canvas — the gated ADR-0005
+    // exception: `b` (API) is an endpoint though `b.parentId !== a.id`.
+    expect(inner.canvasNodeId).toBe(a.id);
+    expect(inner.sourceId).toBe(child.id);
+    expect(inner.targetId).toBe(b.id);
+
+    // Back up at the root, the parent Connection now reads "1 / 1 routed".
+    const root = await getCanvas(testDb, null, { slug: project.slug });
+    expect(root.edgeFlows.find((e) => e.edgeId === edge.id)?.routed).toBe(1);
+
+    // Inside A, the inner Edge is an interior Edge of that Canvas.
+    const inside = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: a.id,
+    });
+    expect(inside.interiorEdges.map((e) => e.id)).toContain(route.innerEdgeId);
+  });
+
+  it("two distinct Flows over the same interior pair share one inner Edge", async () => {
+    const { actor, a, b, edge, flow, child } = await seedRefinement();
+    const f2 = await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "OPENAPI_OPERATION",
+      key: "GET /pets",
+      title: "List pets",
+      polarity: "INBOUND",
+    });
+
+    const r1 = await routeFlow(testDb, actor, {
+      flowId: flow.id,
+      outerEdgeId: edge.id,
+      sourceNodeId: child.id,
+      targetNodeId: b.id,
+    });
+    const r2 = await routeFlow(testDb, actor, {
+      flowId: f2.id,
+      outerEdgeId: edge.id,
+      sourceNodeId: child.id,
+      targetNodeId: b.id,
+    });
+
+    // One shared inner Edge (a pipe carries many Flows), two FlowRoutes.
+    expect(r2.innerEdgeId).toBe(r1.innerEdgeId);
+    const innerEdges = await testDb.edge.findMany({
+      where: { canvasNodeId: a.id, sourceId: child.id, targetId: b.id, deletedAt: null },
+    });
+    expect(innerEdges).toHaveLength(1);
+  });
+
+  it("concurrent refines with distinct Flows converge on one shared inner Edge (no P2002)", async () => {
+    const { actor, a, b, edge, flow, child } = await seedRefinement();
+    const f2 = await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "OPENAPI_OPERATION",
+      key: "GET /pets",
+      title: "List pets",
+      polarity: "INBOUND",
+    });
+
+    const [r1, r2] = await Promise.all([
+      routeFlow(testDb, actor, {
+        flowId: flow.id,
+        outerEdgeId: edge.id,
+        sourceNodeId: child.id,
+        targetNodeId: b.id,
+      }),
+      routeFlow(testDb, actor, {
+        flowId: f2.id,
+        outerEdgeId: edge.id,
+        sourceNodeId: child.id,
+        targetNodeId: b.id,
+      }),
+    ]);
+
+    expect(r1.innerEdgeId).toBe(r2.innerEdgeId);
+    const innerEdges = await testDb.edge.findMany({
+      where: { canvasNodeId: a.id, sourceId: child.id, targetId: b.id, deletedAt: null },
+    });
+    expect(innerEdges).toHaveLength(1);
+    const routes = await testDb.flowRoute.findMany({
+      where: { outerEdgeId: edge.id, deletedAt: null },
+    });
+    expect(routes).toHaveLength(2);
+  });
+
+  it("the same Flow racing cross-scope: one wins, one ConflictError, no leaked Edge", async () => {
+    const { actor, a, b, edge, flow, child } = await seedRefinement();
+
+    const results = await Promise.allSettled([
+      routeFlow(testDb, actor, {
+        flowId: flow.id,
+        outerEdgeId: edge.id,
+        sourceNodeId: child.id,
+        targetNodeId: b.id,
+      }),
+      routeFlow(testDb, actor, {
+        flowId: flow.id,
+        outerEdgeId: edge.id,
+        sourceNodeId: child.id,
+        targetNodeId: b.id,
+      }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toBeInstanceOf(ConflictError);
+
+    const innerEdges = await testDb.edge.findMany({
+      where: { canvasNodeId: a.id, sourceId: child.id, targetId: b.id, deletedAt: null },
+    });
+    expect(innerEdges).toHaveLength(1);
+    const routes = await testDb.flowRoute.findMany({
+      where: { outerEdgeId: edge.id, flowId: flow.id, deletedAt: null },
+    });
+    expect(routes).toHaveLength(1);
+  });
+
+  it("rejects when the interior endpoint is not on the other endpoint's Canvas", async () => {
+    const { actor, project, b, edge, flow } = await seedRefinement();
+    // A Component on the ROOT canvas (parentId null) — not inside A.
+    const stray = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Stray",
+    });
+    await expect(
+      routeFlow(testDb, actor, {
+        flowId: flow.id,
+        outerEdgeId: edge.id,
+        sourceNodeId: stray.id,
+        targetNodeId: b.id,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("rejects when neither supplied endpoint is the Flow's owner (boundary endpoint)", async () => {
+    const { actor, project, edge, flow, child, a } = await seedRefinement();
+    // A second child of A — so both supplied endpoints are interior, neither
+    // is the boundary endpoint (the Flow's owner B).
+    const child2 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: a.id,
+      title: "Other child",
+    });
+    await expect(
+      routeFlow(testDb, actor, {
+        flowId: flow.id,
+        outerEdgeId: edge.id,
+        sourceNodeId: child.id,
+        targetNodeId: child2.id,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("rejects a self-linking refinement Connection", async () => {
+    const { actor, edge, flow, child } = await seedRefinement();
+    await expect(
+      routeFlow(testDb, actor, {
+        flowId: flow.id,
+        outerEdgeId: edge.id,
+        sourceNodeId: child.id,
+        targetNodeId: child.id,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("connectNodes still rejects a cross-scope endpoint (ADR-0005 regression guard)", async () => {
+    const { actor, project, a, b, child } = await seedRefinement();
+    // Drawing child (inside A) → B (root) on A's Canvas is exactly the
+    // cross-scope write only routeFlow may do. connectNodes must refuse it.
+    await expect(
+      connectNodes(testDb, actor, {
+        projectId: project.id,
+        canvasNodeId: a.id,
+        sourceId: child.id,
+        targetId: b.id,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
+describe("shared inner-Edge cascade (Slice 3 / ADR-0012)", () => {
+  async function seedSharedInnerEdge() {
+    const base = await seedRefinement();
+    const f2 = await addFlow(testDb, base.actor, {
+      ownerNodeId: base.b.id,
+      kind: "OPENAPI_OPERATION",
+      key: "GET /pets",
+      title: "List pets",
+      polarity: "INBOUND",
+    });
+    const r1 = await routeFlow(testDb, base.actor, {
+      flowId: base.flow.id,
+      outerEdgeId: base.edge.id,
+      sourceNodeId: base.child.id,
+      targetNodeId: base.b.id,
+    });
+    const r2 = await routeFlow(testDb, base.actor, {
+      flowId: f2.id,
+      outerEdgeId: base.edge.id,
+      sourceNodeId: base.child.id,
+      targetNodeId: base.b.id,
+    });
+    return { ...base, f2, r1, r2 };
+  }
+
+  it("unrouteFlow keeps a shared inner Edge alive while another route references it", async () => {
+    const { actor, r1, r2 } = await seedSharedInnerEdge();
+    expect(r1.innerEdgeId).toBe(r2.innerEdgeId);
+
+    // Unroute r1 — r2 still rides the shared inner Edge, so it is a lone
+    // soft-delete (no deletionId) and the Edge survives.
+    const u1 = await unrouteFlow(testDb, actor, { flowRouteId: r1.id });
+    expect(u1.deletionId).toBeNull();
+    const stillAlive = await testDb.edge.findUniqueOrThrow({
+      where: { id: r1.innerEdgeId! },
+    });
+    expect(stillAlive.deletedAt).toBeNull();
+  });
+
+  it("unrouteFlow sweeps the inner Edge once the last route leaves it", async () => {
+    const { actor, r1, r2 } = await seedSharedInnerEdge();
+    await unrouteFlow(testDb, actor, { flowRouteId: r1.id });
+
+    // Now r2 is the last referer — unrouting it sweeps the inner Edge under
+    // one deletionId so restoreEdge can revive the pair.
+    const u2 = await unrouteFlow(testDb, actor, { flowRouteId: r2.id });
+    expect(u2.deletionId).not.toBeNull();
+    const swept = await testDb.edge.findUniqueOrThrow({
+      where: { id: r2.innerEdgeId! },
+    });
+    expect(swept.deletedAt).not.toBeNull();
+    expect(swept.deletionId).toBe(u2.deletionId);
+  });
+
+  it("deleteEdge on the outer Edge sweeps FlowRoutes + the now-unreferenced inner Edge; restore brings them back", async () => {
+    const { actor, edge, r1 } = await seedSharedInnerEdge();
+    const innerEdgeId = r1.innerEdgeId!;
+
+    const deleted = await testDb.$transaction((tx) =>
+      deleteEdge(tx, actor, { id: edge.id }),
+    );
+    expect(deleted.deletionId).not.toBeNull();
+    // Both FlowRoutes swept (they shared the inner Edge), and the inner Edge
+    // is now unreferenced so it is swept too — all under one deletionId.
+    expect(deleted.flowRouteIds).toHaveLength(2);
+    const sweptInner = await testDb.edge.findUniqueOrThrow({
+      where: { id: innerEdgeId },
+    });
+    expect(sweptInner.deletedAt).not.toBeNull();
+    expect(sweptInner.deletionId).toBe(deleted.deletionId);
+
+    const restored = await testDb.$transaction((tx) =>
+      restoreEdge(tx, actor, { deletionId: deleted.deletionId! }),
+    );
+    expect(restored.edgeIds).toContain(edge.id);
+    expect(restored.edgeIds).toContain(innerEdgeId);
+    const revivedInner = await testDb.edge.findUniqueOrThrow({
+      where: { id: innerEdgeId },
+    });
+    expect(revivedInner.deletedAt).toBeNull();
+  });
+});
+
+describe("getCanvas boundary derivation (#13 / #14)", () => {
+  it("returns the directly-connected externals as direct boundary proxies, with palettes", async () => {
+    const { project, a, b, edge, flow } = await seedRefinement();
+
+    // Inside A (Web Server), the API it connects to at the root projects in as
+    // a direct boundary proxy carrying its Flow palette.
+    const inside = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: a.id,
+    });
+    const proxy = inside.boundaryProxies.find((p) => p.nodeId === b.id);
+    expect(proxy).toBeDefined();
+    expect(proxy?.origin).toBe("direct");
+    // The outer Edge a palette drag would refine is the root A→B Connection.
+    expect(proxy?.outerEdgeId).toBe(edge.id);
+    expect(inside.flowPalettes[b.id]?.flows.some((f) => f.id === flow.id)).toBe(
+      true,
+    );
+  });
+
+  it("inherits boundary proxies transitively into deeper Canvases", async () => {
+    const { actor, project, b, child } = await seedRefinement();
+    // A grandchild two levels below the root, with no Connections of its own.
+    const grandchild = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: child.id,
+      title: "Deep worker",
+    });
+
+    const deep = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: grandchild.id,
+    });
+    const proxy = deep.boundaryProxies.find((p) => p.nodeId === b.id);
+    expect(proxy).toBeDefined();
+    // The API is not connected to anything at this depth directly — it is
+    // inherited from the Web Server ancestor (boundary transitivity, #13).
+    expect(proxy?.origin).toBe("inherited");
+    // Inherited proxies are context-only — not routable at this scope.
+    expect(proxy?.outerEdgeId).toBeNull();
+  });
+
+  it("the root Canvas has no boundary proxies", async () => {
+    const { project } = await seedRefinement();
+    const root = await getCanvas(testDb, null, { slug: project.slug });
+    expect(root.boundaryProxies).toEqual([]);
+    expect(root.flowPalettes).toEqual({});
   });
 });

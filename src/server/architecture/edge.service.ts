@@ -186,9 +186,11 @@ export async function updateEdge(
  *
  * Cascade behavior (Slice 2 / ADR-0014 — extends ADR-0008's "lone delete"
  * carve-out): if at least one live FlowRoute references this Edge (as
- * `outerEdgeId` or, forward-compat for Slice 3, `innerEdgeId`), the delete
- * mints a fresh `deletionId` and stamps it on BOTH the Edge and the swept
- * FlowRoutes, so `restoreEdge` can revive the batch as one unit. If no
+ * `outerEdgeId` or `innerEdgeId`), the delete mints a fresh `deletionId` and
+ * stamps it on the Edge, the swept FlowRoutes, and (Slice 3 / ADR-0012) any
+ * inner Edge a swept FlowRoute carried that no SURVIVING active FlowRoute still
+ * references — an inner Edge is a shared pipe, so it lives as long as another
+ * route rides it. `restoreEdge` revives the whole batch as one unit. If no
  * FlowRoutes are incident, ADR-0008's lone-delete rule still holds — the Edge
  * soft-deletes with no `deletionId`.
  *
@@ -221,15 +223,15 @@ export async function deleteEdge(
   }
   assertCanWrite(actor, project);
 
-  // Gather incident FlowRoutes (live, by outer OR inner edge). The
-  // `innerEdgeId` arm is forward-compat — Slice 2 never writes it but the
-  // sweep must include it so Slice 3 needs no retrofit.
+  // Gather incident FlowRoutes (live, by outer OR inner edge), with each one's
+  // inner Edge so we can decide which inner Edges the cascade should also
+  // sweep (ADR-0012's shared-pipe rule).
   const incidentRoutes = await db.flowRoute.findMany({
     where: {
       OR: [{ outerEdgeId: edge.id }, { innerEdgeId: edge.id }],
       deletedAt: null,
     },
-    select: { id: true },
+    select: { id: true, innerEdgeId: true },
   });
   const flowRouteIds = incidentRoutes.map((r) => r.id);
   const cascading = flowRouteIds.length > 0;
@@ -245,17 +247,42 @@ export async function deleteEdge(
     return { edge: updated, deletionId: null, flowRouteIds: [] };
   }
 
-  // Cascade: mint one fresh id, stamp both arms. `restoreEdge` revives by
-  // this handle. The cascade is no longer "lone" in ADR-0008's sense — see
-  // ADR-0014 (the deleteEdge/restoreEdge cascade decision).
+  // Inner Edges a swept FlowRoute carried, other than the Edge being deleted
+  // itself (when this delete targets an inner Edge, that Edge is already the
+  // subject of the delete). Each is swept only if no SURVIVING active
+  // FlowRoute — one not in this swept batch — still references it (the inner
+  // Edge is a shared pipe; ADR-0012).
+  const candidateInnerEdgeIds = [
+    ...new Set(
+      incidentRoutes
+        .map((r) => r.innerEdgeId)
+        .filter((iid): iid is string => iid !== null && iid !== edge.id),
+    ),
+  ];
+  const innerEdgeIdsToSweep: string[] = [];
+  for (const innerEdgeId of candidateInnerEdgeIds) {
+    const survivors = await db.flowRoute.count({
+      where: {
+        innerEdgeId,
+        deletedAt: null,
+        id: { notIn: flowRouteIds },
+      },
+    });
+    if (survivors === 0) {
+      innerEdgeIdsToSweep.push(innerEdgeId);
+    }
+  }
+
+  // Cascade: mint one fresh id, stamp the Edge, the swept FlowRoutes, and the
+  // now-unreferenced inner Edges. `restoreEdge` revives by this handle. The
+  // cascade is no longer "lone" in ADR-0008's sense — see ADR-0014.
   //
-  // ATOMICITY: the Edge stamp and the FlowRoute sweep below must commit as a
-  // unit, but this function takes a bare `Db` — it is the CALLER's job to
-  // wrap the call in `db.$transaction` (the tRPC `deleteEdge` procedure
-  // does). A non-transactional caller that fails between the two writes would
-  // leave the Edge deleted while its routes stay live, orphaned from a dead
-  // edge. Prisma has no reliable "am I in a transaction?" probe, so this is
-  // enforced by contract (ADR-0014), not by an assertion here.
+  // ATOMICITY: these writes must commit as a unit, but this function takes a
+  // bare `Db` — it is the CALLER's job to wrap the call in `db.$transaction`
+  // (the tRPC `deleteEdge` procedure does). A non-transactional caller that
+  // fails partway would orphan routes from a dead Edge. Prisma has no reliable
+  // "am I in a transaction?" probe, so this is enforced by contract
+  // (ADR-0014), not by an assertion here.
   const deletionId = randomUUID();
   const updated = await db.edge.update({
     where: { id: edge.id },
@@ -265,6 +292,12 @@ export async function deleteEdge(
     where: { id: { in: flowRouteIds }, deletedAt: null },
     data: { deletedAt, deletionId },
   });
+  if (innerEdgeIdsToSweep.length > 0) {
+    await db.edge.updateMany({
+      where: { id: { in: innerEdgeIdsToSweep }, deletedAt: null },
+      data: { deletedAt, deletionId },
+    });
+  }
   return { edge: updated, deletionId, flowRouteIds };
 }
 
