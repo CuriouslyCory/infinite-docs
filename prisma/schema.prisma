@@ -68,18 +68,19 @@ model User {
 // Root container of one architecture graph (see CONTEXT.md).
 // Addressed by an unguessable capability-URL `slug`; owned by a single User.
 model Project {
-    id        String    @id @default(cuid())
-    title     String
-    slug      String    @unique
-    ownerId   String
-    owner     User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
-    deletedAt DateTime?
-    nodes     Node[]
-    edges     Edge[]
-    flowSpecs FlowSpec[]
-    flows     Flow[]
+    id         String      @id @default(cuid())
+    title      String
+    slug       String      @unique
+    ownerId    String
+    owner      User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+    createdAt  DateTime    @default(now())
+    updatedAt  DateTime    @updatedAt
+    deletedAt  DateTime?
+    nodes      Node[]
+    edges      Edge[]
+    flowSpecs  FlowSpec[]
+    flows      Flow[]
+    flowRoutes FlowRoute[]
 
     @@index([ownerId])
 }
@@ -211,10 +212,22 @@ model Edge {
     createdAt    DateTime  @default(now())
     updatedAt    DateTime  @updatedAt
     deletedAt    DateTime?
-    // Batch id of the cascading Component soft-delete that swept this Edge (see
-    // Node.deletionId / ADR-0008); null when live or when removed by a lone
-    // `deleteEdge`.
+    // Batch id of the cascading soft-delete that swept this Edge (see
+    // Node.deletionId / ADR-0008). Set by `deleteNode`'s cascade across the
+    // subtree, and by `deleteEdge` when at least one incident FlowRoute is
+    // swept alongside the Edge (Slice 2). A lone `deleteEdge` on an Edge that
+    // carries no FlowRoutes still mints no `deletionId` — the "lone delete"
+    // carve-out ADR-0008 codified for the dominant case.
     deletionId   String?
+
+    // FlowRoutes that ride this Edge. Two relation arms because a FlowRoute
+    // references an Edge twice — as the `outer` pipe at this scope and as the
+    // `inner` refinement one scope deeper (Slice 3). Slice 2 only ever writes
+    // `outer`; the `inner` arm is kept ahead of its writer so Slice 3 needs no
+    // schema change. Forces named-relation disambiguation, the same shape Node
+    // uses for its three Edge relations (see ADR-0005).
+    flowRoutesAsOuter FlowRoute[] @relation("FlowRoutesAsOuter")
+    flowRoutesAsInner FlowRoute[] @relation("FlowRoutesAsInner")
 
     @@index([projectId, canvasNodeId])
     @@index([sourceId])
@@ -286,9 +299,61 @@ model Flow {
     deletedAt    DateTime?
     deletionId   String?
 
+    flowRoutes FlowRoute[] @relation("FlowRoutesForFlow")
+
     @@index([projectId, ownerNodeId])
     @@index([ownerNodeId])
     @@index([sourceSpecId])
+    @@index([deletionId])
+}
+
+// The binding that says "this Connection at this scope carries this Flow"
+// (see CONTEXT.md "FlowRoute"; master plan
+// docs/plans/flow-routed-connections.md). A first-class row, individually
+// addressable and individually soft-deletable, so wiring is removable without
+// touching either the Flow or the Connection.
+//
+// Slice 2 covers the same-Canvas baseline: `outerEdgeId` names the Connection
+// that carries the Flow at this scope; `innerEdgeId` is nullable but ALWAYS
+// null in Slice 2 — Slice 3 introduces the gated cross-scope inner-Edge
+// writer (`routeFlow` extended; ADR-0012). Keeping `innerEdgeId` in the
+// schema ahead of its writer is forward-compat: Slice 3 adds nothing to the
+// model.
+//
+// Owner-only via the owning Project (the same projectId-redundancy pattern
+// Edge / Flow / FlowSpec carry — authz needs `project.ownerId` without an
+// extra join, and the cascade sweeps filter by projectId for index
+// friendliness).
+//
+// The de-dupe rule `(outerEdgeId, flowId)` among active rows follows the
+// ADR-0010 named pattern (third adopter after `idx_edge_dedup` and
+// `idx_flow_dedup`): service-primary `findFirst` fast path with a partial
+// unique index `idx_flow_route_dedup` (in prisma/migrations) as a TOCTOU
+// backstop — both translate to the same `ConflictError` shape with
+// `details.conflictingFlowRouteIds`. The partial index expresses
+// `WHERE "deletedAt" IS NULL`, which Prisma schema cannot today; the raw
+// SQL lives in the migration. `NULLS NOT DISTINCT` is intentionally omitted
+// — both columns are NOT NULL, unlike `idx_edge_dedup` where `canvasNodeId`
+// is nullable.
+model FlowRoute {
+    id          String    @id @default(cuid())
+    projectId   String
+    project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    flowId      String
+    flow        Flow      @relation("FlowRoutesForFlow", fields: [flowId], references: [id], onDelete: Cascade)
+    outerEdgeId String
+    outerEdge   Edge      @relation("FlowRoutesAsOuter", fields: [outerEdgeId], references: [id], onDelete: Cascade)
+    innerEdgeId String?
+    innerEdge   Edge?     @relation("FlowRoutesAsInner", fields: [innerEdgeId], references: [id], onDelete: Cascade)
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    deletedAt   DateTime?
+    deletionId  String?
+
+    @@index([projectId])
+    @@index([flowId])
+    @@index([outerEdgeId])
+    @@index([innerEdgeId])
     @@index([deletionId])
 }
 

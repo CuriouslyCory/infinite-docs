@@ -4,10 +4,14 @@
 > from the senior engineer) for evolving the Connection model into one that
 > captures multi-level data flow. Tracks the work in GitHub issue #2.
 >
-> Status: **Slice 1 shipped** (PR #41 / commit `b1c0627`, ADR-0011). Slices 2–5
-> remain plan-only. ADRs land per slice. The "Open questions" section at the
-> bottom has been resolved for Slice 1 — entries are kept as a record of the
-> decisions and where they were captured.
+> Status: **Slices 1 + 2 shipped** (Slice 1: PR #41 / commit `b1c0627`,
+> ADR-0011. Slice 2: same-Canvas baseline routing — `FlowRoute` schema,
+> `routeFlow` / `unrouteFlow`, `deleteEdge` cascade with `restoreEdge`,
+> `getCanvas.edgeFlows` aggregation, "+ flow" popover and "N / M routed"
+> pill; ADR-0008 amended in place for the deleteEdge cascade). Slices 3–5
+> remain plan-only. ADRs land per slice. The "Open questions" section at
+> the bottom has been resolved for Slice 1 — entries are kept as a record
+> of the decisions and where they were captured.
 
 ## The kernel insight
 

@@ -465,7 +465,11 @@ describe("deleteEdge", () => {
 
     const deleted = await deleteEdge(testDb, actor, { id: edge.id });
 
-    expect(deleted.deletedAt).not.toBeNull();
+    expect(deleted.edge.deletedAt).not.toBeNull();
+    // No incident FlowRoutes — lone-delete still mints no deletionId
+    // (ADR-0008 lone-delete carve-out preserved).
+    expect(deleted.deletionId).toBeNull();
+    expect(deleted.flowRouteIds).toHaveLength(0);
     const persisted = await testDb.edge.findUnique({ where: { id: edge.id } });
     expect(persisted).not.toBeNull();
 
