@@ -10,7 +10,7 @@ import {
 } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
-import { ConflictError, NotFoundError } from "./errors";
+import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import {
   isEdgeDedupCollision,
   isFlowDedupCollision,
@@ -224,6 +224,17 @@ export interface FlowPalette {
 // O(project) (master plan perf posture).
 export const FLOW_PALETTE_PAGE_SIZE = 50;
 
+// Bound on the ancestry walk shared by the breadcrumb and boundary-derivation
+// CTEs. The graph is a tree today, so this is primarily cycle-defense for a
+// future move/reparent feature — but it ALSO bounds legitimate nesting. Rather
+// than silently truncate a trail (or a proxy set) past the cap, `getCanvas`
+// detects a walk that reached the ceiling and throws (see the truncation check
+// below) so the limit surfaces as a loud, typed error instead of missing data.
+// 256 is far past any real architecture nesting; hitting it means a cycle or
+// pathological depth, both of which a viewer should be told about, not handed a
+// quietly-incomplete Canvas.
+const ANCESTRY_DEPTH_CAP = 256;
+
 // Raw shape of one row from the boundary-derivation query. `palette` is a
 // Postgres `json` column (parsed to a JS array by the pg adapter) holding up to
 // FLOW_PALETTE_PAGE_SIZE + 1 items so the caller can compute `hasMore`.
@@ -236,6 +247,104 @@ interface BoundaryProxyRow {
   palette: FlowPaletteItem[];
 }
 
+/**
+ * Derives the boundary proxies and their first-page Flow palettes for a scope in
+ * ONE recursive-CTE round trip (ADR-0012 / #13 / #14). Walks the ancestor chain
+ * from `canvasNodeId` to the root; for each ancestor `a` it pulls the Edges on
+ * `a`'s parent Canvas incident to `a` and takes the OTHER endpoint as a boundary
+ * proxy. `is_direct` (depth 0) marks the scope's own externals — routable here,
+ * carrying `outer_edge_id` — vs inherited ones (#14). Each proxy's palette is a
+ * correlated `json_agg` of its first FLOW_PALETTE_PAGE_SIZE + 1 active Flows (+1
+ * reveals `hasMore`). The root scope has no ancestors, so it has no proxies.
+ *
+ * CALLER MUST HAVE AUTHORIZED `projectId` — this helper takes no Actor and does
+ * NO authorization of its own. It is a private read-side projection; the
+ * slug→project bind in `getCanvas` is the gate (ADR-0002). A future caller (a
+ * Slice-4 polarity reconciler, an admin/MCP read) that invokes it without first
+ * resolving and authorizing the project would walk ancestry across whatever
+ * `projectId` it is handed. Keep it private to this module.
+ */
+async function deriveBoundaryProxies(
+  db: Db,
+  projectId: string,
+  canvasNodeId: string | null,
+): Promise<BoundaryProxyRow[]> {
+  if (canvasNodeId === null) {
+    return [];
+  }
+  return db.$queryRaw<BoundaryProxyRow[]>`
+    WITH RECURSIVE ancestry AS (
+      SELECT n.id, n."parentId", 0 AS depth
+      FROM "Node" n
+      WHERE n.id = ${canvasNodeId}
+        AND n."projectId" = ${projectId}
+        AND n."deletedAt" IS NULL
+      UNION ALL
+      SELECT p.id, p."parentId", a.depth + 1
+      FROM "Node" p
+      JOIN ancestry a ON p.id = a."parentId"
+      WHERE p."projectId" = ${projectId}
+        AND p."deletedAt" IS NULL
+        AND a.depth < ${ANCESTRY_DEPTH_CAP}
+    )
+    SELECT
+      proxy.id AS node_id,
+      proxy.title AS title,
+      proxy.kind AS kind,
+      BOOL_OR(a.depth = 0) AS is_direct,
+      MIN(CASE WHEN a.depth = 0 THEN e.id END) AS outer_edge_id,
+      (
+        SELECT COALESCE(
+          json_agg(
+            json_build_object(
+              'id', pf.id,
+              'ownerNodeId', pf."ownerNodeId",
+              'kind', pf.kind,
+              'key', pf.key,
+              'title', pf.title,
+              'polarity', pf.polarity
+            )
+            ORDER BY pf."createdAt"
+          ),
+          '[]'::json
+        )
+        FROM (
+          SELECT f.id, f."ownerNodeId", f.kind, f.key, f.title,
+                 f.polarity, f."createdAt"
+          FROM "Flow" f
+          WHERE f."ownerNodeId" = proxy.id AND f."deletedAt" IS NULL
+          ORDER BY f."createdAt" ASC
+          LIMIT ${FLOW_PALETTE_PAGE_SIZE + 1}
+        ) pf
+      ) AS palette
+    FROM ancestry a
+    JOIN "Edge" e
+      ON e."canvasNodeId" IS NOT DISTINCT FROM a."parentId"
+      AND e."deletedAt" IS NULL
+      AND (e."sourceId" = a.id OR e."targetId" = a.id)
+    JOIN "Node" proxy
+      ON proxy.id = CASE
+        WHEN e."sourceId" = a.id THEN e."targetId"
+        ELSE e."sourceId"
+      END
+      AND proxy."deletedAt" IS NULL
+    WHERE proxy.id NOT IN (SELECT id FROM ancestry)
+    GROUP BY proxy.id, proxy.title, proxy.kind
+    ORDER BY BOOL_OR(a.depth = 0) DESC, proxy.title ASC`;
+}
+
+/**
+ * Reads everything one Canvas scope needs in a single round trip (ADR-0001):
+ * interior Components + Connections, the per-Edge Flow aggregation, the boundary
+ * proxies and their first-page palettes, and the breadcrumb trail.
+ *
+ * Slug-readable (ADR-0002): the capability slug IS the read grant, so `actor` is
+ * not consulted — it is accepted only to match the readable-procedure signature
+ * shape (`db, actor, input`) shared with `getFlowsForNode` / `getFlowPalette`,
+ * and is plumbed for a future owner-gated field. The slug→project bind below is
+ * the authorization gate every raw query (including `deriveBoundaryProxies`)
+ * relies on.
+ */
 export async function getCanvas(
   db: Db,
   _actor: Actor | null,
@@ -296,9 +405,10 @@ export async function getCanvas(
       }),
       // The breadcrumb trail walks `parentId` from the scope up to the root
       // in one recursive CTE (ADR-0006). At the root scope there are no
-      // ancestors, so we skip the query entirely. `depth < 256` is cycle
-      // defense for a future `move`/reparent feature (the graph is a tree
-      // today), not a nesting limit.
+      // ancestors, so we skip the query entirely. The `ANCESTRY_DEPTH_CAP`
+      // bound is cycle defense for a future `move`/reparent feature (the graph
+      // is a tree today); a walk that reaches it is detected below and throws
+      // rather than returning a silently-truncated trail.
       canvasNodeId === null
         ? Promise.resolve<{ id: string; title: string }[]>([])
         : db.$queryRaw<{ id: string; title: string }[]>`
@@ -314,7 +424,7 @@ export async function getCanvas(
               JOIN ancestry a ON p.id = a."parentId"
               WHERE p."projectId" = ${project.id}
                 AND p."deletedAt" IS NULL
-                AND a.depth < 256
+                AND a.depth < ${ANCESTRY_DEPTH_CAP}
             )
             SELECT id, title FROM ancestry ORDER BY depth DESC`,
       // Route aggregation: routed + orphan + byKind per outer Edge on this
@@ -363,77 +473,24 @@ export async function getCanvas(
         GROUP BY e.id`,
       // Boundary proxies + their Flow palettes for this scope (M3 / #13 +
       // Slice 3 / ADR-0012), in ONE statement so the single-round-trip read
-      // holds (ADR-0001). The recursive CTE walks the ancestor chain (the
-      // same shape as the breadcrumb query, ADR-0006); for each ancestor `a`
-      // it pulls the Edges on `a`'s parent Canvas incident to `a` and takes
-      // the OTHER endpoint — that is `directBoundary(a)`. Unioned over the
-      // whole chain that is `boundary(scope)`. `is_direct` (depth 0) marks the
-      // proxies of the current scope itself vs inherited ones (#14 collapse).
-      // The palette is a correlated `json_agg` of the proxy's first
-      // FLOW_PALETTE_PAGE_SIZE + 1 active Flows (the +1 reveals `hasMore`).
-      // The root scope has no ancestors, so it has no boundary proxies.
-      canvasNodeId === null
-        ? Promise.resolve<BoundaryProxyRow[]>([])
-        : db.$queryRaw<BoundaryProxyRow[]>`
-            WITH RECURSIVE ancestry AS (
-              SELECT n.id, n."parentId", 0 AS depth
-              FROM "Node" n
-              WHERE n.id = ${canvasNodeId}
-                AND n."projectId" = ${project.id}
-                AND n."deletedAt" IS NULL
-              UNION ALL
-              SELECT p.id, p."parentId", a.depth + 1
-              FROM "Node" p
-              JOIN ancestry a ON p.id = a."parentId"
-              WHERE p."projectId" = ${project.id}
-                AND p."deletedAt" IS NULL
-                AND a.depth < 256
-            )
-            SELECT
-              proxy.id AS node_id,
-              proxy.title AS title,
-              proxy.kind AS kind,
-              BOOL_OR(a.depth = 0) AS is_direct,
-              MIN(CASE WHEN a.depth = 0 THEN e.id END) AS outer_edge_id,
-              (
-                SELECT COALESCE(
-                  json_agg(
-                    json_build_object(
-                      'id', pf.id,
-                      'ownerNodeId', pf."ownerNodeId",
-                      'kind', pf.kind,
-                      'key', pf.key,
-                      'title', pf.title,
-                      'polarity', pf.polarity
-                    )
-                    ORDER BY pf."createdAt"
-                  ),
-                  '[]'::json
-                )
-                FROM (
-                  SELECT f.id, f."ownerNodeId", f.kind, f.key, f.title,
-                         f.polarity, f."createdAt"
-                  FROM "Flow" f
-                  WHERE f."ownerNodeId" = proxy.id AND f."deletedAt" IS NULL
-                  ORDER BY f."createdAt" ASC
-                  LIMIT ${FLOW_PALETTE_PAGE_SIZE + 1}
-                ) pf
-              ) AS palette
-            FROM ancestry a
-            JOIN "Edge" e
-              ON e."canvasNodeId" IS NOT DISTINCT FROM a."parentId"
-              AND e."deletedAt" IS NULL
-              AND (e."sourceId" = a.id OR e."targetId" = a.id)
-            JOIN "Node" proxy
-              ON proxy.id = CASE
-                WHEN e."sourceId" = a.id THEN e."targetId"
-                ELSE e."sourceId"
-              END
-              AND proxy."deletedAt" IS NULL
-            WHERE proxy.id NOT IN (SELECT id FROM ancestry)
-            GROUP BY proxy.id, proxy.title, proxy.kind
-            ORDER BY BOOL_OR(a.depth = 0) DESC, proxy.title ASC`,
+      // holds (ADR-0001). Extracted to `deriveBoundaryProxies` (which carries
+      // the authorization contract); the slug→project bind above is its gate.
+      deriveBoundaryProxies(db, project.id, canvasNodeId),
     ]);
+
+  // A walk that reached the depth ceiling returns a silently-truncated trail
+  // (and proxy set). Surface it as a typed error rather than handing back a
+  // quietly-incomplete Canvas — see `ANCESTRY_DEPTH_CAP`. The recursive CTE
+  // emits depths 0..CAP, so a full walk is CAP + 1 rows; anything beyond means
+  // the ceiling clipped it. (The graph is a tree today, so this is unreachable
+  // short of pathological nesting; it becomes live cycle-defense once reparent
+  // lands. Defensive guard — not pinned by a contrived deep-chain test, per the
+  // ADR-0014 precedent / Philosophy #6.)
+  if (breadcrumbs.length > ANCESTRY_DEPTH_CAP) {
+    throw new ValidationError(
+      "This Canvas is nested too deeply to display.",
+    );
+  }
 
   // A non-null scope with no breadcrumbs never resolved to a live Node in
   // this Project. Key off the breadcrumb trail (a live scope always returns

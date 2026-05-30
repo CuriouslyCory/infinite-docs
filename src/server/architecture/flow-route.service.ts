@@ -200,6 +200,16 @@ async function resolveInnerEdgeId(
     targetNodeId,
   } = args;
 
+  // Defensive local re-assertion of routeFlow's touches-endpoint guard (step 4):
+  // the boundary endpoint must be an endpoint of the outer Edge. routeFlow
+  // already checks this before calling, but pinning it here keeps the gated
+  // cross-scope write safe under any future caller of this helper (ADR-0012).
+  if (boundaryNodeId !== outerSourceId && boundaryNodeId !== outerTargetId) {
+    throw new ValidationError(
+      "The Flow's owner must be an endpoint of the outer Connection.",
+    );
+  }
+
   if (sourceNodeId === targetNodeId) {
     throw new ValidationError(
       "A refinement Connection cannot link a Component to itself.",
@@ -238,27 +248,49 @@ async function resolveInnerEdgeId(
     );
   }
 
-  await db.edge.createMany({
-    data: [
-      {
-        projectId,
+  // Find-or-create the inner Edge, then lock it before returning so the
+  // FlowRoute the caller is about to write cannot reference an Edge a concurrent
+  // sweep (unrouteFlow / deleteEdge) soft-deletes in the gap. Those sweepers take
+  // the SAME `FOR UPDATE` on this row before counting referers, so all three
+  // cross-scope writers serialize on the inner Edge (ADR-0012). If the row we
+  // resolved was swept in the read-then-lock window, `idx_edge_dedup` (partial
+  // on `deletedAt IS NULL`) excludes it and `createMany` mints a fresh live Edge
+  // on retry; this converges in at most a couple of iterations.
+  for (let attempt = 0; ; attempt++) {
+    await db.edge.createMany({
+      data: [
+        {
+          projectId,
+          canvasNodeId: scopeNodeId,
+          sourceId: sourceNodeId,
+          targetId: targetNodeId,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    const inner = await db.edge.findFirstOrThrow({
+      where: {
         canvasNodeId: scopeNodeId,
         sourceId: sourceNodeId,
         targetId: targetNodeId,
+        deletedAt: null,
       },
-    ],
-    skipDuplicates: true,
-  });
-  const inner = await db.edge.findFirstOrThrow({
-    where: {
-      canvasNodeId: scopeNodeId,
-      sourceId: sourceNodeId,
-      targetId: targetNodeId,
-      deletedAt: null,
-    },
-    select: { id: true },
-  });
-  return inner.id;
+      select: { id: true },
+    });
+    await db.$queryRaw`SELECT id FROM "Edge" WHERE id = ${inner.id} FOR UPDATE`;
+    const stillLive = await db.edge.findFirst({
+      where: { id: inner.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (stillLive) {
+      return inner.id;
+    }
+    if (attempt >= 4) {
+      throw new ConflictError(
+        "The interior Connection is being removed concurrently. Please retry.",
+      );
+    }
+  }
 }
 
 /**
@@ -307,6 +339,14 @@ export async function unrouteFlow(
   // A shared inner Edge survives this unroute as long as another active
   // FlowRoute still references it — the count EXCLUDES the row being deleted.
   if (flowRoute.innerEdgeId) {
+    // Serialize the last-referer decision per inner Edge. Without this lock two
+    // concurrent unroutes of the last two routes sharing the Edge could each
+    // see the OTHER still active (READ COMMITTED), both take the lone-delete
+    // branch, and leave the inner Edge active with zero active routes — an
+    // orphaned pipe that breaks ADR-0014's restore-as-a-unit guarantee. The
+    // lock (the same row routeFlow / deleteEdge take) releases on the caller's
+    // transaction commit; readers never contend for it (ADR-0012).
+    await db.$queryRaw`SELECT id FROM "Edge" WHERE id = ${flowRoute.innerEdgeId} FOR UPDATE`;
     const otherReferers = await db.flowRoute.count({
       where: {
         innerEdgeId: flowRoute.innerEdgeId,

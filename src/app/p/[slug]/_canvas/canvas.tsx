@@ -22,7 +22,7 @@ import { Suspense, useCallback, useMemo, useState } from "react";
 import { Toaster, toast } from "sonner";
 
 import { canConnect } from "~/lib/connection-rules";
-import { type NodeKind } from "~/lib/schemas";
+import { type FlowKind, type NodeKind } from "~/lib/schemas";
 import {
   type CanvasBoundaryProxy,
   type CanvasData,
@@ -243,6 +243,26 @@ function optimisticCanvasEdge(
     deletedAt: null,
     deletionId: null,
   };
+}
+
+/**
+ * Applies a +1/-1 delta to one Flow-kind bucket of an `edgeFlows` entry's
+ * `byKind` map, keeping the optimistic mirror in the same shape the server
+ * returns (zero-count kinds omitted, never negative).
+ */
+function bumpByKind(
+  byKind: Partial<Record<FlowKind, number>>,
+  kind: FlowKind,
+  delta: number,
+): Partial<Record<FlowKind, number>> {
+  const next = { ...byKind };
+  const value = (next[kind] ?? 0) + delta;
+  if (value <= 0) {
+    delete next[kind];
+  } else {
+    next[kind] = value;
+  }
+  return next;
 }
 
 function CanvasInner({
@@ -469,10 +489,9 @@ function CanvasInner({
     [setNodes, utils, canvasInput, patchCanvas, renameNode],
   );
 
-  // Persist Component positions on drag-stop. Skip still-optimistic (temp_) and
-  // unmoved nodes, then commit exactly ONE batched mutation — multi-select drags
-  // (onSelectionDragStop) land here too. The cache mirror is updated to match;
-  // failure rolls back store + cache and toasts.
+  // Persist Component positions on drag-stop in ONE batched mutation, so a
+  // multi-select drag (onSelectionDragStop also routes here) commits together.
+  // Rolls back store + cache and toasts on failure.
   const persistPositions = useCallback(
     // Accepts the union React Flow hands `onNodeDragStop`; boundary proxies are
     // `draggable: false` so they never appear here, and any that did would be
@@ -622,6 +641,14 @@ function CanvasInner({
           }
           return { interiorEdges: [...without, real] };
         });
+        // This refinement routed `flowId` on the parent `outerEdgeId` one scope
+        // up, so that Connection's "+ flow" popover (its unrouted filter) is now
+        // stale. Refresh it; the routed-count pill itself refreshes on ascend (a
+        // fresh getCanvas), so no cross-scope getCanvas write is needed here.
+        void utils.architecture.getRoutedFlowIdsForEdge.invalidate({
+          outerEdgeId,
+          slug,
+        });
       } catch {
         setEdges((es) => es.filter((e) => e.id !== tempId));
         patchCanvas((c) => ({
@@ -630,7 +657,16 @@ function CanvasInner({
         toast.error("Couldn’t route the flow. Please try again.");
       }
     },
-    [utils, canvasInput, projectId, canvasNodeId, setEdges, patchCanvas, routeFlow],
+    [
+      utils,
+      canvasInput,
+      projectId,
+      canvasNodeId,
+      setEdges,
+      patchCanvas,
+      routeFlow,
+      slug,
+    ],
   );
 
   // Draw a Connection. Refuses a still-optimistic (temp_) endpoint (no real id
@@ -977,7 +1013,7 @@ function CanvasInner({
   // delta (NOT a snapshot restore) so an overlapping in-flight route on the
   // same edge isn't clobbered, then reconcile to server truth.
   const commitRouteFlow = useCallback(
-    (flowId: string, outerEdgeId: string): void => {
+    (flowId: string, outerEdgeId: string, flowKind: FlowKind): void => {
       patchCanvas((c) => ({
         edgeFlows: c.edgeFlows.map((ef) =>
           ef.edgeId === outerEdgeId
@@ -985,6 +1021,7 @@ function CanvasInner({
                 ...ef,
                 routed: ef.routed + 1,
                 unrouted: Math.max(0, ef.unrouted - 1),
+                byKind: bumpByKind(ef.byKind, flowKind, 1),
               }
             : ef,
         ),
@@ -1011,6 +1048,7 @@ function CanvasInner({
                     ...ef,
                     routed: Math.max(0, ef.routed - 1),
                     unrouted: ef.unrouted + 1,
+                    byKind: bumpByKind(ef.byKind, flowKind, -1),
                   }
                 : ef,
             ),
@@ -1028,7 +1066,7 @@ function CanvasInner({
   // dispatch path is shipped now so the context contract is complete; a
   // future inspector composes on top with zero service-layer changes.
   const commitUnrouteFlow = useCallback(
-    (flowRouteId: string, outerEdgeId: string): void => {
+    (flowRouteId: string, outerEdgeId: string, flowKind: FlowKind): void => {
       patchCanvas((c) => ({
         edgeFlows: c.edgeFlows.map((ef) =>
           ef.edgeId === outerEdgeId
@@ -1036,6 +1074,7 @@ function CanvasInner({
                 ...ef,
                 routed: Math.max(0, ef.routed - 1),
                 unrouted: ef.unrouted + 1,
+                byKind: bumpByKind(ef.byKind, flowKind, -1),
               }
             : ef,
         ),
@@ -1058,6 +1097,7 @@ function CanvasInner({
                     ...ef,
                     routed: ef.routed + 1,
                     unrouted: Math.max(0, ef.unrouted - 1),
+                    byKind: bumpByKind(ef.byKind, flowKind, 1),
                   }
                 : ef,
             ),
@@ -1075,9 +1115,13 @@ function CanvasInner({
   const routeFlowDispatch = useCallback(
     (action: RouteFlowAction) => {
       if (action.kind === "route") {
-        commitRouteFlow(action.flowId, action.outerEdgeId);
+        commitRouteFlow(action.flowId, action.outerEdgeId, action.flowKind);
       } else {
-        commitUnrouteFlow(action.flowRouteId, action.outerEdgeId);
+        commitUnrouteFlow(
+          action.flowRouteId,
+          action.outerEdgeId,
+          action.flowKind,
+        );
       }
     },
     [commitRouteFlow, commitUnrouteFlow],

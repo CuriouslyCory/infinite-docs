@@ -370,7 +370,8 @@ export const routeFlowInput = z
     {
       message:
         "Cross-scope refinement routing needs both the interior Component and the boundary endpoint (sourceNodeId + targetNodeId), or neither for same-Canvas routing.",
-      path: ["sourceNodeId"],
+      // Cross-field rule, not a single-field error: attach at the object root.
+      path: [],
     },
   );
 export type RouteFlowInput = z.infer<typeof routeFlowInput>;

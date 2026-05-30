@@ -71,9 +71,14 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
   const routable = data.origin === "direct" && data.outerEdgeId !== null;
   // Inherited proxies start collapsed (context, not a work surface); direct
   // proxies with a palette start open so the refinement gesture is discoverable.
-  const [expanded, setExpanded] = useState(
-    data.origin === "direct" && data.flows.length > 0,
-  );
+  // The default is DERIVED from `data` so a proxy that first renders with no
+  // flows (cold cache / pre-seed) opens once its palette arrives — React Flow
+  // reuses the node by id across getCanvas refetches, so a one-shot `useState`
+  // initializer would latch the empty-state default. A user's explicit toggle
+  // (`userToggled`) wins thereafter.
+  const [userToggled, setUserToggled] = useState<boolean | undefined>(undefined);
+  const expanded =
+    userToggled ?? (data.origin === "direct" && data.flows.length > 0);
 
   return (
     <div
@@ -105,7 +110,7 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
             className="nodrag ml-auto shrink-0 text-white/40 transition hover:text-white"
             onClick={(e) => {
               e.stopPropagation();
-              setExpanded((v) => !v);
+              setUserToggled(!expanded);
             }}
           >
             {expanded ? (

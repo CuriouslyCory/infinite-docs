@@ -86,7 +86,9 @@ routed"**) and exposes a **"+ flow"** affordance when selected by the owner, lis
 unrouted Flows from either endpoint. The **refinement Connection** — the inner Edge that
 resolves a **boundary proxy** to a real Component one scope deeper — is realized now via the
 gated cross-scope `routeFlow` writer (Slice 3 / ADR-0012); see **FlowRoute** and **Boundary
-proxy**.)*
+proxy**. A refinement route leaves the *parent* Connection's routed-count pill stale until the
+viewer ascends (a fresh **getCanvas**) — a deliberate no-cross-scope-round-trip trade-off, see
+ADR-0012 Consequences.)*
 
 ### Edge
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and

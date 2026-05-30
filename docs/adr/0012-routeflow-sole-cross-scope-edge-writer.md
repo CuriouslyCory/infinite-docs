@@ -112,6 +112,22 @@ carried **only when no surviving active FlowRoute still references it**.
 routes. **"A shared inner Edge survives as long as one active FlowRoute rides it"
 is a reviewable invariant**, pinned by tests.
 
+The reference-count read and the conditional sweep are **read-then-write**, so
+under Postgres' default READ COMMITTED isolation two concurrent sweeps of the
+last routes on one inner Edge could each see the *other* still active and both
+skip the sweep — orphaning an active inner Edge with zero active routes. **The
+last-referer decision is serialized per inner Edge by a `SELECT … FOR UPDATE` row
+lock in the caller's transaction**, taken before the count. All three cross-scope
+writers take that same lock on the inner-Edge row: `unrouteFlow` and `deleteEdge`
+before counting referers, and `routeFlow` after find-or-creating the inner Edge
+and before writing the FlowRoute that references it (re-checking liveness after
+the lock and re-resolving to a fresh Edge if it was swept in the read-then-lock
+window). Locking the **same** row in all three — and, in `deleteEdge`, locking a
+candidate set in one `ORDER BY id … FOR UPDATE` statement — gives a consistent
+acquisition order, so no pair can cycle-deadlock. **"Every cross-scope writer
+locks the inner-Edge row before deciding whether it survives" is a reviewable
+invariant**, pinned by concurrent-race tests.
+
 ### Atomicity is a caller-supplied transaction
 
 `routeFlow` (inner-Edge write + FlowRoute write) and `unrouteFlow` (FlowRoute
@@ -149,9 +165,57 @@ proxy is context-only, routed at the scope where the direct Connection lives.
 - **Shared inner Edges are first-class.** Sweep logic that deletes an inner Edge
   while another active FlowRoute references it is a regression; restore must
   revive the shared Edge with its routes.
+- **Every cross-scope writer must lock the inner-Edge row (`FOR UPDATE`) before
+  deciding its fate.** Dropping the lock from `routeFlow`, `unrouteFlow`, or
+  `deleteEdge` reopens the READ COMMITTED sweep race (a live route orphaned on a
+  swept inner Edge, or a swept Edge with a surviving route). `pnpm check` cannot
+  see this; the concurrent-race tests are the backstop.
+- **A refinement route leaves the parent Connection's routed-count pill stale
+  until the user ascends.** The route is written one scope below the outer Edge,
+  so the client refreshes the *interior* Edge (optimistically) and the parent's
+  unrouted-filter cache (`getRoutedFlowIdsForEdge`), but **not** the parent
+  scope's `getCanvas` — the pill is a `routed/total` count that re-reads on the
+  next ascend (a fresh `getCanvas`). This is a deliberate Philosophy-#1 choice:
+  invalidating the parent scope on every refinement would cost a cross-scope
+  round-trip per route. The window is "descend → route → ascend shows the new
+  count"; a user who never ascends never sees the stale pill.
 - **`pnpm check` cannot see into the raw boundary-derivation SQL** or the
   cross-scope writes; correctness rests on the `flow-route.service` tests against
   real Postgres (ADR-0003) — `pnpm test` is part of the Definition of Done.
 - **ADR-0013 remains reserved** for Slice 4 (polarity refinement of the
   touches-endpoint invariant and the reverse-Connection reconciliation), which
   tightens this slice's direction-blind write.
+- **Polarity is enforced at the UI layer, not in the service — a precondition on
+  MCP exposure.** A boundary proxy's palette renders each Flow's refinement Port
+  with the polarity-correct handle type (`target` for INBOUND, `source` for
+  OUTBOUND), so a human drag cannot synthesise a wrong-polarity inner Edge; the
+  service is deliberately direction-blind. When `routeFlow` is exposed to a
+  non-UI caller (the MCP `route-flow` resource, deferred to #42), that handle-
+  level guard is gone — the polarity check must move into the service (the
+  ADR-0013 work) **before** that exposure lands, or an agent with the input
+  schema can write a wrong-polarity inner Edge.
+
+## Reviewer checklist (cross-scope writer)
+
+"`routeFlow` is the sole cross-scope Edge writer" cannot be machine-checked —
+`pnpm check` cannot reason about whether an `Edge` write is cross-scope, and a
+source-grep guard would false-positive on every legitimate same-Canvas write
+(`connectNodes`, `createNode`'s seeding, `restoreEdge`). It is enforced by review.
+When a change touches Edge writes, confirm:
+
+1. **The only `db.edge.create`/`createMany` whose `canvasNodeId` may differ from
+   both endpoints' `parentId` is `resolveInnerEdgeId`.** Any new Edge write
+   elsewhere must satisfy ADR-0005's same-Canvas rule (both endpoints'
+   `parentId === canvasNodeId`). The `connectNodes still rejects a cross-scope
+   endpoint` test pins `connectNodes`.
+2. **`resolveInnerEdgeId` still derives the boundary endpoint from the Flow's
+   owner** and pins it against a supplied endpoint — no `innerEdgeId` (or raw
+   boundary id) is accepted as input.
+3. **All three cross-scope writers still take the inner-Edge `FOR UPDATE`** before
+   deciding the Edge's fate (the sweep-race guard above).
+4. **Boundary derivation stays a read** — `deriveBoundaryProxies` persists no
+   rows and keeps its "caller must have authorized `projectId`" contract; it is
+   not reused from an unauthorized path.
+
+A new cross-scope Edge writer, or a violation of any of the above, regresses
+ADR-0005 and this ADR.

@@ -489,6 +489,20 @@ export async function getFlowPalette(
     throw new NotFoundError();
   }
 
+  // A cursor must name a live Flow owned by this Node. Prisma v7 returns an
+  // empty page for a cursor that exists but falls outside the `where` filter
+  // (rather than throwing), which would turn a foreign or stale Flow id into a
+  // silent empty result — and a cross-project existence oracle. Validate it.
+  if (cursor) {
+    const cursorRow = await db.flow.findFirst({
+      where: { id: cursor, ownerNodeId: node.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!cursorRow) {
+      throw new NotFoundError();
+    }
+  }
+
   // Fetch one past the page so a full page reveals whether more remain. The
   // `(createdAt, id)` order gives a stable cursor even when several Flows share
   // a createdAt (a re-parse materializes many in one batch).

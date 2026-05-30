@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { type Edge } from "../../../generated/prisma/client";
+import { Prisma, type Edge } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
@@ -260,16 +260,36 @@ export async function deleteEdge(
     ),
   ];
   const innerEdgeIdsToSweep: string[] = [];
-  for (const innerEdgeId of candidateInnerEdgeIds) {
-    const survivors = await db.flowRoute.count({
+  if (candidateInnerEdgeIds.length > 0) {
+    // Lock the candidate inner Edge rows, then find in ONE round trip which
+    // still have a surviving active FlowRoute outside this swept batch. The
+    // lock serializes the survivor decision per inner Edge against a concurrent
+    // routeFlow / unrouteFlow (which take the same `FOR UPDATE` on these rows),
+    // so we cannot sweep an Edge a route is about to ride or a sibling delete is
+    // about to keep (ADR-0012 sweep race). `ORDER BY id` fixes the lock
+    // acquisition order, so two concurrent deleteEdge callers locking
+    // overlapping sets cannot cycle-deadlock. Inner Edge ids absent from the
+    // survivor groups are the ones safe to sweep.
+    await db.$queryRaw`SELECT id FROM "Edge" WHERE id IN (${Prisma.join(
+      candidateInnerEdgeIds,
+    )}) ORDER BY id FOR UPDATE`;
+    const survivorGroups = await db.flowRoute.groupBy({
+      by: ["innerEdgeId"],
       where: {
-        innerEdgeId,
+        innerEdgeId: { in: candidateInnerEdgeIds },
         deletedAt: null,
         id: { notIn: flowRouteIds },
       },
     });
-    if (survivors === 0) {
-      innerEdgeIdsToSweep.push(innerEdgeId);
+    const haveSurvivor = new Set(
+      survivorGroups
+        .map((g) => g.innerEdgeId)
+        .filter((id): id is string => id !== null),
+    );
+    for (const innerEdgeId of candidateInnerEdgeIds) {
+      if (!haveSurvivor.has(innerEdgeId)) {
+        innerEdgeIdsToSweep.push(innerEdgeId);
+      }
     }
   }
 

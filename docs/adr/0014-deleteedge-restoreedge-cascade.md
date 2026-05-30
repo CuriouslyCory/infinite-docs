@@ -126,6 +126,11 @@ the check).
   gated cross-scope writer now populates `innerEdgeId`, so the `deleteEdge` sweep
   reaches real inner Edges — and was extended there with the reference-counted
   rule (a shared inner Edge is swept only when no other active FlowRoute rides it).
+  That survivor count is **read-then-write**: `deleteEdge` therefore locks the
+  candidate inner-Edge rows with a single `ORDER BY id … FOR UPDATE` before
+  counting, closing the READ COMMITTED window against a concurrent
+  `routeFlow`/`unrouteFlow` (which take the same per-row lock). See ADR-0012's
+  reference-counted-sweep section for the shared discipline.
 - **`pnpm check` cannot see into the raw aggregation SQL** that reads these routes
   (`getCanvas.edgeFlows`); correctness rests on the `flow-route.service` tests
   against real Postgres (ADR-0003). `pnpm test` is part of the Definition of Done.

@@ -849,6 +849,26 @@ describe("routeFlow cross-scope refinement (Slice 3 / ADR-0012)", () => {
     ).rejects.toBeInstanceOf(ValidationError);
   });
 
+  it("rejects when neither supplied endpoint is the Flow's owner but one is a foreign Node (smuggle guard)", async () => {
+    // The Flow's owner (B) is an endpoint of the outer Edge, but the caller
+    // supplies the interior child plus an unrelated Node — neither is the
+    // boundary endpoint. resolveInnerEdgeId must reject rather than write a
+    // cross-scope Edge to a smuggled endpoint (ADR-0012 derived-endpoint rule).
+    const { actor, project, edge, flow, child } = await seedRefinement();
+    const foreign = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Unrelated",
+    });
+    await expect(
+      routeFlow(testDb, actor, {
+        flowId: flow.id,
+        outerEdgeId: edge.id,
+        sourceNodeId: child.id,
+        targetNodeId: foreign.id,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
   it("connectNodes still rejects a cross-scope endpoint (ADR-0005 regression guard)", async () => {
     const { actor, project, a, b, child } = await seedRefinement();
     // Drawing child (inside A) → B (root) on A's Canvas is exactly the
@@ -944,6 +964,106 @@ describe("shared inner-Edge cascade (Slice 3 / ADR-0012)", () => {
       where: { id: innerEdgeId },
     });
     expect(revivedInner.deletedAt).toBeNull();
+  });
+
+  it("concurrent unroutes of the last two routes still sweep the shared inner Edge (race guard)", async () => {
+    const { actor, r1, r2 } = await seedSharedInnerEdge();
+    const innerEdgeId = r1.innerEdgeId!;
+    expect(r2.innerEdgeId).toBe(innerEdgeId);
+
+    // Race the two unroutes, each in its own transaction exactly as the tRPC
+    // procedure wraps them. Without the per-inner-Edge FOR UPDATE lock both
+    // could observe the OTHER still active (READ COMMITTED) and both skip the
+    // sweep, orphaning the inner Edge with zero active routes (ADR-0012 sweep
+    // race). With the lock, whichever runs the count second sees the first's
+    // committed soft-delete and sweeps.
+    await Promise.all([
+      testDb.$transaction((tx) =>
+        unrouteFlow(tx, actor, { flowRouteId: r1.id }),
+      ),
+      testDb.$transaction((tx) =>
+        unrouteFlow(tx, actor, { flowRouteId: r2.id }),
+      ),
+    ]);
+
+    const inner = await testDb.edge.findUniqueOrThrow({
+      where: { id: innerEdgeId },
+    });
+    expect(inner.deletedAt).not.toBeNull();
+    const liveRoutes = await testDb.flowRoute.count({
+      where: { innerEdgeId, deletedAt: null },
+    });
+    expect(liveRoutes).toBe(0);
+  });
+
+  it("deleteEdge racing a new cross-scope route never orphans a live route on a swept inner Edge", async () => {
+    const { actor, project, edge, b, child } = await seedSharedInnerEdge();
+    const f3 = await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "OPENAPI_OPERATION",
+      key: "DELETE /pets/{id}",
+      title: "Delete pet",
+      polarity: "INBOUND",
+    });
+
+    // Race deleting the outer Edge against routing a NEW Flow through the same
+    // inner pipe. Either ordering is acceptable; the invariant under test is
+    // that no live FlowRoute is left pointing at a soft-deleted inner Edge.
+    await Promise.allSettled([
+      testDb.$transaction((tx) => deleteEdge(tx, actor, { id: edge.id })),
+      testDb.$transaction((tx) =>
+        routeFlow(tx, actor, {
+          flowId: f3.id,
+          outerEdgeId: edge.id,
+          sourceNodeId: child.id,
+          targetNodeId: b.id,
+        }),
+      ),
+    ]);
+
+    const liveRoutes = await testDb.flowRoute.findMany({
+      where: {
+        projectId: project.id,
+        deletedAt: null,
+        innerEdgeId: { not: null },
+      },
+      select: { innerEdgeId: true },
+    });
+    for (const r of liveRoutes) {
+      const inner = await testDb.edge.findUniqueOrThrow({
+        where: { id: r.innerEdgeId! },
+      });
+      expect(inner.deletedAt).toBeNull();
+    }
+  });
+
+  it("every active FlowRoute's inner Edge sits on the outer Edge's other endpoint's Canvas (table invariant)", async () => {
+    // Property-style guard: the inner Edge of any live cross-scope route must
+    // live on the interior Canvas of the outer Edge's NON-owner endpoint, with
+    // the Flow's owner as one endpoint. Cheap insurance that no future write
+    // path drifts from resolveInnerEdgeId (ADR-0012).
+    const { project } = await seedSharedInnerEdge();
+    const routes = await testDb.flowRoute.findMany({
+      where: {
+        projectId: project.id,
+        deletedAt: null,
+        innerEdgeId: { not: null },
+      },
+      select: { flowId: true, outerEdgeId: true, innerEdgeId: true },
+    });
+    expect(routes.length).toBeGreaterThan(0);
+    for (const route of routes) {
+      const [flow, outer, inner] = await Promise.all([
+        testDb.flow.findUniqueOrThrow({ where: { id: route.flowId } }),
+        testDb.edge.findUniqueOrThrow({ where: { id: route.outerEdgeId } }),
+        testDb.edge.findUniqueOrThrow({ where: { id: route.innerEdgeId! } }),
+      ]);
+      const boundaryNodeId = flow.ownerNodeId;
+      const scopeNodeId =
+        outer.sourceId === boundaryNodeId ? outer.targetId : outer.sourceId;
+      expect(inner.canvasNodeId).toBe(scopeNodeId);
+      expect([inner.sourceId, inner.targetId]).toContain(boundaryNodeId);
+    }
   });
 });
 
