@@ -113,8 +113,8 @@ function UnroutedFlowList({
         <FlowGroup
           title={endpoints.sourceTitle}
           flows={sourceUnrouted}
-          onPick={(flowId) => {
-            dispatch({ kind: "route", flowId, outerEdgeId });
+          onPick={(flowId, flowKind) => {
+            dispatch({ kind: "route", flowId, outerEdgeId, flowKind });
             onClose();
           }}
         />
@@ -123,8 +123,8 @@ function UnroutedFlowList({
         <FlowGroup
           title={endpoints.targetTitle}
           flows={targetUnrouted}
-          onPick={(flowId) => {
-            dispatch({ kind: "route", flowId, outerEdgeId });
+          onPick={(flowId, flowKind) => {
+            dispatch({ kind: "route", flowId, outerEdgeId, flowKind });
             onClose();
           }}
         />
@@ -146,7 +146,7 @@ function FlowGroup({
     polarity: FlowPolarity;
     kind: FlowKind;
   }[];
-  onPick: (flowId: string) => void;
+  onPick: (flowId: string, kind: FlowKind) => void;
 }) {
   return (
     <section className="flex flex-col gap-1">
@@ -159,7 +159,7 @@ function FlowGroup({
             <button
               type="button"
               className="flex w-full items-center gap-2 rounded bg-white/5 px-2 py-1 text-left transition hover:bg-white/10"
-              onClick={() => onPick(flow.id)}
+              onClick={() => onPick(flow.id, flow.kind)}
             >
               <span
                 className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${

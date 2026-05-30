@@ -22,11 +22,22 @@ import { Suspense, useCallback, useMemo, useState } from "react";
 import { Toaster, toast } from "sonner";
 
 import { canConnect } from "~/lib/connection-rules";
-import { type NodeKind } from "~/lib/schemas";
-import { type CanvasData, type CanvasEdge, type CanvasNode } from "~/lib/types";
+import { type FlowKind, type NodeKind } from "~/lib/schemas";
+import {
+  type CanvasBoundaryProxy,
+  type CanvasData,
+  type CanvasEdge,
+  type CanvasFlowPalette,
+  type CanvasNode,
+} from "~/lib/types";
 import { api } from "~/trpc/react";
 
 import { AddComponent } from "./add-component";
+import {
+  BoundaryProxyNodeView,
+  flowIdFromHandle,
+  type BoundaryProxyNode,
+} from "./boundary-proxy-node";
 import { ComponentDetailPanel } from "./component-detail-panel";
 import {
   CanEditContext,
@@ -66,8 +77,47 @@ import {
 // Module-level: React Flow re-mounts every node/edge (and warns) if `nodeTypes`
 // / `edgeTypes` is a fresh object each render. Defining them once is the key
 // React Flow perf guard.
-const nodeTypes = { component: ComponentNodeView };
+const nodeTypes = {
+  component: ComponentNodeView,
+  "boundary-proxy": BoundaryProxyNodeView,
+};
 const edgeTypes = { connection: ConnectionEdgeView };
+
+// The Canvas holds two node kinds: interactive Components (draggable, persisted)
+// and read-only boundary proxies (derived, never persisted). Both live in the
+// one React Flow `nodes` array.
+type CanvasRFNode = ComponentNode | BoundaryProxyNode;
+
+// Boundary proxies have no stored position (they are derived, #13). Lay them
+// out deterministically in a row above the interior Components so they read as
+// "the outside, up top" and fitView frames them with the content. Direct
+// (routable) proxies sort ahead of inherited ones (the query already orders
+// them that way), so the routable Ports cluster on the left.
+const BOUNDARY_ROW_Y = -220;
+const BOUNDARY_COL_W = 260;
+
+function toBoundaryRFNode(
+  proxy: CanvasBoundaryProxy,
+  palette: CanvasFlowPalette | undefined,
+  index: number,
+): BoundaryProxyNode {
+  return {
+    id: proxy.nodeId,
+    type: "boundary-proxy",
+    position: { x: index * BOUNDARY_COL_W, y: BOUNDARY_ROW_Y },
+    draggable: false,
+    selectable: false,
+    deletable: false,
+    data: {
+      title: proxy.title,
+      kind: proxy.kind,
+      origin: proxy.origin,
+      outerEdgeId: proxy.outerEdgeId,
+      flows: palette?.flows ?? [],
+      hasMore: palette?.hasMore ?? false,
+    },
+  };
+}
 
 // A Connection's direction is structural — output Port → input Port — so every
 // Connection carries one arrowhead at its target (input) end. Set on the edge
@@ -195,6 +245,26 @@ function optimisticCanvasEdge(
   };
 }
 
+/**
+ * Applies a +1/-1 delta to one Flow-kind bucket of an `edgeFlows` entry's
+ * `byKind` map, keeping the optimistic mirror in the same shape the server
+ * returns (zero-count kinds omitted, never negative).
+ */
+function bumpByKind(
+  byKind: Partial<Record<FlowKind, number>>,
+  kind: FlowKind,
+  delta: number,
+): Partial<Record<FlowKind, number>> {
+  const next = { ...byKind };
+  const value = (next[kind] ?? 0) + delta;
+  if (value <= 0) {
+    delete next[kind];
+  } else {
+    next[kind] = value;
+  }
+  return next;
+}
+
 function CanvasInner({
   scope,
   slug,
@@ -217,17 +287,23 @@ function CanvasInner({
     () => ({ slug, canvasNodeId }),
     [slug, canvasNodeId],
   );
-  const [{ interiorNodes, interiorEdges, edgeFlows }] =
+  const [{ interiorNodes, interiorEdges, edgeFlows, boundaryProxies, flowPalettes }] =
     api.architecture.getCanvas.useSuspenseQuery(canvasInput);
 
   // Seed React Flow's store ONCE from the hydrated query; thereafter the store
   // owns interaction state. The island is keyed by scope (./index), so a Descent
   // (a scope change) remounts and re-seeds rather than inheriting these.
   // Persistence flows through one batched/single mutation per gesture (below),
-  // with the query cache kept in lockstep so a remount re-seeds it.
-  const [nodes, setNodes, onNodesChange] = useNodesState<ComponentNode>(
-    interiorNodes.map(toRFNode),
-  );
+  // with the query cache kept in lockstep so a remount re-seeds it. Boundary
+  // proxies seed alongside the Components: they are read-only and never the
+  // subject of a Component mutation (their ids never match a rename/delete/
+  // reconcile target), so they ride safely in the same store (#14).
+  const [nodes, setNodes, onNodesChange] = useNodesState<CanvasRFNode>([
+    ...interiorNodes.map(toRFNode),
+    ...boundaryProxies.map((p, i) =>
+      toBoundaryRFNode(p, flowPalettes[p.nodeId], i),
+    ),
+  ]);
   // Initial edges seed: pure structural shape (no edgeFlows yet). The
   // `edgesWithFlows` useMemo below hydrates the aggregation + endpoint
   // metadata across rerenders.
@@ -280,14 +356,17 @@ function CanvasInner({
   const patchCanvas = useCallback(
     (patch: (prev: CanvasData) => Partial<CanvasData>) => {
       utils.architecture.getCanvas.setData(canvasInput, (old) => {
-        // `edgeFlows: []` is load-bearing — Slice 2 added the field, and a
-        // partial update on a cold cache (e.g. `commitRouteFlow` fires
-        // before the query has resolved once) would otherwise patch against
-        // a base that lacks the key and drop it. Keep all known keys here.
+        // The zero-value defaults are load-bearing — a partial update on a cold
+        // cache (e.g. `commitRouteFlow` fires before the query has resolved
+        // once) would otherwise patch against a base that lacks a key and drop
+        // it. Keep EVERY getCanvas key here (boundaryProxies / flowPalettes
+        // joined the payload in Slice 3).
         const base: CanvasData = old ?? {
           interiorNodes: [],
           interiorEdges: [],
           edgeFlows: [],
+          boundaryProxies: [],
+          flowPalettes: {},
           breadcrumbs: [],
         };
         return { ...base, ...patch(base) };
@@ -377,7 +456,11 @@ function CanvasInner({
         ?.interiorNodes.find((n) => n.id === id)?.title;
 
       setNodes((ns) =>
-        ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, title } } : n)),
+        ns.map((n) =>
+          n.id === id && n.type === "component"
+            ? { ...n, data: { ...n.data, title } }
+            : n,
+        ),
       );
       patchCanvas((c) => ({
         interiorNodes: c.interiorNodes.map((n) =>
@@ -389,7 +472,9 @@ function CanvasInner({
         if (prevTitle !== undefined) {
           setNodes((ns) =>
             ns.map((n) =>
-              n.id === id ? { ...n, data: { ...n.data, title: prevTitle } } : n,
+              n.id === id && n.type === "component"
+                ? { ...n, data: { ...n.data, title: prevTitle } }
+                : n,
             ),
           );
           patchCanvas((c) => ({
@@ -404,12 +489,14 @@ function CanvasInner({
     [setNodes, utils, canvasInput, patchCanvas, renameNode],
   );
 
-  // Persist Component positions on drag-stop. Skip still-optimistic (temp_) and
-  // unmoved nodes, then commit exactly ONE batched mutation — multi-select drags
-  // (onSelectionDragStop) land here too. The cache mirror is updated to match;
-  // failure rolls back store + cache and toasts.
+  // Persist Component positions on drag-stop in ONE batched mutation, so a
+  // multi-select drag (onSelectionDragStop also routes here) commits together.
+  // Rolls back store + cache and toasts on failure.
   const persistPositions = useCallback(
-    async (moved: ComponentNode[]) => {
+    // Accepts the union React Flow hands `onNodeDragStop`; boundary proxies are
+    // `draggable: false` so they never appear here, and any that did would be
+    // skipped — they have no `interiorNodes` row to look up.
+    async (moved: CanvasRFNode[]) => {
       const cached = utils.architecture.getCanvas.getData(canvasInput);
       const byId = new Map(
         cached?.interiorNodes.map((n) => [n.id, n] as const) ?? [],
@@ -472,6 +559,116 @@ function CanvasInner({
     [utils, canvasInput, projectId, updatePositions, setNodes, patchCanvas],
   );
 
+  // Refinement route from a boundary proxy's palette (Slice 3 / ADR-0012). The
+  // drag synthesises the inner Edge between a child Component and the boundary
+  // proxy; `source`/`target` are its endpoints exactly as drawn (direction-blind
+  // — polarity validation is Slice 4). Optimistic inner Edge in the store + cache
+  // mirror, one cross-scope `routeFlow`, reconcile the temp id to the real inner
+  // Edge (converging silently when the inner Edge already exists — a shared
+  // pipe), roll back + toast on failure. The parent Connection's routed-count
+  // pill refreshes when the user navigates back up (a fresh getCanvas), so no
+  // cross-scope cache write is needed here.
+  const routeFromPalette = useCallback(
+    async (params: {
+      flowId: string;
+      proxyNodeId: string;
+      source: string;
+      target: string;
+    }): Promise<void> => {
+      const { flowId, proxyNodeId, source, target } = params;
+      const proxy = utils.architecture.getCanvas
+        .getData(canvasInput)
+        ?.boundaryProxies.find((p) => p.nodeId === proxyNodeId);
+      if (!proxy?.outerEdgeId) {
+        toast.error("That flow can’t be routed here.");
+        return;
+      }
+      const outerEdgeId = proxy.outerEdgeId;
+
+      const tempId = `temp_${crypto.randomUUID()}`;
+      setEdges((es) =>
+        addEdge(
+          {
+            id: tempId,
+            type: "connection",
+            source,
+            target,
+            markerEnd: STRUCTURAL_MARKER_END,
+            data: { label: null, optimistic: true },
+          },
+          es,
+        ),
+      );
+      patchCanvas((c) => ({
+        interiorEdges: [
+          ...c.interiorEdges,
+          optimisticCanvasEdge(tempId, projectId, canvasNodeId, source, target),
+        ],
+      }));
+
+      try {
+        const route = await routeFlow({
+          flowId,
+          outerEdgeId,
+          sourceNodeId: source,
+          targetNodeId: target,
+        });
+        const innerId = route.innerEdgeId;
+        // Reconcile the temp inner Edge to the real one. If the inner Edge
+        // already exists (a shared pipe other Flows converged on), just drop
+        // the temp — re-adding its id would duplicate a node in the store.
+        const real =
+          innerId === null
+            ? null
+            : optimisticCanvasEdge(
+                innerId,
+                projectId,
+                canvasNodeId,
+                source,
+                target,
+              );
+        setEdges((es) => {
+          const withoutTemp = es.filter((e) => e.id !== tempId);
+          if (!real || withoutTemp.some((e) => e.id === real.id)) {
+            return withoutTemp;
+          }
+          return [...withoutTemp, toRFEdge(real)];
+        });
+        patchCanvas((c) => {
+          const without = c.interiorEdges.filter((e) => e.id !== tempId);
+          if (!real || without.some((e) => e.id === real.id)) {
+            return { interiorEdges: without };
+          }
+          return { interiorEdges: [...without, real] };
+        });
+        // This refinement routed `flowId` on the parent `outerEdgeId` one scope
+        // up, so that Connection's "+ flow" popover (its unrouted filter) is now
+        // stale. Refresh it; the routed-count pill itself refreshes on ascend (a
+        // fresh getCanvas), so no cross-scope getCanvas write is needed here.
+        void utils.architecture.getRoutedFlowIdsForEdge.invalidate({
+          outerEdgeId,
+          slug,
+        });
+      } catch {
+        setEdges((es) => es.filter((e) => e.id !== tempId));
+        patchCanvas((c) => ({
+          interiorEdges: c.interiorEdges.filter((e) => e.id !== tempId),
+        }));
+        toast.error("Couldn’t route the flow. Please try again.");
+      }
+    },
+    [
+      utils,
+      canvasInput,
+      projectId,
+      canvasNodeId,
+      setEdges,
+      patchCanvas,
+      routeFlow,
+      slug,
+    ],
+  );
+
   // Draw a Connection. Refuses a still-optimistic (temp_) endpoint (no real id
   // to persist yet), then pre-flights the pure topology rules — no self-link, no
   // duplicate — via `canConnect`, so the user gets instant feedback rather than a
@@ -483,6 +680,21 @@ function CanvasInner({
     async (connection: Connection) => {
       const { source, target } = connection;
       if (!source || !target) return;
+
+      // Refinement route: one endpoint is a boundary-proxy palette item (its
+      // handle id encodes the Flow). Branch off to the cross-scope writer
+      // (Slice 3 / ADR-0012) — this is not a plain Component-to-Component draw.
+      const flowId =
+        flowIdFromHandle(connection.sourceHandle) ??
+        flowIdFromHandle(connection.targetHandle);
+      if (flowId) {
+        const proxyNodeId = flowIdFromHandle(connection.sourceHandle)
+          ? source
+          : target;
+        await routeFromPalette({ flowId, proxyNodeId, source, target });
+        return;
+      }
+
       if (source.startsWith("temp_") || target.startsWith("temp_")) {
         toast.error("Finish adding that component before connecting it.");
         return;
@@ -552,6 +764,7 @@ function CanvasInner({
       patchCanvas,
       projectId,
       connectNodes,
+      routeFromPalette,
     ],
   );
 
@@ -779,7 +992,9 @@ function CanvasInner({
     (id: string, flowCount: number) => {
       setNodes((ns) =>
         ns.map((n) =>
-          n.id === id ? { ...n, data: { ...n.data, flowCount } } : n,
+          n.id === id && n.type === "component"
+            ? { ...n, data: { ...n.data, flowCount } }
+            : n,
         ),
       );
       patchCanvas((c) => ({
@@ -798,7 +1013,7 @@ function CanvasInner({
   // delta (NOT a snapshot restore) so an overlapping in-flight route on the
   // same edge isn't clobbered, then reconcile to server truth.
   const commitRouteFlow = useCallback(
-    (flowId: string, outerEdgeId: string): void => {
+    (flowId: string, outerEdgeId: string, flowKind: FlowKind): void => {
       patchCanvas((c) => ({
         edgeFlows: c.edgeFlows.map((ef) =>
           ef.edgeId === outerEdgeId
@@ -806,6 +1021,7 @@ function CanvasInner({
                 ...ef,
                 routed: ef.routed + 1,
                 unrouted: Math.max(0, ef.unrouted - 1),
+                byKind: bumpByKind(ef.byKind, flowKind, 1),
               }
             : ef,
         ),
@@ -832,6 +1048,7 @@ function CanvasInner({
                     ...ef,
                     routed: Math.max(0, ef.routed - 1),
                     unrouted: ef.unrouted + 1,
+                    byKind: bumpByKind(ef.byKind, flowKind, -1),
                   }
                 : ef,
             ),
@@ -849,7 +1066,7 @@ function CanvasInner({
   // dispatch path is shipped now so the context contract is complete; a
   // future inspector composes on top with zero service-layer changes.
   const commitUnrouteFlow = useCallback(
-    (flowRouteId: string, outerEdgeId: string): void => {
+    (flowRouteId: string, outerEdgeId: string, flowKind: FlowKind): void => {
       patchCanvas((c) => ({
         edgeFlows: c.edgeFlows.map((ef) =>
           ef.edgeId === outerEdgeId
@@ -857,6 +1074,7 @@ function CanvasInner({
                 ...ef,
                 routed: Math.max(0, ef.routed - 1),
                 unrouted: ef.unrouted + 1,
+                byKind: bumpByKind(ef.byKind, flowKind, -1),
               }
             : ef,
         ),
@@ -879,6 +1097,7 @@ function CanvasInner({
                     ...ef,
                     routed: ef.routed + 1,
                     unrouted: Math.max(0, ef.unrouted - 1),
+                    byKind: bumpByKind(ef.byKind, flowKind, 1),
                   }
                 : ef,
             ),
@@ -896,9 +1115,13 @@ function CanvasInner({
   const routeFlowDispatch = useCallback(
     (action: RouteFlowAction) => {
       if (action.kind === "route") {
-        commitRouteFlow(action.flowId, action.outerEdgeId);
+        commitRouteFlow(action.flowId, action.outerEdgeId, action.flowKind);
       } else {
-        commitUnrouteFlow(action.flowRouteId, action.outerEdgeId);
+        commitUnrouteFlow(
+          action.flowRouteId,
+          action.outerEdgeId,
+          action.flowKind,
+        );
       }
     },
     [commitRouteFlow, commitUnrouteFlow],
@@ -928,7 +1151,7 @@ function CanvasInner({
           <DescendComponentContext.Provider value={descend}>
             <DeleteComponentContext.Provider value={removeComponent}>
               <CanEditContext.Provider value={canEdit}>
-                <ReactFlow<ComponentNode, ConnectionEdge>
+                <ReactFlow<CanvasRFNode, ConnectionEdge>
                   nodes={nodes}
                   edges={enrichedEdges}
                   onNodesChange={onNodesChange}
@@ -959,17 +1182,25 @@ function CanvasInner({
                   onNodeClick={(_event, node) => {
                     // A `temp_…` Component has no server id yet; opening the
                     // detail panel would query for a node the server cannot
-                    // find. Single-click selection only — double-click still
-                    // descends.
+                    // find. Boundary proxies are read-only stand-ins — they
+                    // have no editable detail panel. Single-click selection
+                    // only for real Components — double-click still descends.
                     if (node.id.startsWith("temp_")) return;
+                    if (node.type === "boundary-proxy") return;
                     setSelectedNodeId(node.id);
                   }}
                   onPaneClick={() => setSelectedNodeId(null)}
-                  onNodeDoubleClick={(_event, node) => descend(node.id)}
+                  onNodeDoubleClick={(_event, node) => {
+                    // Boundary proxies are read-only — they have no interior to
+                    // descend into (descend into the real Component instead).
+                    if (node.type === "boundary-proxy") return;
+                    descend(node.id);
+                  }}
                   onNodeMouseEnter={(_event, node) => {
                     // Make Descent feel instant: warm the interior Canvas payload (tRPC
                     // cache, the same key the descended island reads) and the route shell.
                     if (node.id.startsWith("temp_")) return;
+                    if (node.type === "boundary-proxy") return;
                     void utils.architecture.getCanvas.prefetch({
                       slug,
                       canvasNodeId: node.id,

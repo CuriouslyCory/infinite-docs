@@ -83,8 +83,12 @@ or user-set field, so it cannot lie (ADR-0009). A two-way relationship is **two 
 realized now — see **Edge** for the same-Canvas, no-self-link, and no-duplicate-active rules.
 A Connection that carries one or more **FlowRoutes** wears a routed-count pill (**"N / M
 routed"**) and exposes a **"+ flow"** affordance when selected by the owner, listing the
-unrouted Flows from either endpoint. The refinement Connection that resolves a **boundary
-proxy** to a real Component (M5) lands later.)*
+unrouted Flows from either endpoint. The **refinement Connection** — the inner Edge that
+resolves a **boundary proxy** to a real Component one scope deeper — is realized now via the
+gated cross-scope `routeFlow` writer (Slice 3 / ADR-0012); see **FlowRoute** and **Boundary
+proxy**. A refinement route leaves the *parent* Connection's routed-count pill stale until the
+viewer ascends (a fresh **getCanvas**) — a deliberate no-cross-scope-round-trip trade-off, see
+ADR-0012 Consequences.)*
 
 ### Edge
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
@@ -96,8 +100,11 @@ by an **explicit `canvasNodeId`** (the Component whose interior Canvas owns the 
 scope levels (the M5 refinement Connection), so scope is recorded, not derived (ADR-0005).
 Three invariants hold and are enforced **in the service, not the database** (ADR-0005): both
 endpoints sit on the **same Canvas** as the Edge, an Edge never links a Node to itself, and no
-two *active* (non-soft-deleted) Edges share the same source, target, and scope. Never surfaced
-to users by this name. *(The `Edge` model, `connectNodes`/`updateEdge`/`deleteEdge`, and the
+two *active* (non-soft-deleted) Edges share the same source, target, and scope. The same-Canvas
+invariant has exactly **one gated exception**: the **inner Edge** of a cross-scope **FlowRoute**,
+whose **boundary endpoint** legitimately sits at a higher scope. Only `routeFlow` may write it,
+and only when that endpoint is the Flow's owner; `connectNodes` stays strict (Slice 3 /
+ADR-0012). Never surfaced to users by this name. *(The `Edge` model, `connectNodes`/`updateEdge`/`deleteEdge`, and the
 **getCanvas** `interiorEdges` read are realized now; Connection removal as part of a Component
 delete is undoable now (see **Deletion id**); partial-unique-index hardening of the de-dupe
 rule landed via ADR-0010 — service-primary with a DB backstop that translates to the same
@@ -138,7 +145,7 @@ the derivation is realized now via **getCanvas**, and the Edge half is realized 
 ### getCanvas
 The single service read that materializes a **Canvas** for a given **Canvas
 scope** in one round trip. Its full result is
-`{ interiorNodes, interiorEdges, edgeFlows, boundaryProxies, breadcrumbs }`,
+`{ interiorNodes, interiorEdges, edgeFlows, boundaryProxies, flowPalettes, breadcrumbs }`,
 derived without a per-level query walk. Because a Canvas is a *derived view*,
 `getCanvas` returns the **Nodes** and **Edges** that fall out of the scope —
 it is the read half of the Component/Node split, so its result is named in
@@ -151,14 +158,20 @@ active **Flows** owned by either endpoint (loose — no polarity filter; a later
 slice tightens), `routed` is the active **FlowRoutes** whose `outerEdgeId` is
 this Edge with a still-live Flow, `orphan` covers FlowRoutes whose Flow was
 soft-deleted by a re-parse (the wiring hangs visibly rather than vanishing),
-and `byKind` is the per-`FlowKind` count of the routed set. *(Realized
-partially now — `getCanvas` returns `interiorNodes`, `interiorEdges`,
-`edgeFlows`, and `breadcrumbs` for a scope; `boundaryProxies` lands with
-boundary derivation (M3). A non-null scope that resolves to no live Node in
-the Project is a not-found. See ADR-0001 for the single-round-trip service
-contract, ADR-0004 for how the payload reaches the client island, ADR-0005
-for the explicit `canvasNodeId` Edge scope, and ADR-0006 for the single
-recursive breadcrumb query.)*
+and `byKind` is the per-`FlowKind` count of the routed set. The `boundaryProxies`
+field is the transitively-derived **boundary proxy** list for the scope (each
+`{ nodeId, title, kind, origin, outerEdgeId }`; see **Boundary proxy**), and
+`flowPalettes` maps each in-scope proxy's `nodeId` to the first page of its
+owner's **Flows** (`{ flows, hasMore }`) so the boundary-proxy **Flow palette**
+renders without a second round trip — the overflow pages in through
+`getFlowPalette`. *(Realized now — `getCanvas` returns all six keys for a
+scope; `boundaryProxies` + `flowPalettes` landed with Slice 3 (#36) via one
+recursive CTE folded into the existing `Promise.all`. A non-null scope that
+resolves to no live Node in the Project is a not-found. See ADR-0001 for the
+single-round-trip service contract, ADR-0004 for how the payload reaches the
+client island, ADR-0005 for the explicit `canvasNodeId` Edge scope, ADR-0006
+for the single recursive breadcrumb query, and ADR-0012 for the boundary
+derivation + cross-scope refinement.)*
 
 ### Canvas scope
 Which **Canvas** an operation is acting on. A Canvas has **no id of its own** (it
@@ -199,8 +212,26 @@ descent feels instant. See ADR-0007.)*
 ### Boundary proxy
 A read-only stand-in for an external system that a Component connects to on its *parent* Canvas,
 projected inward so that dependency context is not lost on the way down. Boundary proxies are
-**derived and inherited transitively** through the subtree — they are not independently editable
-Components. *(Defined now; derivation and rendering are implemented in a later milestone (M3).)*
+**derived and inherited transitively** through the subtree (`boundary(H) = directBoundary(H) ∪
+boundary(H.parent)`) — they are not independently editable Components, and no rows are persisted
+for them. A proxy's **origin** distinguishes the two halves of that union: **direct** (an
+external the *current* scope's Component connects to on its own parent Canvas) versus
+**inherited** (projected down from an ancestor). The distinction drives the **collapse/group**
+UX — inherited proxies fold away to keep deep Canvases uncluttered — and gates refinement: only
+a direct proxy is **routable** here (it carries the outer Connection a palette drag refines),
+because the cross-scope `routeFlow` writer binds an outer Edge incident to the current scope.
+*(Realized now — derivation in **getCanvas** (`boundaryProxies`), read-only rendering as the
+`boundary-proxy` Canvas node with its **Flow palette**, and the refinement drag all landed with
+Slice 3 (#36 / ADR-0012, absorbing the M3 boundary work #13 + #14).)*
+
+### Boundary endpoint
+The endpoint of a cross-scope refinement **inner Edge** that is the **boundary proxy** — i.e. the
+**Flow**'s owner, which lives at a higher **Canvas scope** than the inner Edge sits on. It is the
+*one* endpoint allowed to violate the same-Canvas rule, and only inside `routeFlow`: the service
+derives it from the Flow's owner and pins it against the supplied endpoints rather than trusting
+an input, so an arbitrary foreign Node can never be smuggled in as a cross-scope endpoint (the
+gated exception to ADR-0005; ADR-0012). The other endpoint — the interior Component on the
+current Canvas — is the *interior endpoint*.
 
 ### Project
 The root container of one architecture graph. Owned by a single user (`ownerId`) and addressed
@@ -333,17 +364,23 @@ alongside the paste field for its **FlowSpec** — and inside the **"+ flow"** p
 opens when the owner selects a **Connection** (so the unrouted Flows on either endpoint are
 pickable in place). Each item shows the Flow's `title`, `kind`, and `polarity`. When the
 Component owns at least one Flow, its node body wears a **"N flows" pill** to signal the
-palette is non-empty. *(Realized now on the Component-detail panel of a Component you own
-and inside the per-Connection "+ flow" popover. The boundary-proxy palette — the same
-surface, projected inward through a **boundary proxy** so a child Component can route
-external Flows onto its interior pipes — lands with a subsequent slice.)*
+palette is non-empty. *(Realized now on the Component-detail panel of a Component you own,
+inside the per-Connection "+ flow" popover, and — since Slice 3 (#36) — on the **boundary
+proxy**: the same surface projected inward, where each item carries a refinement Port so a
+child Component can route the external Flow onto its interior pipe (ADR-0012). The first page
+ships in **getCanvas** `flowPalettes`; the overflow pages in via `getFlowPalette`.)*
 
 ### FlowRoute
 The binding that says *"this **Connection** carries this **Flow**"* — a first-class row that
 attaches a **Flow** to an **Edge** at a **Canvas scope**. Names exactly one `outerEdgeId`
 (the Connection at this scope that carries the Flow) and zero-or-one `innerEdgeId` (the
-refinement Connection one scope deeper, reserved for a subsequent slice's gated cross-scope
-writer). Same word user-facing and in code — applies the **Flow** no-split convention (the
+**refinement Connection** one scope deeper — the inner **Edge** that resolves a **boundary
+proxy** to the real Component, written by the gated cross-scope `routeFlow` since Slice 3 /
+ADR-0012). An inner Edge is a **shared pipe**: one inner Edge can carry **many FlowRoutes**
+(`innerEdgeId` has no uniqueness), so two Flows refined over the same interior pair converge
+on one Edge, and the soft-delete sweep is reference-counted — an inner Edge dies only with its
+last active FlowRoute. Same word user-facing and in code — applies the **Flow** no-split
+convention (the
 "Node" overload that motivated the Component/Node split does not apply). Carries `projectId`
 for authz and cascade-index friendliness, soft-delete columns (`deletedAt`, `deletionId`),
 and is owner-only writable via `routeFlow` / `unrouteFlow`. A FlowRoute's `flowId` must
@@ -353,12 +390,16 @@ polarity-vs-arrow refinement (INBOUND ⇒ owner = target, OUTBOUND ⇒ owner = s
 service-enforced in a subsequent slice (Slice 4 / ADR-0013). De-dupe is `(outerEdgeId, flowId)` among active rows
 — the **ADR-0010 named pattern**, third adopter (`idx_flow_route_dedup`, partial unique
 backstop; service-primary `findFirst` is the readable fast path; both translate to
-`ConflictError` with `details.conflictingFlowRouteIds`). *(Realized now for same-Canvas
-baseline routing via `routeFlow` / `unrouteFlow`, surfaced as the `edgeFlows` aggregation
-in **getCanvas**, the routed-count pill on the Connection, and the "+ flow" popover on a
-selected Connection. Cross-scope refinement and palette rendering on **boundary proxies**
-land in subsequent slices. See ADR-0011 (Flow foundation) and the master plan at
-`docs/plans/flow-routed-connections.md`.)*
+`ConflictError` with `details.conflictingFlowRouteIds`). The inner-Edge and FlowRoute writes
+use `createMany({ skipDuplicates })` (`ON CONFLICT DO NOTHING`) so a concurrent racer never
+aborts the route's transaction — convergence on a shared inner Edge, not a retry loop
+(ADR-0012). *(Realized now for same-Canvas baseline routing via `routeFlow` / `unrouteFlow`,
+surfaced as the `edgeFlows` aggregation in **getCanvas**, the routed-count pill on the
+Connection, and the "+ flow" popover on a selected Connection — and, since Slice 3 (#36),
+cross-scope refinement (the `innerEdgeId` writer) and palette rendering on **boundary
+proxies**, with the drag-from-palette gesture. Only polarity validation (Slice 4 / ADR-0013)
+remains. See ADR-0011 (Flow foundation), ADR-0012 (cross-scope writer), and the master plan
+at `docs/plans/flow-routed-connections.md`.)*
 
 ### Flow kind (`FlowKind`)
 A **Flow**'s category, stored on it as `kind: FlowKind`. One of seven values: `GENERIC` (the

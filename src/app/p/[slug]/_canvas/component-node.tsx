@@ -77,7 +77,9 @@ export const CanEditContext = createContext<boolean>(false);
 // Kind → icon. Kind is cosmetic (CONTEXT.md "Component kind"); this is the only
 // place the six kinds acquire a glyph. A finite `Record` keyed by `NodeKind` is
 // not widened by `noUncheckedIndexedAccess`, so indexing it needs no guard.
-const KIND_ICON: Record<NodeKind, LucideIcon> = {
+// Exported so the boundary-proxy node renders externals with the same glyphs
+// (a proxy is a read-only stand-in for a real Component of some kind).
+export const KIND_ICON: Record<NodeKind, LucideIcon> = {
   GENERIC: Box,
   SERVICE: Cog,
   DATABASE: Database,

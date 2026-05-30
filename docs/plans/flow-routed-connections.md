@@ -4,15 +4,19 @@
 > from the senior engineer) for evolving the Connection model into one that
 > captures multi-level data flow. Tracks the work in GitHub issue #2.
 >
-> Status: **Slices 1 + 2 shipped** (Slice 1: PR #41 / commit `b1c0627`,
+> Status: **Slices 1 + 2 + 3 shipped** (Slice 1: PR #41 / commit `b1c0627`,
 > ADR-0011. Slice 2: same-Canvas baseline routing — `FlowRoute` schema,
 > `routeFlow` / `unrouteFlow`, `deleteEdge` cascade with `restoreEdge`,
 > `getCanvas.edgeFlows` aggregation, "+ flow" popover and "N / M routed"
 > pill; the deleteEdge/restoreEdge cascade decision is ADR-0014, with a
-> pointer from ADR-0008). Slices 3–5
-> remain plan-only. ADRs land per slice. The "Open questions" section at
-> the bottom has been resolved for Slice 1 — entries are kept as a record
-> of the decisions and where they were captured.
+> pointer from ADR-0008. Slice 3 (#36, absorbing #13 + #14): boundary
+> derivation + boundary-proxy node + Flow palette + the gated cross-scope
+> `routeFlow` inner-Edge writer + reference-counted shared-inner-Edge
+> cascade + `getCanvas.boundaryProxies`/`flowPalettes` + `getFlowPalette`
+> pagination — ADR-0012 documents the sole cross-scope Edge writer; MCP
+> deferred to #42). Slices 4–5 remain plan-only. ADRs land per slice. The
+> "Open questions" section at the bottom has been resolved for Slice 1 —
+> entries are kept as a record of the decisions and where they were captured.
 
 ## The kernel insight
 
@@ -321,14 +325,19 @@ on conflict, `edgeFlows` count in `getCanvas`, a "+ flow" affordance on a
 selected Connection. The "draw Connection, see 14 flows available" moment.
 M3-independent.
 
-**Slice 3 — M3 boundary proxies + refinement.** Boundary derivation (M3 was
-already planned), palette on boundary proxies, `routeFlow` with inner edge
-(the gated ADR-0005 exception — ADR-0012 documents it). The inner-Edge
-`db.edge.create` reuses `isEdgeDedupCollision` verbatim and surfaces the
-same `ConflictError { details.conflictingEdgeIds }` shape `connectNodes`
-produces — ADR-0010 names `routeFlow` as the second Edge writer that
-closes this race. Drag-from-palette-to-child synthesizes the optimistic
-interior Edge + FlowRoute. **This is the delight slice.**
+**Slice 3 — M3 boundary proxies + refinement.** *(Shipped: #36, absorbing #13
+boundary derivation + #14 boundary-proxy rendering.)* Boundary derivation
+(transitive, derived-only, one recursive CTE in `getCanvas`), boundary-proxy
+node type + Flow palette, `routeFlow` with inner edge (the gated ADR-0005
+exception — ADR-0012 documents it). The inner-Edge write converges on
+`idx_edge_dedup` via `createMany({ skipDuplicates })` (`ON CONFLICT DO NOTHING`)
+so a shared inner Edge carries many FlowRoutes and the transaction is never
+aborted — ADR-0010 names `routeFlow` as the second Edge writer that closes this
+race. The sweep is reference-counted (a shared inner Edge dies only with its
+last route). Drag-from-palette-to-child synthesizes the optimistic interior Edge
++ FlowRoute. `getCanvas` gained `boundaryProxies` + `flowPalettes`, with
+`getFlowPalette` paging the overflow. MCP `route-flow` arg deferred to #42.
+**This is the delight slice.**
 
 **Slice 4 — Bidirectional reconciliation.** Polarity validation in
 `routeFlow`; the "create reverse Connection?" canvas UX; tests for
@@ -350,7 +359,7 @@ MCP resources `flow/:id` / `flow-route/:id`. The curmudgeon's "yes."
   decision Slice 1 makes is exactly what ADR-0011 justifies, so it travels with
   the slice rather than being deferred).
 - **ADR-0012 — `routeFlow` is the sole cross-scope Edge writer.** The single
-  gated exception to ADR-0005. Lands with Slice 3.
+  gated exception to ADR-0005. **Shipped with Slice 3** (`docs/adr/0012-…`).
 - **ADR-0013 — Polarity, not stored direction.** Reaffirms ADR-0009; explains
   why bidirectional pipes are still two Edges. Lands with Slice 4.
 

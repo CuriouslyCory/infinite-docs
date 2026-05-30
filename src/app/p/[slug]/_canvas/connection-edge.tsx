@@ -81,8 +81,13 @@ export const EditEdgeContext = createContext<
  * see the plan file).
  */
 export type RouteFlowAction =
-  | { kind: "route"; flowId: string; outerEdgeId: string }
-  | { kind: "unroute"; flowRouteId: string; outerEdgeId: string };
+  | { kind: "route"; flowId: string; outerEdgeId: string; flowKind: FlowKind }
+  | {
+      kind: "unroute";
+      flowRouteId: string;
+      outerEdgeId: string;
+      flowKind: FlowKind;
+    };
 
 export const RouteFlowContext = createContext<(action: RouteFlowAction) => void>(
   () => undefined,
