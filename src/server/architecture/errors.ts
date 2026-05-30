@@ -59,6 +59,11 @@ export interface ConflictErrorDetails {
   // because the same owner/key slot is occupied (ADR-0010 named pattern,
   // ADR-0011).
   conflictingFlowIds?: string[];
+  // The active FlowSpec(s) that block the write — a `restoreNode` whose
+  // soft-deleted FlowSpec(s) cannot be revived because the same Component
+  // (`ownerNodeId @unique`) now carries a fresh FlowSpec. Separate from
+  // `conflictingFlowIds` because the collision is on different rows.
+  conflictingFlowSpecIds?: string[];
 }
 
 /**

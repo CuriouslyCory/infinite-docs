@@ -1,7 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { flowSpecKind, type FlowSpecKind } from "~/lib/schemas";
@@ -41,13 +41,19 @@ export function ComponentDetailPanel({
    */
   onFlowCountChange: (ownerNodeId: string, flowCount: number) => void;
 }) {
+  // Escape closes the panel from anywhere — the canvas keeps focus after the
+  // single-select that opens the panel, so a handler on the panel root would
+  // never fire from the user's most likely starting point.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
-    <div
-      className="pointer-events-auto flex h-full w-80 flex-col gap-4 overflow-y-auto rounded-l-lg border-l border-white/15 bg-[#1f2138] p-4 text-sm text-white shadow-2xl"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
-      }}
-    >
+    <div className="pointer-events-auto flex h-full w-80 flex-col gap-4 overflow-y-auto rounded-l-lg border-l border-white/15 bg-[#1f2138] p-4 text-sm text-white shadow-2xl">
       <header className="flex items-center justify-between border-b border-white/10 pb-2">
         <h2 className="font-semibold">Component detail</h2>
         <button

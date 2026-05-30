@@ -237,16 +237,17 @@ exactly one place. *(See ADR-0001 and ADR-0002.)*
 ### Deletion id
 The handle that ties together one cascading Component soft-delete so it can be undone as a unit.
 A single `deleteNode` mints one id and stamps it (`deletionId`) on every row it transitions to
-deleted — the target **Node**, its subtree, and every incident or interior **Edge** — and
-`restoreNode` clears `deletedAt` for *exactly* the rows bearing that id, so an undo restores the
-operation's set and nothing outside it. A row removed by some other operation never carries this
-id and is never revived by undoing a later one — a lone `deleteEdge` sets `deletedAt` with **no**
-`deletionId`, and an earlier delete carries its own id. It is a *grouping of soft-deleted rows*,
-not a stored history: do not call it a "transaction" (the database mechanism that writes it), a
-"version" or "snapshot" (nothing is copied — rows are flagged in place), or an "audit log".
-Named in **Node**/**Edge** terms in code; users see only "delete" and "undo". *(Realized now via
-`deleteNode`/`restoreNode`; see ADR-0008. The id is a bare stamped column today — a durable
-`Deletion` entity and an MCP undo tool are deferred, additive future work.)*
+deleted — the target **Node**, its subtree, every incident or interior **Edge**, and every owned
+**Flow** + owned **FlowSpec** — and `restoreNode` clears `deletedAt` for *exactly* the rows
+bearing that id, so an undo restores the operation's set and nothing outside it. A row removed by
+some other operation never carries this id and is never revived by undoing a later one — a lone
+`deleteEdge` sets `deletedAt` with **no** `deletionId`, and an earlier delete carries its own id.
+It is a *grouping of soft-deleted rows*, not a stored history: do not call it a "transaction"
+(the database mechanism that writes it), a "version" or "snapshot" (nothing is copied — rows are
+flagged in place), or an "audit log". Named in **Node**/**Edge**/**Flow** terms in code; users
+see only "delete" and "undo". *(Realized now via `deleteNode`/`restoreNode`; see ADR-0008 and
+ADR-0011. The id is a bare stamped column today — a durable `Deletion` entity and an MCP undo
+tool are deferred, additive future work.)*
 
 ### Soft-delete + undo
 Deletes set a `deletedAt` timestamp rather than removing rows; reads filter out soft-deleted

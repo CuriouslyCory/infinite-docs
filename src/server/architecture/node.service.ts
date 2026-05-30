@@ -628,7 +628,7 @@ export async function restoreNode(
       const count = conflicts.length;
       throw new ConflictError(
         `Can't undo this delete: ${count} FlowSpec${count === 1 ? "" : "s"} cannot be restored because a new FlowSpec now occupies the same Component. Delete the conflicting FlowSpec${count === 1 ? "" : "s"} and retry.`,
-        { conflictingFlowIds: conflicts.map((s) => s.id) },
+        { conflictingFlowSpecIds: conflicts.map((s) => s.id) },
       );
     }
   }

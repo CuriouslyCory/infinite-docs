@@ -245,7 +245,16 @@ export const MAX_FLOW_SPEC_SOURCE_BYTES = 1_000_000;
 export const attachFlowSpecInput = z.object({
   ownerNodeId: z.string().min(1),
   kind: flowSpecKind,
-  source: z.string().min(1).max(MAX_FLOW_SPEC_SOURCE_BYTES),
+  // `string().max()` counts UTF-16 code units; the cap is named `_BYTES` and
+  // is also re-enforced inside the parser by UTF-8 byte count, so refine to
+  // UTF-8 bytes here too.
+  source: z
+    .string()
+    .min(1)
+    .refine(
+      (s) => new TextEncoder().encode(s).length <= MAX_FLOW_SPEC_SOURCE_BYTES,
+      { message: "Spec source exceeds the 1 MB cap." },
+    ),
 });
 export type AttachFlowSpecInput = z.infer<typeof attachFlowSpecInput>;
 

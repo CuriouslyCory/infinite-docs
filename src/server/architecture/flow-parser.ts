@@ -56,7 +56,10 @@ export function parseFlowSpec(
   kind: FlowSpecKind,
   source: string,
 ): ParseFlowSpecResult {
-  if (source.length > MAX_FLOW_SPEC_SOURCE_BYTES) {
+  // `source.length` is UTF-16 code units, not bytes — a CJK or emoji-dense
+  // spec can be over the 1 MB byte cap while passing a code-unit check. The
+  // constant is named `_BYTES` for a reason; measure bytes.
+  if (new TextEncoder().encode(source).length > MAX_FLOW_SPEC_SOURCE_BYTES) {
     return { parseError: "Spec source exceeds the 1 MB cap." };
   }
 

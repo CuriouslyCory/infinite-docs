@@ -4,8 +4,10 @@
 > from the senior engineer) for evolving the Connection model into one that
 > captures multi-level data flow. Tracks the work in GitHub issue #2.
 >
-> Status: **plan**, not yet sliced. Pre-implementation. ADRs land per slice,
-> not upfront. Open questions at the bottom must be answered before Slice 1.
+> Status: **Slice 1 shipped** (PR #41 / commit `b1c0627`, ADR-0011). Slices 2–5
+> remain plan-only. ADRs land per slice. The "Open questions" section at the
+> bottom has been resolved for Slice 1 — entries are kept as a record of the
+> decisions and where they were captured.
 
 ## The kernel insight
 
@@ -347,22 +349,26 @@ MCP resources `flow/:id` / `flow-route/:id`. The curmudgeon's "yes."
 - **ADR-0013 — Polarity, not stored direction.** Reaffirms ADR-0009; explains
   why bidirectional pipes are still two Edges. Lands with Slice 4.
 
-## Open questions (must be answered before Slice 1)
+## Open questions — resolved for Slice 1
 
-1. **Spec UI location** — Component detail panel (recommended), Canvas inline
-   popover, or both?
-2. **Allow user-authored Flows with no spec?** Default: yes. A hand-added SSE
-   Flow is genuinely useful.
-3. **Polarity defaults** for WebSocket/EVENT kinds — recommended: `OUTBOUND`
-   from the server end by default with manual override.
-4. **Re-paste behavior** — soft-delete dropped Flows (recommended) vs
-   hard-replace.
-5. **Keep `Edge.label`?** Recommended: yes — it names the pipe ("primary
-   HTTPS"), distinct from per-Flow titles.
-6. **WebSocket modeling** — two Flows per WS (one each polarity, cleanest given
-   ADR-0009), one `BIDIRECTIONAL` polarity, or per-message direction.
-7. **Markdown export of unrouted Flows** — include with a marker (recommended)
-   or omit.
+All seven Slice-1 questions were resolved in issue #34, ADR-0011, and the
+implementation that landed in PR #41. They are kept here as a record of where
+each decision lives.
+
+1. **Spec UI location** — Component detail side panel (sidebar, not modal). See
+   ADR-0011 and `component-detail-panel.tsx`.
+2. **User-authored Flows** — allowed (`sourceSpecId = null`). See `addFlow`
+   service + ADR-0011.
+3. **Polarity defaults** — `OUTBOUND` from the server end for WebSocket/EVENT;
+   manual override available. See ADR-0011.
+4. **Re-paste behavior** — non-destructive: matching keys preserved, dropped
+   keys soft-deleted with a fresh `deletionId` per batch. See
+   `reconcileDerivedFlows` in `flow.service.ts`.
+5. **`Edge.label`** — kept. Names the pipe ("primary HTTPS"); per-Flow titles
+   name the content.
+6. **WebSocket modeling** — two Flows per WS (one INBOUND, one OUTBOUND). No
+   `BIDIRECTIONAL` polarity.
+7. **Markdown export of unrouted Flows** — deferred to Slice 5 (#38).
 
 ## What was rejected from the contributing plans, and why
 

@@ -564,6 +564,15 @@ function CanvasInner({
     [setNodes, setEdges, patchCanvas, restoreComponent, utils],
   );
 
+  // Component-detail panel: opens when the owner single-selects a real (non-
+  // temp_) Component. Sourced from React Flow's selection events rather than
+  // from React Flow's internal selection state so a node added optimistically
+  // never auto-opens the panel before its server id arrives (ADR-0011 / Slice
+  // 1 detail panel scaffold). Cleared on pane click, scope change, or when
+  // the selected node is removed (`removeComponent` below).
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const closeDetailPanel = useCallback(() => setSelectedNodeId(null), []);
+
   // Delete a Component: a cascading soft-delete. Optimistically remove it and its
   // ON-CANVAS incident Connections from the store + cache mirror (descendants and
   // interior Connections live off-canvas — the server cascade handles them), then
@@ -579,6 +588,8 @@ function CanvasInner({
         cached?.interiorEdges.filter(
           (e) => e.sourceId === id || e.targetId === id,
         ) ?? [];
+
+      if (selectedNodeId === id) closeDetailPanel();
 
       setNodes((ns) => ns.filter((n) => n.id !== id));
       setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
@@ -634,6 +645,8 @@ function CanvasInner({
       patchCanvas,
       deleteComponent,
       undoRemoveComponent,
+      selectedNodeId,
+      closeDetailPanel,
     ],
   );
 
@@ -668,14 +681,6 @@ function CanvasInner({
     },
     [utils, canvasInput, setEdges, patchCanvas, editEdge],
   );
-
-  // Component-detail panel: opens when the owner single-selects a real (non-
-  // temp_) Component. Sourced from React Flow's selection events rather than
-  // from React Flow's internal selection state so a node added optimistically
-  // never auto-opens the panel before its server id arrives (ADR-0011 / Slice
-  // 1 detail panel scaffold). Cleared on pane click or scope change.
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const closeDetailPanel = useCallback(() => setSelectedNodeId(null), []);
 
   // After the detail panel runs an attach + parse, the server's new flow
   // count needs to land in BOTH the React Flow store (so the pill updates

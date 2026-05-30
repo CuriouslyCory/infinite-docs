@@ -181,9 +181,16 @@ export async function attachFlowSpec(
     incoming: parsedFlows,
   });
 
+  // Count the reconciled active set, not `parsedFlows.length` — hand-authored
+  // Flows (sourceSpecId === null) survive a re-parse, so the pill would
+  // undercount on any Component that owns one.
+  const flowCount = await db.flow.count({
+    where: { ownerNodeId: node.id, deletedAt: null },
+  });
+
   return {
     flowSpec,
-    flowCount: parsedFlows.length,
+    flowCount,
     parseError,
   };
 }
