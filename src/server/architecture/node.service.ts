@@ -335,6 +335,13 @@ export async function getCanvas(
     // `total` and stays "unrouted" once `routed` drops. Orphan does NOT
     // count against `total` (the Flow itself is gone) so it doesn't push
     // `unrouted` negative.
+    //
+    // The floor never actually fires today: `routeFlow` requires the Flow's
+    // owner to be an endpoint, so every routed live Flow is also counted in
+    // `total` (routed <= total always). It guards a case a later slice
+    // introduces — a routed Flow whose owner is NO LONGER an endpoint (Slice
+    // 3 inner-edge routing, or a future reparent/move) — so don't read it as
+    // dead defense and remove it.
     entry.unrouted = Math.max(0, entry.total - entry.routed);
   }
   const edgeFlows = interiorEdges.map(

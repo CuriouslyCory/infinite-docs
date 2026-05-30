@@ -378,6 +378,48 @@ describe("restoreEdge", () => {
       ),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
+
+  it("resurrects a route onto a Flow deleted in the interim — orphan, not error", async () => {
+    // Route F onto E, deleteEdge(E) (cascade stamps E + FR), then deleteFlow(F)
+    // independently while the edge is gone. restoreEdge revives E and FR — but
+    // F stays soft-deleted, so the revived FR hangs as an orphan rather than
+    // the restore hard-failing. Deliberate per ADR-0014 (extends ADR-0011's
+    // orphan-visibility invariant to the restore path).
+    const { actor, edge, flow, project } = await seedAToB();
+    const route = await routeFlow(testDb, actor, {
+      flowId: flow.id,
+      outerEdgeId: edge.id,
+    });
+    const deleted = await testDb.$transaction((tx) =>
+      deleteEdge(tx, actor, { id: edge.id }),
+    );
+    expect(deleted.deletionId).not.toBeNull();
+
+    await deleteFlow(testDb, actor, { id: flow.id });
+
+    const restored = await testDb.$transaction((tx) =>
+      restoreEdge(tx, actor, { deletionId: deleted.deletionId! }),
+    );
+    expect(restored.flowRouteIds).toEqual([route.id]);
+
+    // FR is live again; the Flow stays dead.
+    const revivedRoute = await testDb.flowRoute.findUniqueOrThrow({
+      where: { id: route.id },
+    });
+    expect(revivedRoute.deletedAt).toBeNull();
+    const deadFlow = await testDb.flow.findUniqueOrThrow({
+      where: { id: flow.id },
+    });
+    expect(deadFlow.deletedAt).not.toBeNull();
+
+    // The aggregation reports the hanging wire as an orphan, not a route.
+    const canvas = await getCanvas(testDb, null, { slug: project.slug });
+    expect(canvas.edgeFlows[0]).toMatchObject({
+      edgeId: edge.id,
+      routed: 0,
+      orphan: 1,
+    });
+  });
 });
 
 describe("getCanvas.edgeFlows aggregation (Slice 2)", () => {
@@ -472,6 +514,27 @@ describe("getCanvas.edgeFlows aggregation (Slice 2)", () => {
     const canvas = await getCanvas(testDb, null, { slug: project.slug });
     const entry = canvas.edgeFlows.find((ef) => ef.edgeId === edge.id);
     expect(entry?.routed).toBe(1);
+  });
+
+  it("recomputes unrouted after unrouteFlow leaves the owner an endpoint", async () => {
+    // Route then unroute: the Flow's owner (B) is still the target endpoint,
+    // so it stays counted in `total` and returns to `unrouted` once the route
+    // is soft-deleted. No orphan — the Flow itself is still live.
+    const { actor, edge, flow, project } = await seedAToB();
+    const route = await routeFlow(testDb, actor, {
+      flowId: flow.id,
+      outerEdgeId: edge.id,
+    });
+    await unrouteFlow(testDb, actor, { flowRouteId: route.id });
+
+    const canvas = await getCanvas(testDb, null, { slug: project.slug });
+    expect(canvas.edgeFlows[0]).toMatchObject({
+      edgeId: edge.id,
+      total: 1,
+      routed: 0,
+      unrouted: 1,
+      orphan: 0,
+    });
   });
 });
 
@@ -569,5 +632,21 @@ describe("getRoutedFlowIdsForEdge (popover helper)", () => {
         slug: otherProject.slug,
       }),
     ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("grants a logged-in non-owner via the capability slug (ADR-0002)", async () => {
+    // The slug is a read capability: who is logged in is irrelevant. A
+    // different user's session must still read the owner's routed flowIds
+    // when addressing via the owner's slug.
+    const { actor, edge, flow, project } = await seedAToB();
+    await routeFlow(testDb, actor, { flowId: flow.id, outerEdgeId: edge.id });
+
+    const stranger = await makeUser("Stranger");
+    const strangerActor: Actor = { userId: stranger.id, via: "session" };
+    const ids = await getRoutedFlowIdsForEdge(testDb, strangerActor, {
+      outerEdgeId: edge.id,
+      slug: project.slug,
+    });
+    expect(ids).toEqual([flow.id]);
   });
 });

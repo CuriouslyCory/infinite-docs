@@ -563,12 +563,10 @@ function CanvasInner({
   //
   // Slice 2 cascade: when `deleteEdge` sweeps incident FlowRoutes it returns
   // a `deletionId` and the swept route ids; we drop the per-edge `edgeFlows`
-  // entry optimistically and refresh the popover filter on success. The
-  // cascade case isn't given an undo affordance here yet — the existing
-  // delete path uses React Flow's keyboard delete, which has no toast slot;
-  // wiring a `restoreEdge` undo is a Slice 5 affordance alongside the
-  // inspector. The deletionId is logged so it stays addressable for the
-  // future undo path.
+  // entry optimistically alongside the edge. The cascade case has no undo
+  // affordance here yet — the delete path uses React Flow's keyboard delete,
+  // which has no toast slot; wiring a `restoreEdge` undo is a Slice 5
+  // affordance alongside the inspector.
   const handleEdgesDelete = useCallback(
     (deleted: ConnectionEdge[]) => {
       const cached = utils.architecture.getCanvas.getData(canvasInput);
@@ -582,37 +580,21 @@ function CanvasInner({
           interiorEdges: c.interiorEdges.filter((e) => e.id !== edge.id),
           edgeFlows: c.edgeFlows.filter((ef) => ef.edgeId !== edge.id),
         }));
-        void removeEdge({ id: edge.id })
-          .then((result) => {
-            if (result.flowRouteIds.length > 0) {
-              // Cascade case: the popover's unrouted filter on any affected
-              // outer edge would now include the freshly-released flowIds.
-              // The deleted edge itself is gone from the canvas, so the
-              // filter only matters if another canvas-level affordance
-              // re-references the same outerEdgeId — invalidate to be safe.
-              void utils.architecture.getRoutedFlowIdsForEdge.invalidate({
-                outerEdgeId: edge.id,
-                slug,
-              });
-            }
-          })
-          .catch(() => {
-            setEdges((es) =>
-              es.some((e) => e.id === edge.id) ? es : [...es, edge],
-            );
-            if (prev) {
-              patchCanvas((c) => ({
-                interiorEdges: [...c.interiorEdges, prev],
-                edgeFlows: prevFlows
-                  ? [...c.edgeFlows, prevFlows]
-                  : c.edgeFlows,
-              }));
-            }
-            toast.error("Couldn’t remove the connection. Please try again.");
-          });
+        void removeEdge({ id: edge.id }).catch(() => {
+          setEdges((es) =>
+            es.some((e) => e.id === edge.id) ? es : [...es, edge],
+          );
+          if (prev) {
+            patchCanvas((c) => ({
+              interiorEdges: [...c.interiorEdges, prev],
+              edgeFlows: prevFlows ? [...c.edgeFlows, prevFlows] : c.edgeFlows,
+            }));
+          }
+          toast.error("Couldn’t remove the connection. Please try again.");
+        });
       }
     },
-    [utils, canvasInput, patchCanvas, setEdges, removeEdge, slug],
+    [utils, canvasInput, patchCanvas, setEdges, removeEdge],
   );
 
   // Undo a Component delete: optimistically re-add the on-canvas rows the delete
@@ -812,14 +794,11 @@ function CanvasInner({
   // Route a Flow onto a Connection (Slice 2). Optimistic on the
   // `edgeFlows` aggregation only — the new FlowRoute row itself is not
   // surfaced anywhere in the canvas, only its count. Bump `routed`,
-  // decrement `unrouted`, fire `routeFlow`, roll back the counter pair and
-  // toast on failure.
+  // decrement `unrouted`, fire `routeFlow`; on failure undo via an inverse
+  // delta (NOT a snapshot restore) so an overlapping in-flight route on the
+  // same edge isn't clobbered, then reconcile to server truth.
   const commitRouteFlow = useCallback(
     (flowId: string, outerEdgeId: string): void => {
-      const prevEdgeFlows = utils.architecture.getCanvas
-        .getData(canvasInput)
-        ?.edgeFlows.find((ef) => ef.edgeId === outerEdgeId);
-
       patchCanvas((c) => ({
         edgeFlows: c.edgeFlows.map((ef) =>
           ef.edgeId === outerEdgeId
@@ -841,13 +820,23 @@ function CanvasInner({
           });
         })
         .catch(() => {
-          if (prevEdgeFlows) {
-            patchCanvas((c) => ({
-              edgeFlows: c.edgeFlows.map((ef) =>
-                ef.edgeId === outerEdgeId ? prevEdgeFlows : ef,
-              ),
-            }));
-          }
+          // Inverse-delta rollback: undo only this op's own +1/-1 against the
+          // current counts, so a concurrent route that succeeded mid-flight
+          // keeps its increment. Then reconcile to the authoritative counts —
+          // but only here, on the error path: a happy-path `getCanvas`
+          // refetch would cost a round-trip per route (Philosophy #1).
+          patchCanvas((c) => ({
+            edgeFlows: c.edgeFlows.map((ef) =>
+              ef.edgeId === outerEdgeId
+                ? {
+                    ...ef,
+                    routed: Math.max(0, ef.routed - 1),
+                    unrouted: ef.unrouted + 1,
+                  }
+                : ef,
+            ),
+          }));
+          void utils.architecture.getCanvas.invalidate(canvasInput);
           toast.error("Couldn’t route the flow. Please try again.");
         });
     },
@@ -861,10 +850,6 @@ function CanvasInner({
   // future inspector composes on top with zero service-layer changes.
   const commitUnrouteFlow = useCallback(
     (flowRouteId: string, outerEdgeId: string): void => {
-      const prevEdgeFlows = utils.architecture.getCanvas
-        .getData(canvasInput)
-        ?.edgeFlows.find((ef) => ef.edgeId === outerEdgeId);
-
       patchCanvas((c) => ({
         edgeFlows: c.edgeFlows.map((ef) =>
           ef.edgeId === outerEdgeId
@@ -885,13 +870,20 @@ function CanvasInner({
           });
         })
         .catch(() => {
-          if (prevEdgeFlows) {
-            patchCanvas((c) => ({
-              edgeFlows: c.edgeFlows.map((ef) =>
-                ef.edgeId === outerEdgeId ? prevEdgeFlows : ef,
-              ),
-            }));
-          }
+          // Inverse-delta rollback + error-path reconcile — see
+          // `commitRouteFlow` for the rationale.
+          patchCanvas((c) => ({
+            edgeFlows: c.edgeFlows.map((ef) =>
+              ef.edgeId === outerEdgeId
+                ? {
+                    ...ef,
+                    routed: ef.routed + 1,
+                    unrouted: Math.max(0, ef.unrouted - 1),
+                  }
+                : ef,
+            ),
+          }));
+          void utils.architecture.getCanvas.invalidate(canvasInput);
           toast.error("Couldn’t remove the routing. Please try again.");
         });
     },
@@ -1010,7 +1002,7 @@ function CanvasInner({
                   {canEdit && selectedNodeId !== null && (
                     <Panel
                       position="top-right"
-                      className="!top-0 !right-0 !bottom-0 !m-0 flex"
+                      className="top-0! right-0! bottom-0! m-0! flex"
                     >
                       <ComponentDetailPanel
                         slug={slug}

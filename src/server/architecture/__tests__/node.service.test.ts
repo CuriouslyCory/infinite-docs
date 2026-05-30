@@ -733,7 +733,7 @@ describe("deleteNode", () => {
 
   it("does not re-stamp a Connection already soft-deleted via deleteEdge", async () => {
     const { actor, p, e1 } = await seedTree();
-    await deleteEdge(testDb, actor, { id: e1.id });
+    await testDb.$transaction((tx) => deleteEdge(tx, actor, { id: e1.id }));
 
     const res = await deleteNode(testDb, actor, { id: p.id });
 
@@ -1011,7 +1011,7 @@ describe("restoreNode", () => {
       sourceId: p.id,
       targetId: s.id,
     });
-    await deleteEdge(testDb, actor, { id: e1.id });
+    await testDb.$transaction((tx) => deleteEdge(tx, actor, { id: e1.id }));
     const del = await deleteNode(testDb, actor, { id: p.id });
     expect(del.edgeIds).not.toContain(e1.id);
 

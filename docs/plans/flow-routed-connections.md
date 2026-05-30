@@ -8,7 +8,8 @@
 > ADR-0011. Slice 2: same-Canvas baseline routing — `FlowRoute` schema,
 > `routeFlow` / `unrouteFlow`, `deleteEdge` cascade with `restoreEdge`,
 > `getCanvas.edgeFlows` aggregation, "+ flow" popover and "N / M routed"
-> pill; ADR-0008 amended in place for the deleteEdge cascade). Slices 3–5
+> pill; the deleteEdge/restoreEdge cascade decision is ADR-0014, with a
+> pointer from ADR-0008). Slices 3–5
 > remain plan-only. ADRs land per slice. The "Open questions" section at
 > the bottom has been resolved for Slice 1 — entries are kept as a record
 > of the decisions and where they were captured.
@@ -234,7 +235,7 @@ routed". Two arrows, two stories, each enumerable. ADR-0009 vindicated.
    keys soft-delete with their own deletionId so FlowRoutes orphan visibly
    rather than vanish.
 
-## Deletion semantics (ADR-0008 honored)
+## Deletion semantics (ADR-0008 + ADR-0014 honored)
 
 - `deleteNode(component)` cascade-sweeps: descendants, incident Edges, owned
   Flows, owned FlowSpec, FlowRoutes whose outerEdge or innerEdge sits in the

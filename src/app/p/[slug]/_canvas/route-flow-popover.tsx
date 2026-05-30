@@ -2,6 +2,7 @@
 
 import { Suspense, useContext, useEffect } from "react";
 
+import { type FlowKind, type FlowPolarity } from "~/lib/schemas";
 import { api } from "~/trpc/react";
 
 import {
@@ -142,8 +143,8 @@ function FlowGroup({
     id: string;
     key: string;
     title: string;
-    polarity: "INBOUND" | "OUTBOUND";
-    kind: string;
+    polarity: FlowPolarity;
+    kind: FlowKind;
   }[];
   onPick: (flowId: string) => void;
 }) {

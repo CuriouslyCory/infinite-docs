@@ -9,6 +9,8 @@ import {
 } from "@xyflow/react";
 import { createContext, useContext, useRef, useState } from "react";
 
+import { type FlowKind } from "~/lib/schemas";
+
 import { CanEditContext } from "./component-node";
 import { RouteFlowPopover } from "./route-flow-popover";
 
@@ -24,7 +26,7 @@ export type ConnectionEdgeFlows = {
   routed: number;
   unrouted: number;
   orphan: number;
-  byKind: Partial<Record<string, number>>;
+  byKind: Partial<Record<FlowKind, number>>;
 };
 
 /**
@@ -142,14 +144,30 @@ export function ConnectionEdgeView({
   // the rename/delete gating in component-node.tsx. The label still renders for
   // viewers — only editing is gated.
   const canEdit = !d.optimistic && canEditCanvas;
+  const isSelected = selected ?? false;
   const hasLabel = d.label !== null && d.label.length > 0;
 
+  // Deselecting an edge dismisses an open "+ flow" popover. Done as a
+  // render-phase state adjustment (React's "you might not need an effect"
+  // guidance) rather than a useEffect that would cascade an extra render —
+  // without it the popover would reappear the next time the edge is selected
+  // (its `popoverOpen` would still be true).
+  const [wasSelected, setWasSelected] = useState(isSelected);
+  if (wasSelected !== isSelected) {
+    setWasSelected(isSelected);
+    if (!isSelected) setPopoverOpen(false);
+  }
+
   // Slice 2 pill / "+ flow" gating. The pill is read-only and shows for
-  // viewers too; the "+ flow" button is owner-only.
+  // viewers too (gated by `hasRouted` below); the "+ flow" button is
+  // owner-only AND selected-only — it must not linger on a deselected edge
+  // just because that edge already carries a route (the container also
+  // renders for `hasRouted`).
   const flows = d.edgeFlows;
   const hasRouted = (flows?.routed ?? 0) > 0;
   const hasUnrouted = (flows?.unrouted ?? 0) > 0;
-  const showFlowButton = canEdit && hasUnrouted && d.endpoints !== undefined;
+  const showFlowButton =
+    isSelected && canEdit && hasUnrouted && d.endpoints !== undefined;
 
   function beginEditing() {
     if (!canEdit) return;
@@ -177,7 +195,7 @@ export function ConnectionEdgeView({
   return (
     <>
       <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} />
-      {(hasLabel || editing || (selected ?? false) || hasRouted) && (
+      {(hasLabel || editing || isSelected || hasRouted) && (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -219,7 +237,7 @@ export function ConnectionEdgeView({
                   {d.label}
                 </span>
               ) : (
-                selected &&
+                isSelected &&
                 canEdit && (
                   <button
                     type="button"
@@ -256,7 +274,7 @@ export function ConnectionEdgeView({
                 </button>
               )}
             </div>
-            {popoverOpen && d.endpoints && (
+            {isSelected && popoverOpen && d.endpoints && (
               <RouteFlowPopover
                 outerEdgeId={id}
                 endpoints={d.endpoints}

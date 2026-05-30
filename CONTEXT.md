@@ -262,9 +262,9 @@ history: do not call it a "transaction" (the database mechanism that writes it),
 or "snapshot" (nothing is copied — rows are flagged in place), or an "audit log". Named in
 **Node**/**Edge**/**Flow**/**FlowRoute** terms in code; users see only "delete" and "undo".
 *(Realized now via `deleteNode`/`restoreNode` and `deleteEdge`/`restoreEdge` for cascaded
-edges; see ADR-0008 (amended for the deleteEdge cascade) and ADR-0011. The id is a bare
-stamped column today — a durable `Deletion` entity and an MCP undo tool are deferred,
-additive future work.)*
+edges; see ADR-0008, ADR-0014 (the `deleteEdge`/`restoreEdge` cascade), and ADR-0011. The
+id is a bare stamped column today — a durable `Deletion` entity and an MCP undo tool are
+deferred, additive future work.)*
 
 ### Soft-delete + undo
 Deletes set a `deletedAt` timestamp rather than removing rows; reads filter out soft-deleted
@@ -348,8 +348,9 @@ writer). Same word user-facing and in code — applies the **Flow** no-split con
 for authz and cascade-index friendliness, soft-delete columns (`deletedAt`, `deletionId`),
 and is owner-only writable via `routeFlow` / `unrouteFlow`. A FlowRoute's `flowId` must
 reference an active **Flow** whose `ownerNodeId` is one endpoint of the outer **Edge** —
-the *touches-endpoint* invariant; the polarity-vs-arrow refinement of that rule is
-service-enforced in a subsequent slice. De-dupe is `(outerEdgeId, flowId)` among active rows
+the *touches-endpoint* invariant, enforced now in its weaker, direction-blind form; the
+polarity-vs-arrow refinement (INBOUND ⇒ owner = target, OUTBOUND ⇒ owner = source) is
+service-enforced in a subsequent slice (Slice 4 / ADR-0013). De-dupe is `(outerEdgeId, flowId)` among active rows
 — the **ADR-0010 named pattern**, third adopter (`idx_flow_route_dedup`, partial unique
 backstop; service-primary `findFirst` is the readable fast path; both translate to
 `ConflictError` with `details.conflictingFlowRouteIds`). *(Realized now for same-Canvas

@@ -2,17 +2,13 @@
 
 ## Status
 
-Accepted *(amended by Slice 2 of flow-routed-connections — `deleteEdge` was
-extended to mint a `deletionId` and stamp swept FlowRoutes when, and only
-when, at least one incident FlowRoute exists. The "lone delete" wording in
-the consequences below still describes the no-FlowRoute path correctly; a
-cascade is no longer "lone" in this ADR's sense once routes are swept.
-Restore symmetry is provided by the new `restoreEdge` service, which
-revives the Edge and its stamped FlowRoutes as one batch keyed by the
-`deletionId` — same shape as `restoreNode`. The `deleteNode` cascade also
-gained an additive FlowRoute sweep alongside its existing Node / Edge /
-Flow / FlowSpec arms, with `restoreNode` extended to pre-check the
-`idx_flow_route_dedup` invariant before reviving.)*
+Accepted. *Amended by [ADR-0014](0014-deleteedge-restoreedge-cascade.md), which
+extends this stamped-batch mechanism to the `deleteEdge` / `restoreEdge`
+FlowRoute cascade (Slice 2 of flow-routed-connections) — the conditional
+`deletionId`, the `restoreEdge` inverse, the additive `deleteNode` /
+`restoreNode` FlowRoute arms, and the caller-supplied-transaction contract all
+live there. The "lone delete" wording below still describes the no-FlowRoute
+path correctly.*
 
 ## Context
 

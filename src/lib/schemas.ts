@@ -349,7 +349,7 @@ export type UnrouteFlowInput = z.infer<typeof unrouteFlowInput>;
 /**
  * Input for undoing a cascading `deleteEdge`. Addressed by the `deletionId`
  * minted by `deleteEdge` when it swept at least one incident FlowRoute (the
- * lone-Edge case still mints no id; see ADR-0008's Status-block amendment).
+ * lone-Edge case still mints no id; see ADR-0014, the cascade decision).
  * The service restores EXACTLY the rows bearing that id — the Edge and its
  * swept FlowRoutes — and pre-checks the `idx_edge_dedup` and
  * `idx_flow_route_dedup` invariants so a conflicting active row surfaces a

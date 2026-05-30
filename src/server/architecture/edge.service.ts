@@ -184,13 +184,13 @@ export async function updateEdge(
  * `access.assertCanWrite` (ADR-0001). Idempotent in spirit: an
  * already-deleted Edge reads as not-found.
  *
- * Cascade behavior (Slice 2 — extends ADR-0008's "lone delete" carve-out):
- * if at least one live FlowRoute references this Edge (as `outerEdgeId` or,
- * forward-compat for Slice 3, `innerEdgeId`), the delete mints a fresh
- * `deletionId` and stamps it on BOTH the Edge and the swept FlowRoutes, so
- * `restoreEdge` can revive the batch as one unit. If no FlowRoutes are
- * incident, ADR-0008's lone-delete rule still holds — the Edge soft-deletes
- * with no `deletionId`.
+ * Cascade behavior (Slice 2 / ADR-0014 — extends ADR-0008's "lone delete"
+ * carve-out): if at least one live FlowRoute references this Edge (as
+ * `outerEdgeId` or, forward-compat for Slice 3, `innerEdgeId`), the delete
+ * mints a fresh `deletionId` and stamps it on BOTH the Edge and the swept
+ * FlowRoutes, so `restoreEdge` can revive the batch as one unit. If no
+ * FlowRoutes are incident, ADR-0008's lone-delete rule still holds — the Edge
+ * soft-deletes with no `deletionId`.
  *
  * Returns the soft-deleted Edge plus the cascade metadata (`deletionId` and
  * `flowRouteIds`) so the optimistic UI can stage an undo affordance in the
@@ -247,7 +247,15 @@ export async function deleteEdge(
 
   // Cascade: mint one fresh id, stamp both arms. `restoreEdge` revives by
   // this handle. The cascade is no longer "lone" in ADR-0008's sense — see
-  // that ADR's Status-block amendment.
+  // ADR-0014 (the deleteEdge/restoreEdge cascade decision).
+  //
+  // ATOMICITY: the Edge stamp and the FlowRoute sweep below must commit as a
+  // unit, but this function takes a bare `Db` — it is the CALLER's job to
+  // wrap the call in `db.$transaction` (the tRPC `deleteEdge` procedure
+  // does). A non-transactional caller that fails between the two writes would
+  // leave the Edge deleted while its routes stay live, orphaned from a dead
+  // edge. Prisma has no reliable "am I in a transaction?" probe, so this is
+  // enforced by contract (ADR-0014), not by an assertion here.
   const deletionId = randomUUID();
   const updated = await db.edge.update({
     where: { id: edge.id },

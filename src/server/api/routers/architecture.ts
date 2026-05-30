@@ -184,9 +184,9 @@ export const architectureRouter = createTRPCRouter({
 
   // Owner-only mutation: remove a Connection (soft-delete). When the Edge
   // carries incident FlowRoutes, the service stamps both with a fresh
-  // deletionId for batch restore (Slice 2; extends ADR-0008's lone-delete
-  // rule for the cascade case) — wrapped in $transaction so the multi-write
-  // commits atomically.
+  // deletionId for batch restore (Slice 2 / ADR-0014; extends ADR-0008's
+  // lone-delete rule for the cascade case) — wrapped in $transaction so the
+  // multi-write commits atomically.
   deleteEdge: protectedProcedure
     .input(deleteEdgeInput)
     .mutation(async ({ ctx, input }) => {
