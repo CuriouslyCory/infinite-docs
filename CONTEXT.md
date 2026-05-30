@@ -80,9 +80,11 @@ Backed by an **Edge**. A Connection's direction is **structural**: the arrow alw
 the input Port, derived from the output→input (`sourceId`→`targetId`) ordering — never a stored
 or user-set field, so it cannot lie (ADR-0009). A two-way relationship is **two Connections**
 (one each way), each independently labelable. *(Drawing, labeling, and removing a Connection are
-realized now — see **Edge** for the same-Canvas, no-self-link, and no-duplicate-active rules;
-the refinement Connection that resolves a **boundary proxy** to a real Component (M5) lands
-later.)*
+realized now — see **Edge** for the same-Canvas, no-self-link, and no-duplicate-active rules.
+A Connection that carries one or more **FlowRoutes** wears a routed-count pill (**"N / M
+routed"**) and exposes a **"+ flow"** affordance when selected by the owner, listing the
+unrouted Flows from either endpoint. The refinement Connection that resolves a **boundary
+proxy** to a real Component (M5) lands later.)*
 
 ### Edge
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
@@ -136,18 +138,27 @@ the derivation is realized now via **getCanvas**, and the Edge half is realized 
 ### getCanvas
 The single service read that materializes a **Canvas** for a given **Canvas
 scope** in one round trip. Its full result is
-`{ interiorNodes, interiorEdges, boundaryProxies, breadcrumbs }`, derived without
-a per-level query walk. Because a Canvas is a *derived view*, `getCanvas` returns
-the **Nodes** and **Edges** that fall out of the scope — it is the read half of
-the Component/Node split, so its result is named in **Node**/**Edge** terms in
-code and tests even though the feature is described to users as "the interior
-**Components**". *(Realized partially now — `getCanvas` returns `interiorNodes`,
-`interiorEdges`, and `breadcrumbs` for a scope; `boundaryProxies` lands with
-boundary derivation (M3). A non-null scope that resolves to no live Node in the
-Project is a not-found. See ADR-0001 for the single-round-trip service contract,
-ADR-0004 for how the payload reaches the client island, ADR-0005 for the explicit
-`canvasNodeId` Edge scope, and ADR-0006 for the single recursive breadcrumb
-query.)*
+`{ interiorNodes, interiorEdges, edgeFlows, boundaryProxies, breadcrumbs }`,
+derived without a per-level query walk. Because a Canvas is a *derived view*,
+`getCanvas` returns the **Nodes** and **Edges** that fall out of the scope —
+it is the read half of the Component/Node split, so its result is named in
+**Node**/**Edge** terms in code and tests even though the feature is described
+to users as "the interior **Components**". The `edgeFlows` field is the
+per-Edge Flow aggregation that drives the routed-count pill on a Connection
+(see **FlowRoute**): for each interior Edge, an entry
+`{ edgeId, total, routed, unrouted, orphan, byKind }` where `total` is the
+active **Flows** owned by either endpoint (loose — no polarity filter; a later
+slice tightens), `routed` is the active **FlowRoutes** whose `outerEdgeId` is
+this Edge with a still-live Flow, `orphan` covers FlowRoutes whose Flow was
+soft-deleted by a re-parse (the wiring hangs visibly rather than vanishing),
+and `byKind` is the per-`FlowKind` count of the routed set. *(Realized
+partially now — `getCanvas` returns `interiorNodes`, `interiorEdges`,
+`edgeFlows`, and `breadcrumbs` for a scope; `boundaryProxies` lands with
+boundary derivation (M3). A non-null scope that resolves to no live Node in
+the Project is a not-found. See ADR-0001 for the single-round-trip service
+contract, ADR-0004 for how the payload reaches the client island, ADR-0005
+for the explicit `canvasNodeId` Edge scope, and ADR-0006 for the single
+recursive breadcrumb query.)*
 
 ### Canvas scope
 Which **Canvas** an operation is acting on. A Canvas has **no id of its own** (it
@@ -235,19 +246,25 @@ service function routes its authorization decision through this module so the po
 exactly one place. *(See ADR-0001 and ADR-0002.)*
 
 ### Deletion id
-The handle that ties together one cascading Component soft-delete so it can be undone as a unit.
+The handle that ties together one cascading soft-delete so it can be undone as a unit.
 A single `deleteNode` mints one id and stamps it (`deletionId`) on every row it transitions to
-deleted — the target **Node**, its subtree, every incident or interior **Edge**, and every owned
-**Flow** + owned **FlowSpec** — and `restoreNode` clears `deletedAt` for *exactly* the rows
-bearing that id, so an undo restores the operation's set and nothing outside it. A row removed by
-some other operation never carries this id and is never revived by undoing a later one — a lone
-`deleteEdge` sets `deletedAt` with **no** `deletionId`, and an earlier delete carries its own id.
-It is a *grouping of soft-deleted rows*, not a stored history: do not call it a "transaction"
-(the database mechanism that writes it), a "version" or "snapshot" (nothing is copied — rows are
-flagged in place), or an "audit log". Named in **Node**/**Edge**/**Flow** terms in code; users
-see only "delete" and "undo". *(Realized now via `deleteNode`/`restoreNode`; see ADR-0008 and
-ADR-0011. The id is a bare stamped column today — a durable `Deletion` entity and an MCP undo
-tool are deferred, additive future work.)*
+deleted — the target **Node**, its subtree, every incident or interior **Edge**, every owned
+**Flow** + owned **FlowSpec**, and every incident **FlowRoute** — and `restoreNode` clears
+`deletedAt` for *exactly* the rows bearing that id, so an undo restores the operation's set and
+nothing outside it. A `deleteEdge` that sweeps one or more incident FlowRoutes also mints a
+`deletionId` and stamps both the Edge and the swept FlowRoutes, restored as one batch by
+`restoreEdge`; a `deleteEdge` on an Edge with no incident FlowRoutes still mints **no**
+`deletionId` (the "lone delete" carve-out preserved). A row removed by some other operation
+never carries this id and is never revived by undoing a later one — a lone `deleteFlow` /
+`unrouteFlow` / `deleteEdge`-without-routes sets `deletedAt` with no `deletionId`, and an
+earlier delete carries its own id. It is a *grouping of soft-deleted rows*, not a stored
+history: do not call it a "transaction" (the database mechanism that writes it), a "version"
+or "snapshot" (nothing is copied — rows are flagged in place), or an "audit log". Named in
+**Node**/**Edge**/**Flow**/**FlowRoute** terms in code; users see only "delete" and "undo".
+*(Realized now via `deleteNode`/`restoreNode` and `deleteEdge`/`restoreEdge` for cascaded
+edges; see ADR-0008, ADR-0014 (the `deleteEdge`/`restoreEdge` cascade), and ADR-0011. The
+id is a bare stamped column today — a durable `Deletion` entity and an MCP undo tool are
+deferred, additive future work.)*
 
 ### Soft-delete + undo
 Deletes set a `deletedAt` timestamp rather than removing rows; reads filter out soft-deleted
@@ -273,9 +290,11 @@ stable `key` (e.g. `"GET /pets"`), an UNTRUSTED `title` (display label), an opti
 backstop (`idx_flow_dedup`). A Flow may be **derived** from a **FlowSpec** (`sourceSpecId != null`)
 or **user-authored** (`sourceSpecId = null`). *(Realized now via `attachFlowSpec` / `addFlow` /
 `updateFlow` / `deleteFlow`, listed in the Component's **Flow palette**, and surfaced as the
-"N flows" pill on the Component body. Binding a Flow to a **Connection** at a scope — the
-`FlowRoute` — and palette rendering on **boundary proxies** land in subsequent slices. See
-ADR-0011.)*
+"N flows" pill on the Component body. Same-Canvas baseline binding of a Flow to a **Connection**
+— the `FlowRoute` — is realized now via `routeFlow` / `unrouteFlow`, surfaced as the routed-count
+pill on the Connection and the "+ flow" affordance when a Connection is selected by the owner.
+Cross-scope refinement routing and palette rendering on **boundary proxies** land in subsequent
+slices. See ADR-0011.)*
 
 ### FlowSpec
 The imported contract — an OpenAPI document, an AsyncAPI document, a TypeScript signature, a
@@ -310,12 +329,36 @@ consistency check at route time lands with a subsequent slice. ADR-0011 records 
 ### Flow palette
 The read-only UX surface listing a **Component**'s **Flows**. Surfaces on the
 **Component-detail panel** that opens when the owner selects a Component on the **Canvas** —
-alongside the paste field for its **FlowSpec**. Each item shows the Flow's `title`, `kind`,
-and `polarity`. When the Component owns at least one Flow, its node body wears a
-**"N flows" pill** to signal the palette is non-empty. *(Realized now on the Component-detail
-panel of a Component you own. The boundary-proxy palette — the same surface, projected
-inward through a **boundary proxy** so a child Component can route external Flows onto its
-interior pipes — lands with a subsequent slice.)*
+alongside the paste field for its **FlowSpec** — and inside the **"+ flow"** popover that
+opens when the owner selects a **Connection** (so the unrouted Flows on either endpoint are
+pickable in place). Each item shows the Flow's `title`, `kind`, and `polarity`. When the
+Component owns at least one Flow, its node body wears a **"N flows" pill** to signal the
+palette is non-empty. *(Realized now on the Component-detail panel of a Component you own
+and inside the per-Connection "+ flow" popover. The boundary-proxy palette — the same
+surface, projected inward through a **boundary proxy** so a child Component can route
+external Flows onto its interior pipes — lands with a subsequent slice.)*
+
+### FlowRoute
+The binding that says *"this **Connection** carries this **Flow**"* — a first-class row that
+attaches a **Flow** to an **Edge** at a **Canvas scope**. Names exactly one `outerEdgeId`
+(the Connection at this scope that carries the Flow) and zero-or-one `innerEdgeId` (the
+refinement Connection one scope deeper, reserved for a subsequent slice's gated cross-scope
+writer). Same word user-facing and in code — applies the **Flow** no-split convention (the
+"Node" overload that motivated the Component/Node split does not apply). Carries `projectId`
+for authz and cascade-index friendliness, soft-delete columns (`deletedAt`, `deletionId`),
+and is owner-only writable via `routeFlow` / `unrouteFlow`. A FlowRoute's `flowId` must
+reference an active **Flow** whose `ownerNodeId` is one endpoint of the outer **Edge** —
+the *touches-endpoint* invariant, enforced now in its weaker, direction-blind form; the
+polarity-vs-arrow refinement (INBOUND ⇒ owner = target, OUTBOUND ⇒ owner = source) is
+service-enforced in a subsequent slice (Slice 4 / ADR-0013). De-dupe is `(outerEdgeId, flowId)` among active rows
+— the **ADR-0010 named pattern**, third adopter (`idx_flow_route_dedup`, partial unique
+backstop; service-primary `findFirst` is the readable fast path; both translate to
+`ConflictError` with `details.conflictingFlowRouteIds`). *(Realized now for same-Canvas
+baseline routing via `routeFlow` / `unrouteFlow`, surfaced as the `edgeFlows` aggregation
+in **getCanvas**, the routed-count pill on the Connection, and the "+ flow" popover on a
+selected Connection. Cross-scope refinement and palette rendering on **boundary proxies**
+land in subsequent slices. See ADR-0011 (Flow foundation) and the master plan at
+`docs/plans/flow-routed-connections.md`.)*
 
 ### Flow kind (`FlowKind`)
 A **Flow**'s category, stored on it as `kind: FlowKind`. One of seven values: `GENERIC` (the

@@ -312,3 +312,67 @@ export const getFlowsForNodeInput = z.object({
   slug: z.string().min(1),
 });
 export type GetFlowsForNodeInput = z.infer<typeof getFlowsForNodeInput>;
+
+/**
+ * Input for routing a Flow onto a Connection (creating a FlowRoute). Addressed
+ * by `flowId` and `outerEdgeId`; the service loads both, asserts they share a
+ * Project, authorizes owner-only against that Project (ADR-0001), and rejects
+ * unless the Flow's owner is one endpoint of the outer Edge. The polarity-
+ * vs-arrow refinement of that rule is Slice 4's invariant — not enforced
+ * here. The de-dupe rule `(outerEdgeId, flowId)` follows the ADR-0010 named
+ * pattern with the `idx_flow_route_dedup` partial unique index as the TOCTOU
+ * backstop.
+ *
+ * Same-Canvas baseline only: there is intentionally no `innerEdgeId` field
+ * yet — Slice 3 (#36) adds it additively when the gated cross-scope writer
+ * lands (ADR-0012). Memory: "prefer narrow required inputs."
+ */
+export const routeFlowInput = z.object({
+  flowId: z.string().min(1),
+  outerEdgeId: z.string().min(1),
+});
+export type RouteFlowInput = z.infer<typeof routeFlowInput>;
+
+/**
+ * Input for removing a FlowRoute. Addressed by FlowRoute `id`; the service
+ * authorizes against the Project owner. Removal is a soft-delete (sets
+ * `deletedAt`) so re-routing the same (flowId, outerEdgeId) pair later still
+ * works — the `idx_flow_route_dedup` partial index excludes deletedAt rows
+ * (ADR-0010 precondition c). A lone `unrouteFlow` does NOT mint a
+ * `deletionId` — that handle ties cascading-batch deletes only (ADR-0008).
+ */
+export const unrouteFlowInput = z.object({
+  flowRouteId: z.string().min(1),
+});
+export type UnrouteFlowInput = z.infer<typeof unrouteFlowInput>;
+
+/**
+ * Input for undoing a cascading `deleteEdge`. Addressed by the `deletionId`
+ * minted by `deleteEdge` when it swept at least one incident FlowRoute (the
+ * lone-Edge case still mints no id; see ADR-0014, the cascade decision).
+ * The service restores EXACTLY the rows bearing that id — the Edge and its
+ * swept FlowRoutes — and pre-checks the `idx_edge_dedup` and
+ * `idx_flow_route_dedup` invariants so a conflicting active row surfaces a
+ * readable error rather than a P2002. Owner-only; never slug-granted
+ * (ADR-0002).
+ */
+export const restoreEdgeInput = z.object({
+  deletionId: z.string().min(1),
+});
+export type RestoreEdgeInput = z.infer<typeof restoreEdgeInput>;
+
+/**
+ * Input for reading the active FlowRoute flowIds on a Connection — drives the
+ * "+ flow" popover's unrouted filter (Slice 2). Read access is via the
+ * capability slug (ADR-0002), so the panel works in shared-view mode too.
+ * Returns just `flowId`s — the popover already has the endpoint Flow lists
+ * via `getFlowsForNode`; this query only answers "which of those are
+ * already routed?" Smallest helper that fits.
+ */
+export const getRoutedFlowIdsForEdgeInput = z.object({
+  outerEdgeId: z.string().min(1),
+  slug: z.string().min(1),
+});
+export type GetRoutedFlowIdsForEdgeInput = z.infer<
+  typeof getRoutedFlowIdsForEdgeInput
+>;

@@ -161,7 +161,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
         position={Position.Left}
         aria-label="Input port"
         title="Input port"
-        className="!h-2 !w-2 !border-white/40 !bg-white/60"
+        className="h-2! w-2! border-white/40! bg-white/60!"
       />
       <Icon
         size={16}
@@ -279,7 +279,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
         position={Position.Right}
         aria-label="Output port"
         title="Output port"
-        className="!h-2 !w-2 !border-white/40 !bg-white/60"
+        className="h-2! w-2! border-white/40! bg-white/60!"
       />
     </div>
   );

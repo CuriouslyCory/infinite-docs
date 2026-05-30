@@ -64,6 +64,12 @@ export interface ConflictErrorDetails {
   // (`ownerNodeId @unique`) now carries a fresh FlowSpec. Separate from
   // `conflictingFlowIds` because the collision is on different rows.
   conflictingFlowSpecIds?: string[];
+  // The active FlowRoute(s) that block the write — duplicate
+  // `(outerEdgeId, flowId)` on `routeFlow`, or rows a `restoreEdge` /
+  // `restoreNode` cannot revive because the same outer-edge/flow slot is
+  // occupied (ADR-0010 named pattern, third adopter; see the master plan at
+  // docs/plans/flow-routed-connections.md).
+  conflictingFlowRouteIds?: string[];
 }
 
 /**

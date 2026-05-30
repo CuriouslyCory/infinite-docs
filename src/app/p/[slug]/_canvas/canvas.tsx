@@ -39,7 +39,10 @@ import {
 import {
   ConnectionEdgeView,
   EditEdgeContext,
+  RouteFlowContext,
   type ConnectionEdge,
+  type ConnectionEdgeFlows,
+  type RouteFlowAction,
 } from "./connection-edge";
 
 /**
@@ -99,6 +102,45 @@ function toRFEdge(e: CanvasEdge): ConnectionEdge {
     data: {
       label: e.label,
       optimistic: e.id.startsWith("temp_"),
+    },
+  };
+}
+
+/**
+ * Hydrate a base RF edge with its `edgeFlows` aggregation (Slice 2) and the
+ * endpoint metadata the "+ flow" popover needs. Kept as a free function (not
+ * folded into `toRFEdge`) because the per-edge merge needs canvas-wide
+ * `edgeFlows` + the source/target Component titles, and `toRFEdge` is also
+ * used during optimistic edge reconciliation where only the edge itself is
+ * known.
+ */
+function withEdgeFlows(
+  edge: ConnectionEdge,
+  flowsByEdge: Map<string, ConnectionEdgeFlows>,
+  titleByNode: Map<string, string>,
+  slug: string,
+): ConnectionEdge {
+  const flows = flowsByEdge.get(edge.id);
+  // `edge.source` / `edge.target` are React Flow's foreign-key fields — same
+  // values as the underlying `sourceId` / `targetId`.
+  const sourceTitle = titleByNode.get(edge.source);
+  const targetTitle = titleByNode.get(edge.target);
+  return {
+    ...edge,
+    data: {
+      ...edge.data,
+      label: edge.data?.label ?? null,
+      edgeFlows: flows,
+      endpoints:
+        sourceTitle !== undefined && targetTitle !== undefined
+          ? {
+              slug,
+              sourceId: edge.source,
+              sourceTitle,
+              targetId: edge.target,
+              targetTitle,
+            }
+          : undefined,
     },
   };
 }
@@ -175,7 +217,7 @@ function CanvasInner({
     () => ({ slug, canvasNodeId }),
     [slug, canvasNodeId],
   );
-  const [{ interiorNodes, interiorEdges }] =
+  const [{ interiorNodes, interiorEdges, edgeFlows }] =
     api.architecture.getCanvas.useSuspenseQuery(canvasInput);
 
   // Seed React Flow's store ONCE from the hydrated query; thereafter the store
@@ -186,9 +228,32 @@ function CanvasInner({
   const [nodes, setNodes, onNodesChange] = useNodesState<ComponentNode>(
     interiorNodes.map(toRFNode),
   );
+  // Initial edges seed: pure structural shape (no edgeFlows yet). The
+  // `edgesWithFlows` useMemo below hydrates the aggregation + endpoint
+  // metadata across rerenders.
   const [edges, setEdges, onEdgesChange] = useEdgesState<ConnectionEdge>(
     interiorEdges.map(toRFEdge),
   );
+
+  // Slice 2: merge the canvas-wide edgeFlows aggregation and the endpoint
+  // Component titles onto each edge's `data`, in one place so the per-edge
+  // pill + "+ flow" trigger never have to fish for canvas-level state. Keyed
+  // on `[edges, edgeFlows, interiorNodes]` — the React Flow `edges` state is
+  // included so a freshly-drawn optimistic edge picks up its `endpoints`
+  // metadata on the next frame (its `edgeFlows` stays undefined until the
+  // server response, at which point the cache mirror + invalidate refresh
+  // both arms).
+  const enrichedEdges = useMemo<ConnectionEdge[]>(() => {
+    const flowsByEdge = new Map<string, ConnectionEdgeFlows>(
+      (edgeFlows ?? []).map((ef) => [ef.edgeId, ef]),
+    );
+    const titleByNode = new Map<string, string>(
+      interiorNodes.map((n) => [n.id, n.title] as const),
+    );
+    return edges.map((e) =>
+      withEdgeFlows(e, flowsByEdge, titleByNode, slug),
+    );
+  }, [edges, edgeFlows, interiorNodes, slug]);
   const { screenToFlowPosition } = useReactFlow();
   const createNode = api.architecture.createNode.useMutation();
   // Destructured so the stable `mutateAsync` can be a dep of the context values
@@ -202,6 +267,10 @@ function CanvasInner({
     api.architecture.deleteNode.useMutation();
   const { mutateAsync: restoreComponent } =
     api.architecture.restoreNode.useMutation();
+  const { mutateAsync: routeFlow } =
+    api.architecture.routeFlow.useMutation();
+  const { mutateAsync: unrouteFlow } =
+    api.architecture.unrouteFlow.useMutation();
 
   // The query cache is the re-seed mirror. EVERY write goes through this merge
   // helper so a partial update can never drop a sibling key (e.g. node edits
@@ -211,9 +280,14 @@ function CanvasInner({
   const patchCanvas = useCallback(
     (patch: (prev: CanvasData) => Partial<CanvasData>) => {
       utils.architecture.getCanvas.setData(canvasInput, (old) => {
+        // `edgeFlows: []` is load-bearing — Slice 2 added the field, and a
+        // partial update on a cold cache (e.g. `commitRouteFlow` fires
+        // before the query has resolved once) would otherwise patch against
+        // a base that lacks the key and drop it. Keep all known keys here.
         const base: CanvasData = old ?? {
           interiorNodes: [],
           interiorEdges: [],
+          edgeFlows: [],
           breadcrumbs: [],
         };
         return { ...base, ...patch(base) };
@@ -481,18 +555,30 @@ function CanvasInner({
     ],
   );
 
-  // Remove a Connection (React Flow's Delete/Backspace). `onEdgesChange` already
-  // dropped it from the store; here we mirror the removal into the cache and
-  // soft-delete it server-side. A still-optimistic edge was never persisted, so
-  // it just disappears. Failure re-adds the edge to both stores and toasts.
+  // Remove a Connection (React Flow's Delete/Backspace). `onEdgesChange`
+  // already dropped it from the store; here we mirror the removal into the
+  // cache and soft-delete it server-side. A still-optimistic edge was never
+  // persisted, so it just disappears. Failure re-adds the edge to both
+  // stores and toasts.
+  //
+  // Slice 2 cascade: when `deleteEdge` sweeps incident FlowRoutes it returns
+  // a `deletionId` and the swept route ids; we drop the per-edge `edgeFlows`
+  // entry optimistically alongside the edge. The cascade case has no undo
+  // affordance here yet — the delete path uses React Flow's keyboard delete,
+  // which has no toast slot; wiring a `restoreEdge` undo is a Slice 5
+  // affordance alongside the inspector.
   const handleEdgesDelete = useCallback(
     (deleted: ConnectionEdge[]) => {
       const cached = utils.architecture.getCanvas.getData(canvasInput);
       for (const edge of deleted) {
         if (edge.id.startsWith("temp_")) continue;
         const prev = cached?.interiorEdges.find((e) => e.id === edge.id);
+        const prevFlows = cached?.edgeFlows.find(
+          (ef) => ef.edgeId === edge.id,
+        );
         patchCanvas((c) => ({
           interiorEdges: c.interiorEdges.filter((e) => e.id !== edge.id),
+          edgeFlows: c.edgeFlows.filter((ef) => ef.edgeId !== edge.id),
         }));
         void removeEdge({ id: edge.id }).catch(() => {
           setEdges((es) =>
@@ -501,6 +587,7 @@ function CanvasInner({
           if (prev) {
             patchCanvas((c) => ({
               interiorEdges: [...c.interiorEdges, prev],
+              edgeFlows: prevFlows ? [...c.edgeFlows, prevFlows] : c.edgeFlows,
             }));
           }
           toast.error("Couldn’t remove the connection. Please try again.");
@@ -704,6 +791,119 @@ function CanvasInner({
     [setNodes, patchCanvas],
   );
 
+  // Route a Flow onto a Connection (Slice 2). Optimistic on the
+  // `edgeFlows` aggregation only — the new FlowRoute row itself is not
+  // surfaced anywhere in the canvas, only its count. Bump `routed`,
+  // decrement `unrouted`, fire `routeFlow`; on failure undo via an inverse
+  // delta (NOT a snapshot restore) so an overlapping in-flight route on the
+  // same edge isn't clobbered, then reconcile to server truth.
+  const commitRouteFlow = useCallback(
+    (flowId: string, outerEdgeId: string): void => {
+      patchCanvas((c) => ({
+        edgeFlows: c.edgeFlows.map((ef) =>
+          ef.edgeId === outerEdgeId
+            ? {
+                ...ef,
+                routed: ef.routed + 1,
+                unrouted: Math.max(0, ef.unrouted - 1),
+              }
+            : ef,
+        ),
+      }));
+
+      void routeFlow({ flowId, outerEdgeId })
+        .then(() => {
+          // Refresh the popover's unrouted filter on next open.
+          void utils.architecture.getRoutedFlowIdsForEdge.invalidate({
+            outerEdgeId,
+            slug,
+          });
+        })
+        .catch(() => {
+          // Inverse-delta rollback: undo only this op's own +1/-1 against the
+          // current counts, so a concurrent route that succeeded mid-flight
+          // keeps its increment. Then reconcile to the authoritative counts —
+          // but only here, on the error path: a happy-path `getCanvas`
+          // refetch would cost a round-trip per route (Philosophy #1).
+          patchCanvas((c) => ({
+            edgeFlows: c.edgeFlows.map((ef) =>
+              ef.edgeId === outerEdgeId
+                ? {
+                    ...ef,
+                    routed: Math.max(0, ef.routed - 1),
+                    unrouted: ef.unrouted + 1,
+                  }
+                : ef,
+            ),
+          }));
+          void utils.architecture.getCanvas.invalidate(canvasInput);
+          toast.error("Couldn’t route the flow. Please try again.");
+        });
+    },
+    [utils, canvasInput, patchCanvas, routeFlow, slug],
+  );
+
+  // Remove a FlowRoute (Slice 2). Mirror of `commitRouteFlow`: dec routed,
+  // inc unrouted, rollback on failure. Slice 2 has no UI surface that fires
+  // unroute yet (Slice 5's inspector owns the unroute affordance) — but the
+  // dispatch path is shipped now so the context contract is complete; a
+  // future inspector composes on top with zero service-layer changes.
+  const commitUnrouteFlow = useCallback(
+    (flowRouteId: string, outerEdgeId: string): void => {
+      patchCanvas((c) => ({
+        edgeFlows: c.edgeFlows.map((ef) =>
+          ef.edgeId === outerEdgeId
+            ? {
+                ...ef,
+                routed: Math.max(0, ef.routed - 1),
+                unrouted: ef.unrouted + 1,
+              }
+            : ef,
+        ),
+      }));
+
+      void unrouteFlow({ flowRouteId })
+        .then(() => {
+          void utils.architecture.getRoutedFlowIdsForEdge.invalidate({
+            outerEdgeId,
+            slug,
+          });
+        })
+        .catch(() => {
+          // Inverse-delta rollback + error-path reconcile — see
+          // `commitRouteFlow` for the rationale.
+          patchCanvas((c) => ({
+            edgeFlows: c.edgeFlows.map((ef) =>
+              ef.edgeId === outerEdgeId
+                ? {
+                    ...ef,
+                    routed: ef.routed + 1,
+                    unrouted: Math.max(0, ef.unrouted - 1),
+                  }
+                : ef,
+            ),
+          }));
+          void utils.architecture.getCanvas.invalidate(canvasInput);
+          toast.error("Couldn’t remove the routing. Please try again.");
+        });
+    },
+    [utils, canvasInput, patchCanvas, unrouteFlow, slug],
+  );
+
+  // Single dispatch consumed by `RouteFlowContext`. Discriminated by `kind`
+  // — keeps the popover / inspector consumers honest about which op they
+  // mean and lets the canvas keep the rollback bookkeeping in one place.
+  const routeFlowDispatch = useCallback(
+    (action: RouteFlowAction) => {
+      if (action.kind === "route") {
+        commitRouteFlow(action.flowId, action.outerEdgeId);
+      } else {
+        commitUnrouteFlow(action.flowRouteId, action.outerEdgeId);
+      }
+    },
+    [commitRouteFlow, commitUnrouteFlow],
+  );
+
   // Descent: open a Component's interior Canvas. One callback shared by the
   // node's "Open" button (via DescendComponentContext) and the flow's
   // double-click handler, so the route + prefetch logic lives in one place.
@@ -724,101 +924,106 @@ function CanvasInner({
   return (
     <RenameComponentContext.Provider value={commitRename}>
       <EditEdgeContext.Provider value={commitEdgeEdit}>
-        <DescendComponentContext.Provider value={descend}>
-          <DeleteComponentContext.Provider value={removeComponent}>
-            <CanEditContext.Provider value={canEdit}>
-              <ReactFlow<ComponentNode, ConnectionEdge>
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={(c) => void handleConnect(c)}
-                // Strict connection mode is what makes a Connection run only
-                // output Port → input Port (a drag can go only from a source
-                // handle to a target handle); pin it explicitly so that
-                // output→input invariant can't be silently lost (ADR-0009).
-                connectionMode={ConnectionMode.Strict}
-                // Instant drag feedback: reject a self-link and a still-optimistic
-                // (temp_) endpoint by snapping back. Duplicates are deliberately
-                // allowed through (passing [] skips the duplicate rule) so
-                // onConnect can surface a toast — blocking them here would snap a
-                // duplicate back silently, with no explanation.
-                isValidConnection={(c) => {
-                  const { source, target } = c;
-                  if (!source || !target) return false;
-                  if (source.startsWith("temp_") || target.startsWith("temp_")) {
-                    return false;
+        <RouteFlowContext.Provider value={routeFlowDispatch}>
+          <DescendComponentContext.Provider value={descend}>
+            <DeleteComponentContext.Provider value={removeComponent}>
+              <CanEditContext.Provider value={canEdit}>
+                <ReactFlow<ComponentNode, ConnectionEdge>
+                  nodes={nodes}
+                  edges={enrichedEdges}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onConnect={(c) => void handleConnect(c)}
+                  // Strict connection mode is what makes a Connection run only
+                  // output Port → input Port (a drag can go only from a source
+                  // handle to a target handle); pin it explicitly so that
+                  // output→input invariant can't be silently lost (ADR-0009).
+                  connectionMode={ConnectionMode.Strict}
+                  // Instant drag feedback: reject a self-link and a still-optimistic
+                  // (temp_) endpoint by snapping back. Duplicates are deliberately
+                  // allowed through (passing [] skips the duplicate rule) so
+                  // onConnect can surface a toast — blocking them here would snap a
+                  // duplicate back silently, with no explanation.
+                  isValidConnection={(c) => {
+                    const { source, target } = c;
+                    if (!source || !target) return false;
+                    if (
+                      source.startsWith("temp_") ||
+                      target.startsWith("temp_")
+                    ) {
+                      return false;
+                    }
+                    return canConnect({ source, target }, []).ok;
+                  }}
+                  onEdgesDelete={handleEdgesDelete}
+                  onNodeClick={(_event, node) => {
+                    // A `temp_…` Component has no server id yet; opening the
+                    // detail panel would query for a node the server cannot
+                    // find. Single-click selection only — double-click still
+                    // descends.
+                    if (node.id.startsWith("temp_")) return;
+                    setSelectedNodeId(node.id);
+                  }}
+                  onPaneClick={() => setSelectedNodeId(null)}
+                  onNodeDoubleClick={(_event, node) => descend(node.id)}
+                  onNodeMouseEnter={(_event, node) => {
+                    // Make Descent feel instant: warm the interior Canvas payload (tRPC
+                    // cache, the same key the descended island reads) and the route shell.
+                    if (node.id.startsWith("temp_")) return;
+                    void utils.architecture.getCanvas.prefetch({
+                      slug,
+                      canvasNodeId: node.id,
+                    });
+                    router.prefetch(`/p/${slug}/n/${node.id}`);
+                  }}
+                  onNodeDragStop={(_event, _node, dragged) =>
+                    void persistPositions(dragged)
                   }
-                  return canConnect({ source, target }, []).ok;
-                }}
-                onEdgesDelete={handleEdgesDelete}
-                onNodeClick={(_event, node) => {
-                  // A `temp_…` Component has no server id yet; opening the
-                  // detail panel would query for a node the server cannot
-                  // find. Single-click selection only — double-click still
-                  // descends.
-                  if (node.id.startsWith("temp_")) return;
-                  setSelectedNodeId(node.id);
-                }}
-                onPaneClick={() => setSelectedNodeId(null)}
-                onNodeDoubleClick={(_event, node) => descend(node.id)}
-                onNodeMouseEnter={(_event, node) => {
-                  // Make Descent feel instant: warm the interior Canvas payload (tRPC
-                  // cache, the same key the descended island reads) and the route shell.
-                  if (node.id.startsWith("temp_")) return;
-                  void utils.architecture.getCanvas.prefetch({
-                    slug,
-                    canvasNodeId: node.id,
-                  });
-                  router.prefetch(`/p/${slug}/n/${node.id}`);
-                }}
-                onNodeDragStop={(_event, _node, dragged) =>
-                  void persistPositions(dragged)
-                }
-                onSelectionDragStop={(_event, dragged) =>
-                  void persistPositions(dragged)
-                }
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                nodesDraggable={canEdit}
-                nodesConnectable={canEdit}
-                deleteKeyCode={canEdit ? undefined : null}
-                fitView
-              >
-                <Background />
-                <Controls />
-                {canEdit && (
-                  <Panel position="top-left">
-                    <AddComponent
-                      onAdd={addComponent}
-                      pending={createNode.isPending}
-                    />
-                  </Panel>
-                )}
-                {canEdit && selectedNodeId !== null && (
-                  <Panel
-                    position="top-right"
-                    className="!top-0 !right-0 !bottom-0 !m-0 flex"
-                  >
-                    <ComponentDetailPanel
-                      slug={slug}
-                      ownerNodeId={selectedNodeId}
-                      onClose={closeDetailPanel}
-                      onFlowCountChange={commitFlowCount}
-                    />
-                  </Panel>
-                )}
-                {nodes.length === 0 && (
-                  <Panel position="top-center">
-                    <p className="mt-2 text-sm text-white/50">
-                      Empty canvas. Add a Component to start modeling.
-                    </p>
-                  </Panel>
-                )}
-              </ReactFlow>
-            </CanEditContext.Provider>
-          </DeleteComponentContext.Provider>
-        </DescendComponentContext.Provider>
+                  onSelectionDragStop={(_event, dragged) =>
+                    void persistPositions(dragged)
+                  }
+                  nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
+                  nodesDraggable={canEdit}
+                  nodesConnectable={canEdit}
+                  deleteKeyCode={canEdit ? undefined : null}
+                  fitView
+                >
+                  <Background />
+                  <Controls />
+                  {canEdit && (
+                    <Panel position="top-left">
+                      <AddComponent
+                        onAdd={addComponent}
+                        pending={createNode.isPending}
+                      />
+                    </Panel>
+                  )}
+                  {canEdit && selectedNodeId !== null && (
+                    <Panel
+                      position="top-right"
+                      className="top-0! right-0! bottom-0! m-0! flex"
+                    >
+                      <ComponentDetailPanel
+                        slug={slug}
+                        ownerNodeId={selectedNodeId}
+                        onClose={closeDetailPanel}
+                        onFlowCountChange={commitFlowCount}
+                      />
+                    </Panel>
+                  )}
+                  {nodes.length === 0 && (
+                    <Panel position="top-center">
+                      <p className="mt-2 text-sm text-white/50">
+                        Empty canvas. Add a Component to start modeling.
+                      </p>
+                    </Panel>
+                  )}
+                </ReactFlow>
+              </CanEditContext.Provider>
+            </DeleteComponentContext.Provider>
+          </DescendComponentContext.Provider>
+        </RouteFlowContext.Provider>
       </EditEdgeContext.Provider>
     </RenameComponentContext.Provider>
   );
