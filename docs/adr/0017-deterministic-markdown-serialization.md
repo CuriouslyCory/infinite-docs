@@ -131,12 +131,13 @@ the export and stated once in the header; #38's Flow anchors
 
 ### 6. The format extends additively — never re-baseline
 
-#38 (Slice 5) extends this format with a `### Flows (…)` Component subsection
-and a `flows:` Connection subsection. Both are **strict insertions** under
-existing blocks; nothing in the #15 layout shifts. The #15 golden fixture
-stays valid for the non-Flow portion; #38 adds its own Flow-bearing fixtures
-rather than re-baselining what's here. This is why the format leaves the
-existing Components / Connections sections single-purpose and unornamented.
+PR #38 (Slice 5) extends this format with a `### Flows (…)` Component
+subsection and a `flows:` Connection subsection. Both are **strict
+insertions** under existing blocks; nothing in the #15 layout shifts. The
+#15 golden fixture stays valid for the non-Flow portion; #38 adds its own
+Flow-bearing fixtures rather than re-baselining what's here. This is why
+the format leaves the existing Components / Connections sections single-
+purpose and unornamented.
 
 ## Consequences
 

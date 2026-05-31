@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { NotFoundError } from "../errors";
 import { exportMarkdown } from "../export.service";
 import {
   serializeGraph,
@@ -293,7 +294,7 @@ describe("exportMarkdown (service, real DB)", () => {
         canvasNodeId: null,
         mode: "full",
       }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 
   it("throws NotFound for a subtree scope that does not resolve to a live Node", async () => {
@@ -304,6 +305,6 @@ describe("exportMarkdown (service, real DB)", () => {
         canvasNodeId: "not-a-real-node",
         mode: "full",
       }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 });
