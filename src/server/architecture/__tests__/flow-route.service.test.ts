@@ -228,6 +228,215 @@ describe("routeFlow", () => {
   });
 });
 
+describe("routeFlow polarity invariant (Slice 4 / ADR-0013)", () => {
+  /**
+   * A, B with BOTH a forward (A → B, B is target) and a reverse (B → A, B is
+   * source) Connection — the two orientations a Flow on B can ride. ADR-0009
+   * allows both (distinct ordered pairs). Lets each polarity be tested against
+   * the matching and the mismatched Edge.
+   */
+  async function seedBothEdges() {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Web Server",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "API",
+    });
+    const fwd = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    });
+    const rev = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: b.id,
+      targetId: a.id,
+    });
+    return { user, actor, project, a, b, fwd, rev };
+  }
+
+  it("accepts an INBOUND Flow on the forward Edge (owner is the target)", async () => {
+    const { actor, b, fwd } = await seedBothEdges();
+    const flow = await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "OPENAPI_OPERATION",
+      key: "GET /pets",
+      title: "List pets",
+      polarity: "INBOUND",
+    });
+    const route = await routeFlow(testDb, actor, {
+      flowId: flow.id,
+      outerEdgeId: fwd.id,
+    });
+    expect(route.outerEdgeId).toBe(fwd.id);
+  });
+
+  it("rejects an INBOUND Flow on the reverse Edge (owner is the source) with POLARITY_MISMATCH", async () => {
+    const { actor, b, rev } = await seedBothEdges();
+    const flow = await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "OPENAPI_OPERATION",
+      key: "GET /pets",
+      title: "List pets",
+      polarity: "INBOUND",
+    });
+    const err = await routeFlow(testDb, actor, {
+      flowId: flow.id,
+      outerEdgeId: rev.id,
+    })
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as ValidationError).details).toEqual({
+      reason: "POLARITY_MISMATCH",
+      expectedOwnerRole: "target",
+    });
+    // Rejected before any FlowRoute is written.
+    expect(
+      await testDb.flowRoute.count({ where: { flowId: flow.id } }),
+    ).toBe(0);
+  });
+
+  it("accepts an OUTBOUND Flow on the reverse Edge (owner is the source)", async () => {
+    const { actor, b, rev } = await seedBothEdges();
+    const flow = await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "SSE_STREAM",
+      key: "channel:tickUpdates",
+      title: "Tick updates",
+      polarity: "OUTBOUND",
+    });
+    const route = await routeFlow(testDb, actor, {
+      flowId: flow.id,
+      outerEdgeId: rev.id,
+    });
+    expect(route.outerEdgeId).toBe(rev.id);
+  });
+
+  it("rejects an OUTBOUND Flow on the forward Edge (owner is the target) with POLARITY_MISMATCH", async () => {
+    const { actor, b, fwd } = await seedBothEdges();
+    const flow = await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "SSE_STREAM",
+      key: "channel:tickUpdates",
+      title: "Tick updates",
+      polarity: "OUTBOUND",
+    });
+    const err = await routeFlow(testDb, actor, {
+      flowId: flow.id,
+      outerEdgeId: fwd.id,
+    })
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as ValidationError).details).toEqual({
+      reason: "POLARITY_MISMATCH",
+      expectedOwnerRole: "source",
+    });
+  });
+
+  it("exposes both outer-Edge orientations on the boundary proxy when both Connections exist", async () => {
+    const { actor, project, a, b, fwd, rev } = await seedBothEdges();
+    // A child inside A so A has an interior Canvas to descend into; B then
+    // projects in as a direct boundary proxy carrying BOTH orientation ids.
+    await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: a.id,
+      title: "SearchHandler",
+    });
+    const inside = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: a.id,
+    });
+    const proxy = inside.boundaryProxies.find((p) => p.nodeId === b.id);
+    expect(proxy?.origin).toBe("direct");
+    // B is the target of A→B (carries INBOUND) and the source of B→A (carries
+    // OUTBOUND), so both ids are populated and distinct — the two-edge case the
+    // lossy Slice-3 min-id could not represent.
+    expect(proxy?.ownerTargetEdgeId).toBe(fwd.id);
+    expect(proxy?.ownerSourceEdgeId).toBe(rev.id);
+  });
+
+  it("end-to-end SSE: forward route rejected, reverse Connection + cross-scope route accepted, two parent Connections each counted", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const web = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Web Server",
+    });
+    const apiNode = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "API",
+    });
+    // Forward Connection only: Web Server → API.
+    const fwd = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: web.id,
+      targetId: apiNode.id,
+    });
+    // OUTBOUND SSE Flow on the API (the API emits it).
+    const sse = await addFlow(testDb, actor, {
+      ownerNodeId: apiNode.id,
+      kind: "SSE_STREAM",
+      key: "channel:tickUpdates",
+      title: "Tick updates",
+      polarity: "OUTBOUND",
+    });
+    // TickConsumer inside Web Server — the interior endpoint of the refinement.
+    const consumer = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: web.id,
+      title: "TickConsumer",
+    });
+
+    // Routing the OUTBOUND Flow on the forward Edge points the arrow backwards
+    // (API is the target) — rejected before the inner Edge is touched.
+    const rejected = await routeFlow(testDb, actor, {
+      flowId: sse.id,
+      outerEdgeId: fwd.id,
+      sourceNodeId: apiNode.id,
+      targetNodeId: consumer.id,
+    })
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(rejected).toBeInstanceOf(ValidationError);
+    expect((rejected as ValidationError).details?.reason).toBe(
+      "POLARITY_MISMATCH",
+    );
+
+    // The canvas's reverse offer, at the service seam: create the reverse outer
+    // Edge (API → Web Server) then route the cross-scope refinement against it.
+    const rev = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: apiNode.id,
+      targetId: web.id,
+    });
+    const route = await routeFlow(testDb, actor, {
+      flowId: sse.id,
+      outerEdgeId: rev.id,
+      sourceNodeId: apiNode.id,
+      targetNodeId: consumer.id,
+    });
+    expect(route.outerEdgeId).toBe(rev.id);
+    expect(route.innerEdgeId).not.toBeNull();
+
+    // Back at the root: two parent Connections (Web→API and API→Web), each with
+    // its own edgeFlows entry — the reverse carries the routed SSE Flow.
+    const root = await getCanvas(testDb, null, { slug: project.slug });
+    expect(root.interiorEdges).toHaveLength(2);
+    const fwdFlows = root.edgeFlows.find((ef) => ef.edgeId === fwd.id);
+    const revFlows = root.edgeFlows.find((ef) => ef.edgeId === rev.id);
+    expect(revFlows?.routed).toBe(1);
+    expect(fwdFlows?.routed).toBe(0);
+  });
+});
+
 describe("unrouteFlow", () => {
   it("soft-deletes the FlowRoute; idempotent reads as not-found", async () => {
     const { actor, edge, flow } = await seedAToB();
@@ -1081,7 +1290,10 @@ describe("getCanvas boundary derivation (#13 / #14)", () => {
     expect(proxy).toBeDefined();
     expect(proxy?.origin).toBe("direct");
     // The outer Edge a palette drag would refine is the root A→B Connection.
-    expect(proxy?.outerEdgeId).toBe(edge.id);
+    // B (API) is its target, so an INBOUND Flow rides it via `ownerTargetEdgeId`;
+    // there is no B→A Connection, so `ownerSourceEdgeId` is null (Slice 4).
+    expect(proxy?.ownerTargetEdgeId).toBe(edge.id);
+    expect(proxy?.ownerSourceEdgeId).toBeNull();
     expect(inside.flowPalettes[b.id]?.flows.some((f) => f.id === flow.id)).toBe(
       true,
     );
@@ -1105,8 +1317,10 @@ describe("getCanvas boundary derivation (#13 / #14)", () => {
     // The API is not connected to anything at this depth directly — it is
     // inherited from the Web Server ancestor (boundary transitivity, #13).
     expect(proxy?.origin).toBe("inherited");
-    // Inherited proxies are context-only — not routable at this scope.
-    expect(proxy?.outerEdgeId).toBeNull();
+    // Inherited proxies are context-only — not routable at this scope, so both
+    // orientation ids are null (Slice 4).
+    expect(proxy?.ownerSourceEdgeId).toBeNull();
+    expect(proxy?.ownerTargetEdgeId).toBeNull();
   });
 
   it("the root Canvas has no boundary proxies", async () => {
