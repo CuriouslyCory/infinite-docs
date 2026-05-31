@@ -21,6 +21,44 @@ export const getProjectBySlugInput = z.object({
 export type GetProjectBySlugInput = z.infer<typeof getProjectBySlugInput>;
 
 /**
+ * The expiry choices the Connect-an-agent mint flow offers, in days. `null`
+ * means a non-expiring token — an allowed owner choice that carries a standing
+ * security exposure (warned in the UI; recorded in ADR-0020). The service
+ * computes `expiresAt` from this; a raw date is never accepted, which sidesteps
+ * past-date and clock-skew classes entirely.
+ */
+export const apiTokenExpiresInDays = z
+  .union([z.literal(30), z.literal(90), z.literal(365), z.null()])
+  .default(90);
+
+/**
+ * Input for minting an API token (`createApiToken`). `input` carries no userId —
+ * ownership comes only from the actor (ADR-0001). `label` is an OPTIONAL,
+ * UNTRUSTED display name the owner picks to tell tokens apart in the list;
+ * stored verbatim. `scopes` are NOT an input here: every token is minted with a
+ * single fixed read scope today (stored, not enforced — ADR-0001/ADR-0021), so a
+ * picker for unenforced scopes would imply choices that change nothing (memory:
+ * prefer narrow required inputs).
+ */
+export const createApiTokenInput = z.object({
+  label: z.string().trim().min(1).max(100).optional(),
+  expiresInDays: apiTokenExpiresInDays,
+});
+// `z.input` so callers may omit the defaulted `expiresInDays`; the service
+// re-parses to materialize the default.
+export type CreateApiTokenInput = z.input<typeof createApiTokenInput>;
+
+/**
+ * Input for revoking an API token. Addressed by the token `id`; the service
+ * loads it scoped to the actor (a foreign id is reported not-found, never
+ * forbidden — no existence disclosure, ADR-0002) and soft-stamps `revokedAt`.
+ */
+export const revokeApiTokenInput = z.object({
+  id: z.string().min(1),
+});
+export type RevokeApiTokenInput = z.infer<typeof revokeApiTokenInput>;
+
+/**
  * The Component kinds. This Zod enum is the client-safe source of truth for
  * the value set (the kind palette imports `nodeKind.options` as values); the
  * Prisma `NodeKind` enum mirrors it, and a compile-time parity guard in the

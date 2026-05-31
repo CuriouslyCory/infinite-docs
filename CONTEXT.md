@@ -340,7 +340,10 @@ Anyone with the link can read; only the owner can change. A non-owner who holds 
 only"); never "visitor" or "guest". The web client presents a **read-only mode** to a viewer
 (every edit affordance hidden, a read-only **Component-detail panel**, a "View only" header
 badge), but that mode is *presentation, not authorization*: every mutation is still denied at the
-service layer regardless of what the client renders (issue #16). *(See ADR-0002.)*
+service layer regardless of what the client renders (issue #16). The slug is one of the system's
+two bearer secrets — the **API token** is the other (the slug grants link-based *read* to one
+Project; an API token grants an agent the minting user's access over the MCP path); both are
+treated as secrets in logs. *(See ADR-0002, ADR-0020.)*
 
 ### Project route
 The web address at which a Project opens — its **capability-URL slug** as a path segment —
@@ -372,7 +375,64 @@ path will not pass through that guard. *(See ADR-0001 and ADR-0003.)*
 The single home, inside the service layer, for authorization predicates. Exposes
 `assertCanRead` (owner **or** valid capability-slug) and `assertCanWrite` (owner only). Every
 service function routes its authorization decision through this module so the policy lives in
-exactly one place. *(See ADR-0001 and ADR-0002.)*
+exactly one place. Its `OwnedResource { ownerId }` shape is **structural**, not Project-coupled —
+it authorizes over any row whose owning identity is `ownerId`/`userId` (an **API token**'s
+`userId` feeds it directly), so adding an owned resource type needs no new predicate.
+*(See ADR-0001 and ADR-0002.)*
+
+### API token (`ApiToken`)
+A bearer secret a signed-in user mints so an **agent** (an AI client speaking the MCP path) can
+call the system *as that user* — the system's **second bearer secret** alongside the
+**capability-URL slug** (the slug grants link *read* to one **Project**; this grants the user's
+access over the MCP path). Minted from the **Connect-an-agent page**, **shown exactly once**, and
+stored only as a **token hash** plus a non-secret **token prefix** for display — the raw token
+never persists and is never logged (the slug's secret-in-logs posture, ADR-0002). Carries **token
+scopes** and an **expiry**, and is **revocable** (soft — `revokedAt`, keeping the prefix/audit
+trail). Owned by a `userId`; mint/list/revoke authorize through **access** on `userId` only, and a
+token belonging to another user is reported not-found (no existence disclosure). The word is "API
+token" user-facing and `ApiToken` in code — never "API key", "agent token"/"agent key" (the agent
+*consumes* it, it is not the agent's identity), or "PAT". The service verbs are
+`createApiToken` / `listApiTokens` / `revokeApiToken` ("mint" is prose only); the UI button says
+"Generate token". When a token resolves to an identity (#18, the MCP path) it produces an **Actor**
+with `via: "token"`; authorization still derives only from `userId`. *(Minting, hash-at-rest,
+prefix, and revocation are realized now; token→Actor resolution and any scope enforcement are later
+milestones. See ADR-0020, ADR-0021.)*
+
+### Token hash
+How an **API token** persists: the raw token is run through a **keyed HMAC** (SHA-256) with a
+server-side **token pepper** and only the resulting digest is stored (`tokenHash @unique`), so the
+database never holds a replayable credential. #18 verifies a presented token by re-deriving the
+same HMAC and matching the stored digest — the raw value exists only in transit and in the one-time
+reveal. HMAC, not bcrypt/argon2: the token is 256-bit CSPRNG entropy, so slow password hashing buys
+nothing and a deterministic keyed digest is exactly what lookup-by-hash needs. Never "encrypted
+token" (a one-way digest, not reversible ciphertext) or "salted hash" (the secret is a server-wide
+**pepper**, not a per-row salt — a salt would break lookup). *(See ADR-0020.)*
+
+### Token pepper
+The single server-side secret keying every **token hash** — `API_TOKEN_PEPPER`, added to the
+schema-validated env (`src/env.js` server schema **and** `runtimeEnv`) but read directly from
+`process.env` in `token-hash.ts` so a service test needn't load unrelated auth secrets (the
+test-DB seam, ADR-0003). It is a **pepper**, not a **salt**: one application-wide *secret* whose
+compromise (with a DB dump) is what an attacker would need to brute-force tokens offline, so it
+lives only in the environment. A `keyVersion` stamped per token selects which pepper keyed it, so
+the pepper can be rotated without a hash migration; rotating it otherwise invalidates all tokens of
+that version by design. Treated as a top-tier secret in logs, like the slug. *(See ADR-0020.)*
+
+### Token scopes
+The capability labels an **API token** carries (today only `read`), stored on the `ApiToken` and
+later copied onto the **Actor** it resolves to. **Scopes are stored, not enforced**: per **Actor**
+and ADR-0001, authorization derives only from `userId`; `scopes`/`via` never decide an authz
+outcome. They exist now so the wire/DB shape is stable before any scope-gated capability lands, at
+which point enforcement is an additive `access`-module change. The word is **scopes** in prose, UI,
+and code — never "permissions" (over-claims enforcement that does not exist) or "roles".
+*(See ADR-0021.)*
+
+### Connect-an-agent page
+The signed-in, owner-only surface (`/connect`) where a user mints, lists, and revokes **API
+tokens** for connecting an **agent**. User-facing title is **"Connect an agent"**; the artifacts it
+manages are **API tokens**. It is the *producer* side of the token; the *consumer* side (resolving
+a token to an **Actor** over MCP) is #18. Not a "settings", "API keys", or "developers" page — it
+is framed around the user's goal (connect an agent), per the convenience philosophy.
 
 ### Deletion id
 The handle that ties together one cascading soft-delete so it can be undone as a unit.

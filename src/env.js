@@ -14,6 +14,16 @@ export const env = createEnv({
     AUTH_DISCORD_ID: z.string(),
     AUTH_DISCORD_SECRET: z.string(),
     DATABASE_URL: z.url(),
+    // Server-side pepper mixed into every API-token HMAC (see ADR-0020). Like
+    // AUTH_SECRET, required in production but optional in dev so `pnpm check` /
+    // local builds don't break before a pepper is set; `token-hash.ts` fails
+    // fast at first use if it is actually unset when minting/hashing. Read
+    // directly from process.env there (not via this module) to preserve the
+    // service-test seam (ADR-0003); this schema is the single validation home.
+    API_TOKEN_PEPPER:
+      process.env.NODE_ENV === "production"
+        ? z.string().min(32)
+        : z.string().min(32).optional(),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
@@ -37,6 +47,7 @@ export const env = createEnv({
     AUTH_DISCORD_ID: process.env.AUTH_DISCORD_ID,
     AUTH_DISCORD_SECRET: process.env.AUTH_DISCORD_SECRET,
     DATABASE_URL: process.env.DATABASE_URL,
+    API_TOKEN_PEPPER: process.env.API_TOKEN_PEPPER,
     NODE_ENV: process.env.NODE_ENV,
   },
   /**

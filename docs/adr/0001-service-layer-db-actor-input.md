@@ -69,3 +69,11 @@ to use the web API), but it is **not** where read/write authorization decisions 
 - There is mild ceremony: callers must construct an Actor before calling. This is deliberate —
   the Actor is the explicit, auditable answer to "who is doing this," available identically to
   every transport.
+- The `via: "token"` Actor anticipated here gained a **producer** in slice #17: the `ApiToken`
+  model and its mint/store/revoke service (ADR-0020). Two clarifications that follow from that work,
+  neither weakening this decision: (1) token **scopes are stored, not enforced** — authz still
+  derives only from `userId` (ADR-0021); (2) the API-token pepper is read directly from
+  `process.env` in `token-hash.ts`. That direct read is **not** the "ambient request context" this
+  invariant forbids — a deployment-wide secret is config, identical for every request and transport,
+  the same category as the `DATABASE_URL` the test harness reads directly (ADR-0003). Token→Actor
+  *resolution* is the consumer side (#18), not this slice.

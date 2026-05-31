@@ -16,6 +16,6 @@ export const testDb = new PrismaClient({
 /** Resets the database to a clean state between tests (see docs/adr/0003). */
 export async function resetDb(): Promise<void> {
   await testDb.$executeRawUnsafe(
-    `TRUNCATE TABLE "FlowRoute", "Flow", "FlowSpec", "Edge", "Node", "Project", "Post", "Session", "Account", "VerificationToken", "User" RESTART IDENTITY CASCADE;`,
+    `TRUNCATE TABLE "FlowRoute", "Flow", "FlowSpec", "Edge", "Node", "Project", "ApiToken", "Post", "Session", "Account", "VerificationToken", "User" RESTART IDENTITY CASCADE;`,
   );
 }
