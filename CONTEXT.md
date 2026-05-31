@@ -227,9 +227,10 @@ boundary(H.parent)`) — they are not independently editable Components, and no 
 for them. A proxy's **origin** distinguishes the two halves of that union: **direct** (an
 external the *current* scope's Component connects to on its own parent Canvas) versus
 **inherited** (projected down from an ancestor). The distinction drives the **collapse/group**
-UX — inherited proxies fold away to keep deep Canvases uncluttered — and gates refinement: only
-a direct proxy is **routable** here (it carries the outer Connection a palette drag refines),
-because the cross-scope `routeFlow` writer binds an outer Edge incident to the current scope.
+UX — inherited proxies fold away into a single **boundary group** (see entry) to keep deep
+Canvases uncluttered — and gates refinement: only a direct proxy is **routable** here (it carries
+the outer Connection a palette drag refines), because the cross-scope `routeFlow` writer binds an
+outer Edge incident to the current scope.
 *(Realized now — derivation in **getCanvas** (`boundaryProxies`), read-only rendering as the
 `boundary-proxy` Canvas node with its **Flow palette**, and the refinement drag all landed with
 Slice 3 (#36 / ADR-0012, absorbing the M3 boundary work #13 + #14).)*
@@ -242,6 +243,23 @@ derives it from the Flow's owner and pins it against the supplied endpoints rath
 an input, so an arbitrary foreign Node can never be smuggled in as a cross-scope endpoint (the
 gated exception to ADR-0005; ADR-0012). The other endpoint — the interior Component on the
 current Canvas — is the *interior endpoint*.
+
+### Boundary group
+The single read-only Canvas node a **Canvas** renders in place of its inherited **boundary
+proxies** — bundled so a deep Canvas with many ancestors is not buried under N stand-ins for
+externals routed at scopes the viewer cannot act on here. Collapsed by default; expanding reveals
+each inherited proxy by title and **Component kind** but no **Flow palette** (inherited proxies
+are context, not a work surface — only **direct** proxies are routable at this scope; see
+**Boundary proxy** and ADR-0012). Like the proxies it contains, a Boundary group is **derived,
+never persisted**: it has no **Node** row, no **Edge**, no **Canvas scope** of its own — it is a
+render-layer regrouping of the `boundaryProxies` whose `origin = "inherited"`. Read-only in the
+same sense as a boundary proxy: not draggable, selectable, deletable, or descendable. The code
+term is **`BoundaryGroupNode`** (React Flow node type `"boundary-group"`), mirroring the
+**Component**/**Node** split — and distinct from React Flow's own built-in `"group"` node type (a
+parent-of-children layout primitive this is not). Renders even for a single inherited proxy, so a
+refetch flipping the inherited count never reshuffles the Canvas surface. *(Realized as the #14
+grouping follow-up on top of Slice 3's per-proxy rendering — same derivation
+(`deriveBoundaryProxies`), no service change.)*
 
 ### Project
 The root container of one architecture graph. Owned by a single user (`ownerId`) and addressed
