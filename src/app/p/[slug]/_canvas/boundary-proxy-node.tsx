@@ -34,10 +34,15 @@ export type BoundaryProxyNodeData = {
   // Canvas — routable here. "inherited": projected down from an ancestor —
   // context-only, collapsed by default to keep deep Canvases uncluttered (#14).
   origin: "direct" | "inherited";
-  // The outer Connection a palette drag refines; null for inherited proxies
-  // (not routable at this scope). Carried so the island can dispatch routeFlow
-  // without re-deriving it (Slice 3 / ADR-0012).
-  outerEdgeId: string | null;
+  // The outer Connection(s) a palette drag refines, split by the proxy owner's
+  // role so the island picks the one matching a Flow's polarity (Slice 4 /
+  // ADR-0013): an OUTBOUND Flow rides `ownerSourceEdgeId` (owner is source), an
+  // INBOUND Flow rides `ownerTargetEdgeId` (owner is target). Each null for
+  // inherited proxies or when no Connection of that orientation exists — a null
+  // on the polarity-matching side is the mismatch that triggers the
+  // reverse-Connection offer.
+  ownerSourceEdgeId: string | null;
+  ownerTargetEdgeId: string | null;
   flows: CanvasFlowPaletteItem[];
   hasMore: boolean;
 };
@@ -68,7 +73,13 @@ export type BoundaryProxyNode = Node<BoundaryProxyNodeData, "boundary-proxy">;
 export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
   const Icon = KIND_ICON[data.kind];
   const canEdit = useContext(CanEditContext);
-  const routable = data.origin === "direct" && data.outerEdgeId !== null;
+  // A direct proxy with any incident outer Connection is routable: when the
+  // polarity-matching orientation is missing, the drag still fires — the island
+  // offers the reverse Connection rather than blocking the gesture (Slice 4 /
+  // ADR-0013).
+  const routable =
+    data.origin === "direct" &&
+    (data.ownerSourceEdgeId !== null || data.ownerTargetEdgeId !== null);
   // Inherited proxies start collapsed (context, not a work surface); direct
   // proxies with a palette start open so the refinement gesture is discoverable.
   // The default is DERIVED from `data` so a proxy that first renders with no

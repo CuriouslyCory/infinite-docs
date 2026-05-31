@@ -95,9 +95,20 @@ function UnroutedFlowList({
       slug: endpoints.slug,
     });
 
+  // Polarity gates which endpoint's Flows this Connection can carry (Slice 4 /
+  // ADR-0013): the arrow is structural, so a source-endpoint Flow rides it only
+  // when OUTBOUND (owner emits, arrow points away), a target-endpoint Flow only
+  // when INBOUND (owner consumes, arrow points at it). Offering the others would
+  // dispatch a `routeFlow` the service rejects with POLARITY_MISMATCH — those
+  // Flows are routable on the reverse Connection instead, so we hide them here
+  // rather than surface a doomed pick.
   const routedSet = new Set(routedFlowIds);
-  const sourceUnrouted = sourceFlows.filter((f) => !routedSet.has(f.id));
-  const targetUnrouted = targetFlows.filter((f) => !routedSet.has(f.id));
+  const sourceUnrouted = sourceFlows.filter(
+    (f) => !routedSet.has(f.id) && f.polarity === "OUTBOUND",
+  );
+  const targetUnrouted = targetFlows.filter(
+    (f) => !routedSet.has(f.id) && f.polarity === "INBOUND",
+  );
 
   if (sourceUnrouted.length === 0 && targetUnrouted.length === 0) {
     return (

@@ -182,9 +182,13 @@ proxy is context-only, routed at the scope where the direct Connection lives.
 - **`pnpm check` cannot see into the raw boundary-derivation SQL** or the
   cross-scope writes; correctness rests on the `flow-route.service` tests against
   real Postgres (ADR-0003) — `pnpm test` is part of the Definition of Done.
-- **ADR-0013 remains reserved** for Slice 4 (polarity refinement of the
-  touches-endpoint invariant and the reverse-Connection reconciliation), which
-  tightens this slice's direction-blind write.
+- **ADR-0013 (Slice 4) discharges this slice's direction-blind write.**
+  [ADR-0013](0013-polarity-not-stored-direction.md) adds the polarity refinement
+  of the touches-endpoint invariant (`INBOUND ⇒ owner = target`, `OUTBOUND ⇒
+  owner = source`) and the reverse-Connection reconciliation, and replaces this
+  slice's single `outerEdgeId` proxy field with the orientation-split
+  `ownerSourceEdgeId` / `ownerTargetEdgeId` pair (see the boundary-derivation
+  note above — "polarity picks the right one in Slice 4" is now realized).
 - **Polarity is enforced at the UI layer, not in the service — a precondition on
   MCP exposure.** A boundary proxy's palette renders each Flow's refinement Port
   with the polarity-correct handle type (`target` for INBOUND, `source` for
@@ -193,7 +197,9 @@ proxy is context-only, routed at the scope where the direct Connection lives.
   non-UI caller (the MCP `route-flow` resource, deferred to #42), that handle-
   level guard is gone — the polarity check must move into the service (the
   ADR-0013 work) **before** that exposure lands, or an agent with the input
-  schema can write a wrong-polarity inner Edge.
+  schema can write a wrong-polarity inner Edge. *(Satisfied by
+  [ADR-0013](0013-polarity-not-stored-direction.md): the polarity invariant now
+  lives in `routeFlow`, so #42 inherits it.)*
 
 ## Reviewer checklist (cross-scope writer)
 

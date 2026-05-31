@@ -34,8 +34,17 @@ import {
  * 3. **Owner-only.** Project loaded from the Flow's `projectId`; authorized
  *    through `access.assertCanWrite` (ADR-0001). Never slug-granted (ADR-0002).
  * 4. **Flow's owner touches the outer Edge.** `flow.ownerNodeId` must equal
- *    `edge.sourceId` OR `edge.targetId` — the *weaker* form of the eventual
- *    polarity invariant (Slice 4 / ADR-0013). Direction-blind by design.
+ *    `edge.sourceId` OR `edge.targetId`. The precondition for the polarity
+ *    invariant below: "owner isn't even on this edge" is a distinct (and
+ *    non-discriminable) error from "owner is on the wrong end".
+ * 4b. **Polarity matches the structural arrow** (Slice 4 / ADR-0013). INBOUND ⇒
+ *    `flow.ownerNodeId === edge.targetId` (arrow points at the owner that
+ *    consumes); OUTBOUND ⇒ `flow.ownerNodeId === edge.sourceId` (arrow points
+ *    away from the owner that emits). A mismatch throws a discriminable
+ *    `ValidationError` (`details.reason = "POLARITY_MISMATCH"`) the canvas maps
+ *    to the reverse-Connection offer; the service is the backstop for non-UI
+ *    callers (MCP, #42). Reaffirms ADR-0009: bidirectional traffic is two
+ *    Connections, not a reversed arrow.
  * 5. **(cross-scope) The interior endpoint sits inside the outer Edge's other
  *    endpoint, and the boundary endpoint is the Flow's owner** — see
  *    `resolveInnerEdgeId`.
@@ -63,7 +72,7 @@ export async function routeFlow(
 
   const flow = await db.flow.findFirst({
     where: { id: flowId, deletedAt: null },
-    select: { id: true, projectId: true, ownerNodeId: true },
+    select: { id: true, projectId: true, ownerNodeId: true, polarity: true },
   });
   if (!flow) {
     throw new NotFoundError();
@@ -93,12 +102,33 @@ export async function routeFlow(
   }
   assertCanWrite(actor, project);
 
-  // Owner-touches-endpoint (Slice 2 invariant; the polarity refinement is
-  // Slice 4). Direction-blind on purpose so the canvas UI can detect a
-  // polarity mismatch and offer the reverse-Connection UX (Slice 4 / #37).
+  // Owner-touches-endpoint precondition: the polarity check below assumes the
+  // owner is on the Edge at all. "Not an endpoint" is a different (and
+  // non-discriminable) error from "the wrong endpoint".
   if (flow.ownerNodeId !== edge.sourceId && flow.ownerNodeId !== edge.targetId) {
     throw new ValidationError(
       "This Flow's owner is not an endpoint of the selected Connection.",
+    );
+  }
+
+  // Polarity invariant (Slice 4 / ADR-0013). The structural arrow cannot lie
+  // (ADR-0009), so a Flow may only ride a Connection oriented its way: an
+  // INBOUND Flow's owner consumes, so the arrow must point AT it (owner =
+  // target); an OUTBOUND Flow's owner emits, so the arrow points AWAY (owner =
+  // source). A mismatch is rejected with a discriminable error the canvas maps
+  // to the reverse-Connection offer; routing the other direction means a second
+  // Connection, never a reversed arrow.
+  const expectedOwnerRole = flow.polarity === "INBOUND" ? "target" : "source";
+  const ownerIsCorrectEnd =
+    flow.polarity === "INBOUND"
+      ? flow.ownerNodeId === edge.targetId
+      : flow.ownerNodeId === edge.sourceId;
+  if (!ownerIsCorrectEnd) {
+    throw new ValidationError(
+      flow.polarity === "INBOUND"
+        ? "This inbound Flow must ride a Connection that points at its owner. Add the reverse Connection to carry it."
+        : "This outbound Flow must ride a Connection that points away from its owner. Add the reverse Connection to carry it.",
+      { reason: "POLARITY_MISMATCH", expectedOwnerRole },
     );
   }
 

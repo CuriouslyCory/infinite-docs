@@ -153,9 +153,12 @@ export type CanvasInteriorNode = Prisma.NodeGetPayload<{
 // FlowRoutes) get a zero entry so the UI never has to defend against an
 // absent key.
 //
-// - `total` = active Flows whose owner is either endpoint of the Edge
-//   (LOOSE: no polarity filter; Slice 4 / ADR-0013 tightens to polarity-
-//   matched when the invariant is enforced at write time).
+// - `total` = active Flows whose owner is either endpoint of the Edge (LOOSE:
+//   no polarity filter). Slice 4 / ADR-0013 enforces polarity at WRITE time
+//   (`routeFlow`) and polarity-filters the interactive "+ flow" picker, but this
+//   read-side denominator stays loose; tightening it to the polarity-matched set
+//   travels with the routed/unrouted inspector display (Slice 5 / #38) so the
+//   count and the inspector list agree.
 // - `routed` = active FlowRoutes with this Edge as `outerEdgeId` and a live
 //   Flow.
 // - `unrouted` = `total - routed`.
@@ -186,15 +189,21 @@ export interface BoundaryProxyEntry {
   title: string;
   kind: PrismaNodeKind;
   origin: "direct" | "inherited";
-  // The Connection between the current scope's Component and this proxy on the
-  // scope's parent Canvas — the outer Edge a palette drag refines (Slice 3 /
-  // ADR-0012). Non-null only for `origin: "direct"` proxies: refinement routing
-  // binds an outer Edge incident to the current scope, which exists only when
-  // the scope connects to the proxy directly. Inherited proxies are
-  // context-only here; route them at the scope where the direct Connection
-  // lives. When two Connections join the pair (e.g. A→B and B→A), the
-  // lexically-first id is chosen — polarity picks the right one in Slice 4.
-  outerEdgeId: string | null;
+  // The outer Connection(s) between the current scope's Component and this proxy
+  // on the scope's parent Canvas — the Edge a palette drag refines (Slice 3 /
+  // ADR-0012), split by the proxy owner's role so the canvas can pick the one
+  // matching a Flow's polarity BEFORE dispatching (Slice 4 / ADR-0013). An
+  // OUTBOUND Flow (owner emits) rides the Edge where the owner is the source;
+  // an INBOUND Flow (owner consumes) rides the Edge where the owner is the
+  // target. Each is non-null only for `origin: "direct"` proxies (refinement
+  // binds an Edge incident to the current scope) AND only when a Connection of
+  // that orientation exists — a null `ownerSourceEdgeId` on an OUTBOUND drag is
+  // exactly the polarity mismatch that triggers the reverse-Connection offer.
+  // Both null = inherited or unconnected; route at the scope where the direct
+  // Connection lives. (When two Connections share an orientation, the
+  // lexically-first id is chosen.)
+  ownerSourceEdgeId: string | null;
+  ownerTargetEdgeId: string | null;
 }
 
 // One Flow as the boundary-proxy palette renders it (Slice 3 / ADR-0012). A
@@ -243,7 +252,8 @@ interface BoundaryProxyRow {
   title: string;
   kind: PrismaNodeKind;
   is_direct: boolean;
-  outer_edge_id: string | null;
+  owner_source_edge_id: string | null;
+  owner_target_edge_id: string | null;
   palette: FlowPaletteItem[];
 }
 
@@ -253,7 +263,8 @@ interface BoundaryProxyRow {
  * from `canvasNodeId` to the root; for each ancestor `a` it pulls the Edges on
  * `a`'s parent Canvas incident to `a` and takes the OTHER endpoint as a boundary
  * proxy. `is_direct` (depth 0) marks the scope's own externals — routable here,
- * carrying `outer_edge_id` — vs inherited ones (#14). Each proxy's palette is a
+ * carrying the orientation-split outer Edge ids — vs inherited ones (#14). Each
+ * proxy's palette is a
  * correlated `json_agg` of its first FLOW_PALETTE_PAGE_SIZE + 1 active Flows (+1
  * reveals `hasMore`). The root scope has no ancestors, so it has no proxies.
  *
@@ -292,7 +303,8 @@ async function deriveBoundaryProxies(
       proxy.title AS title,
       proxy.kind AS kind,
       BOOL_OR(a.depth = 0) AS is_direct,
-      MIN(CASE WHEN a.depth = 0 THEN e.id END) AS outer_edge_id,
+      MIN(CASE WHEN a.depth = 0 AND e."sourceId" = proxy.id THEN e.id END) AS owner_source_edge_id,
+      MIN(CASE WHEN a.depth = 0 AND e."targetId" = proxy.id THEN e.id END) AS owner_target_edge_id,
       (
         SELECT COALESCE(
           json_agg(
@@ -570,7 +582,8 @@ export async function getCanvas(
       title: row.title,
       kind: row.kind,
       origin: row.is_direct ? "direct" : "inherited",
-      outerEdgeId: row.outer_edge_id,
+      ownerSourceEdgeId: row.owner_source_edge_id,
+      ownerTargetEdgeId: row.owner_target_edge_id,
     });
     const items = row.palette ?? [];
     const hasMore = items.length > FLOW_PALETTE_PAGE_SIZE;
