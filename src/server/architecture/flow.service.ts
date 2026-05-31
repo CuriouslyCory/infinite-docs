@@ -4,7 +4,7 @@ import {
   type Flow,
   type FlowSpec,
   type FlowKind as PrismaFlowKind,
-  type FlowPolarity as PrismaFlowPolarity,
+  type FlowInteraction as PrismaFlowInteraction,
   type FlowSpecKind as PrismaFlowSpecKind,
 } from "../../../generated/prisma/client";
 import { assertCanRead, assertCanWrite } from "./access";
@@ -26,8 +26,8 @@ import {
   type AddFlowInput,
   type AttachFlowSpecInput,
   type DeleteFlowInput,
+  type FlowInteraction,
   type FlowKind,
-  type FlowPolarity,
   type FlowSpecKind,
   type GetFlowPaletteInput,
   type GetFlowsForNodeInput,
@@ -71,20 +71,30 @@ const _prismaFlowSpecKindIsZod: Record<PrismaFlowSpecKind, FlowSpecKind> = {
   GRAPHQL: "GRAPHQL",
   CUSTOM: "CUSTOM",
 };
-const _zodFlowPolarityIsPrisma: Record<FlowPolarity, PrismaFlowPolarity> = {
-  INBOUND: "INBOUND",
-  OUTBOUND: "OUTBOUND",
+const _zodFlowInteractionIsPrisma: Record<
+  FlowInteraction,
+  PrismaFlowInteraction
+> = {
+  REQUEST: "REQUEST",
+  PUSH: "PUSH",
+  SUBSCRIBE: "SUBSCRIBE",
+  DUPLEX: "DUPLEX",
 };
-const _prismaFlowPolarityIsZod: Record<PrismaFlowPolarity, FlowPolarity> = {
-  INBOUND: "INBOUND",
-  OUTBOUND: "OUTBOUND",
+const _prismaFlowInteractionIsZod: Record<
+  PrismaFlowInteraction,
+  FlowInteraction
+> = {
+  REQUEST: "REQUEST",
+  PUSH: "PUSH",
+  SUBSCRIBE: "SUBSCRIBE",
+  DUPLEX: "DUPLEX",
 };
 void _zodFlowKindIsPrisma;
 void _prismaFlowKindIsZod;
 void _zodFlowSpecKindIsPrisma;
 void _prismaFlowSpecKindIsZod;
-void _zodFlowPolarityIsPrisma;
-void _prismaFlowPolarityIsZod;
+void _zodFlowInteractionIsPrisma;
+void _prismaFlowInteractionIsZod;
 
 export interface AttachFlowSpecResult {
   flowSpec: FlowSpec;
@@ -251,7 +261,7 @@ async function reconcileDerivedFlows(
           kind: flow.kind,
           key: flow.key,
           title: flow.title,
-          polarity: flow.polarity,
+          interaction: flow.interaction,
           signature: flow.signature as never,
         },
       });
@@ -284,7 +294,8 @@ export async function addFlow(
   actor: Actor,
   input: AddFlowInput,
 ): Promise<Flow> {
-  const { ownerNodeId, kind, key, title, polarity } = addFlowInput.parse(input);
+  const { ownerNodeId, kind, key, title, interaction } =
+    addFlowInput.parse(input);
 
   const node = await db.node.findFirst({
     where: { id: ownerNodeId, deletedAt: null },
@@ -321,7 +332,7 @@ export async function addFlow(
         kind,
         key,
         title,
-        polarity,
+        interaction,
       },
     });
   } catch (error) {
@@ -337,19 +348,19 @@ export async function addFlow(
 }
 
 /**
- * Edits a Flow's `title` or `signature`. Spec-derived Flows
+ * Edits a Flow's `title`, `interaction`, or `signature`. Spec-derived Flows
  * (`sourceSpecId !== null`) reject — the spec is the source of truth; edit
- * the spec and re-paste to change derived Flows (ADR-0011). `key`, `kind`,
- * and `polarity` are not editable in this slice (memory: "prefer narrow
- * required inputs"); additive expansion as real needs surface. `title` is
- * UNTRUSTED (prompt-injection standing note). Owner-only.
+ * the spec and re-paste to change derived Flows (ADR-0011). `interaction` is
+ * editable (it drives the Flow's arrow direction; ADR-0023); `key`/`kind` stay
+ * non-editable (memory: "prefer narrow required inputs"). `title` is UNTRUSTED
+ * (prompt-injection standing note). Owner-only.
  */
 export async function updateFlow(
   db: Db,
   actor: Actor,
   input: UpdateFlowInput,
 ): Promise<Flow> {
-  const { id, title, signature } = updateFlowInput.parse(input);
+  const { id, title, interaction, signature } = updateFlowInput.parse(input);
 
   const flow = await db.flow.findFirst({ where: { id, deletedAt: null } });
   if (!flow) {
@@ -374,6 +385,7 @@ export async function updateFlow(
     where: { id: flow.id },
     data: {
       ...(title !== undefined ? { title } : {}),
+      ...(interaction !== undefined ? { interaction } : {}),
       ...(signature !== undefined ? { signature: signature as never } : {}),
     },
   });
@@ -517,7 +529,7 @@ export async function getFlowPalette(
       kind: true,
       key: true,
       title: true,
-      polarity: true,
+      interaction: true,
     },
   });
   const hasMore = rows.length > FLOW_PALETTE_PAGE_SIZE;

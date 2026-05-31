@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   type Edge,
   type FlowKind as PrismaFlowKind,
-  type FlowPolarity as PrismaFlowPolarity,
+  type FlowInteraction as PrismaFlowInteraction,
   type Node,
   type NodeKind as PrismaNodeKind,
   type Prisma,
@@ -252,16 +252,16 @@ export interface BoundaryProxyEntry {
 
 // One Flow as the boundary-proxy palette renders it (Slice 3 / ADR-0012). A
 // lean projection of `Flow` — the palette needs identity, render labels, and
-// the polarity that orients a drag, not the full `signature` Json. `getCanvas`
-// bundles the first `FLOW_PALETTE_PAGE_SIZE` per in-scope proxy; the rest page
-// in through `getFlowPalette`.
+// the interaction verb that drives its arrow direction, not the full
+// `signature` Json. `getCanvas` bundles the first `FLOW_PALETTE_PAGE_SIZE` per
+// in-scope proxy; the rest page in through `getFlowPalette`.
 export interface FlowPaletteItem {
   id: string;
   ownerNodeId: string;
   kind: PrismaFlowKind;
   key: string;
   title: string;
-  polarity: PrismaFlowPolarity;
+  interaction: PrismaFlowInteraction;
 }
 
 export interface FlowPalette {
@@ -358,7 +358,7 @@ async function deriveBoundaryProxies(
               'kind', pf.kind,
               'key', pf.key,
               'title', pf.title,
-              'polarity', pf.polarity
+              'interaction', pf.interaction
             )
             ORDER BY pf."createdAt"
           ),
@@ -366,7 +366,7 @@ async function deriveBoundaryProxies(
         )
         FROM (
           SELECT f.id, f."ownerNodeId", f.kind, f.key, f.title,
-                 f.polarity, f."createdAt"
+                 f.interaction, f."createdAt"
           FROM "Flow" f
           WHERE f."ownerNodeId" = proxy.id AND f."deletedAt" IS NULL
           ORDER BY f."createdAt" ASC
@@ -639,7 +639,7 @@ export async function getCanvas(
           kind: f.kind,
           key: f.key,
           title: f.title,
-          polarity: f.polarity,
+          interaction: f.interaction,
         }),
       ),
       hasMore,

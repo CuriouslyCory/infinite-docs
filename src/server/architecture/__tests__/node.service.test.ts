@@ -618,7 +618,7 @@ describe("updateNodeKind", () => {
       kind: "GENERIC",
       key: "f1",
       title: "F1",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
 
     await updateNodeKind(testDb, actor, { id: a.id, kind: "SERVICE" });
@@ -1500,14 +1500,14 @@ paths:
       kind: "GENERIC",
       key: "a-flow",
       title: "A-Flow",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
     const bFlow = await addFlow(testDb, actor, {
       ownerNodeId: b.id,
       kind: "GENERIC",
       key: "b-flow",
       title: "B-Flow",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
 
     await deleteNode(testDb, actor, { id: a.id });
@@ -1532,7 +1532,7 @@ paths:
       kind: "GENERIC",
       key: "manual",
       title: "Manual",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
 
     // Lone delete: soft-deletes with NO deletionId (ADR-0008).
@@ -1609,7 +1609,7 @@ paths:
       kind: "GENERIC",
       key: "collide",
       title: "Original",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
 
     // Mint a fake batch id and stamp Node + Flow as if they were swept
@@ -1638,7 +1638,7 @@ paths:
         kind: "GENERIC",
         key: "collide",
         title: "Conflicting",
-        polarity: "INBOUND",
+        interaction: "REQUEST",
       },
     });
 
@@ -1680,21 +1680,21 @@ describe("getCanvas — _count.flows aggregate (ADR-0011)", () => {
       kind: "GENERIC",
       key: "a1",
       title: "T",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
     await addFlow(testDb, actor, {
       ownerNodeId: a.id,
       kind: "GENERIC",
       key: "a2",
       title: "T",
-      polarity: "OUTBOUND",
+      interaction: "PUSH",
     });
     await addFlow(testDb, actor, {
       ownerNodeId: b.id,
       kind: "GENERIC",
       key: "b1",
       title: "T",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
     // Soft-delete one of A's: count must drop to 1.
     const soft = await addFlow(testDb, actor, {
@@ -1702,7 +1702,7 @@ describe("getCanvas — _count.flows aggregate (ADR-0011)", () => {
       kind: "GENERIC",
       key: "a3",
       title: "T",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
     await deleteFlow(testDb, actor, { id: soft.id });
 

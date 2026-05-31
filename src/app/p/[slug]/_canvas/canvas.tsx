@@ -867,16 +867,12 @@ function CanvasInner({
     [utils, projectId, canvasNodeId, setEdges, patchCanvas, slug],
   );
 
-  // Route a Flow from a boundary proxy's palette. Picks the outer Connection
-  // whose orientation matches the Flow's polarity (Slice 4 / ADR-0013): an
-  // INBOUND Flow rides the Edge pointing at its owner (`ownerTargetEdgeId`), an
-  // OUTBOUND Flow the Edge pointing away (`ownerSourceEdgeId`). When the
-  // matching orientation exists, route directly. When it does NOT — the
-  // polarity mismatch — the canvas does NOT dispatch `routeFlow`; it offers a
-  // one-click reverse Connection (the structural arrow cannot lie, so the other
-  // direction is a second Connection, never a reversed arrow — ADR-0009). On
-  // confirm, one batched gesture creates the reverse outer Edge (a strict
-  // same-Canvas write at the PARENT scope) then routes against it.
+  // Route a Flow from a boundary proxy's palette onto the Connection between
+  // this scope's Component and the proxy owner. A Connection is undirected, so
+  // ANY incident outer Edge carries the Flow regardless of its interaction verb
+  // — the verb decides which way the derived arrow points, not whether the route
+  // is legal (ADR-0023, retiring ADR-0013's polarity-matching + reverse-Connection
+  // offer). The service's touches-endpoint check is the backstop.
   const routeFromPalette = useCallback(
     async (params: {
       flowId: string;
@@ -895,93 +891,26 @@ function CanvasInner({
       }
       const data = utils.architecture.getCanvas.getData(canvasInput);
       const proxy = data?.boundaryProxies.find((p) => p.nodeId === proxyNodeId);
-      const polarity = data?.flowPalettes[proxyNodeId]?.flows.find(
-        (f) => f.id === flowId,
-      )?.polarity;
-      if (!proxy || !polarity) {
+      // Whichever incident outer Edge exists carries it (collapses to a single
+      // id once Slice 3 retires the orientation split).
+      const outerEdgeId = proxy
+        ? (proxy.ownerTargetEdgeId ?? proxy.ownerSourceEdgeId)
+        : null;
+      if (!outerEdgeId) {
         toast.error("That flow can’t be routed here.");
         return;
       }
 
-      const matchingEdgeId =
-        polarity === "INBOUND" ? proxy.ownerTargetEdgeId : proxy.ownerSourceEdgeId;
-      if (matchingEdgeId) {
-        await runOptimisticInnerRoute(source, target, () =>
-          routeFlow({
-            flowId,
-            outerEdgeId: matchingEdgeId,
-            sourceNodeId: source,
-            targetNodeId: target,
-          }),
-        );
-        return;
-      }
-
-      // Polarity mismatch: no Connection oriented for this Flow exists. The
-      // reverse outer Edge lives on the PARENT Canvas (one scope up), between
-      // this scope's Component and the proxy owner — a strict same-Canvas write
-      // for `connectNodes` (both endpoints sit on the parent Canvas because the
-      // proxy is direct). The parent scope is the breadcrumb before the current.
-      const breadcrumbs = data?.breadcrumbs ?? [];
-      const parentScopeId = breadcrumbs[breadcrumbs.length - 2]?.id ?? null;
-      const scopeTitle =
-        breadcrumbs[breadcrumbs.length - 1]?.title ?? "this component";
-      const ownerTitle = proxy.title;
-      const reverse =
-        polarity === "OUTBOUND"
-          ? { sourceId: proxyNodeId, targetId: canvasNodeId, label: `${ownerTitle} → ${scopeTitle}` }
-          : { sourceId: canvasNodeId, targetId: proxyNodeId, label: `${scopeTitle} → ${ownerTitle}` };
-
-      toast(`Add the ${reverse.label} Connection?`, {
-        description: `This ${
-          polarity === "OUTBOUND" ? "outbound" : "inbound"
-        } flow can only ride a Connection that carries it that way.`,
-        action: {
-          label: "Add it",
-          onClick: () =>
-            void runOptimisticInnerRoute(source, target, async () => {
-              const created = await connectNodes.mutateAsync({
-                projectId,
-                canvasNodeId: parentScopeId,
-                sourceId: reverse.sourceId,
-                targetId: reverse.targetId,
-              });
-              // The reverse Connection now exists, so record its id on the
-              // proxy's matching orientation. Without this the cache keeps the
-              // null that triggered the offer, and the next same-polarity drag
-              // re-offers and then collides on the duplicate Connection. The
-              // patch lives here (not in runOptimisticInnerRoute's rollback)
-              // because the Edge persists even if the routeFlow below fails —
-              // ADR-0013's accepted live-but-routeless reverse Connection.
-              patchCanvas((c) => ({
-                boundaryProxies: c.boundaryProxies.map((p) =>
-                  p.nodeId !== proxyNodeId
-                    ? p
-                    : polarity === "OUTBOUND"
-                      ? { ...p, ownerSourceEdgeId: created.id }
-                      : { ...p, ownerTargetEdgeId: created.id },
-                ),
-              }));
-              return routeFlow({
-                flowId,
-                outerEdgeId: created.id,
-                sourceNodeId: source,
-                targetNodeId: target,
-              });
-            }),
-        },
-      });
+      await runOptimisticInnerRoute(source, target, () =>
+        routeFlow({
+          flowId,
+          outerEdgeId,
+          sourceNodeId: source,
+          targetNodeId: target,
+        }),
+      );
     },
-    [
-      canvasNodeId,
-      utils,
-      canvasInput,
-      runOptimisticInnerRoute,
-      patchCanvas,
-      routeFlow,
-      connectNodes,
-      projectId,
-    ],
+    [canvasNodeId, utils, canvasInput, runOptimisticInnerRoute, routeFlow],
   );
 
   // Draw a Connection. Refuses a still-optimistic (temp_) endpoint (no real id

@@ -4,6 +4,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useContext, useState } from "react";
 
+import { FLOW_INTERACTION_DISPLAY } from "~/lib/flow-interaction-display";
 import { type NodeKind } from "~/lib/schemas";
 import { type CanvasFlowPaletteItem } from "~/lib/types";
 
@@ -138,21 +139,24 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
       {expanded && data.flows.length > 0 && (
         <ul className="flex flex-col gap-1 pt-1">
           {data.flows.map((flow) => {
-            const inbound = flow.polarity === "INBOUND";
+            // "Points at owner" (owner consumes) drags a child's output INTO
+            // the proxy (a target handle); PUSH (owner emits) drags onto a
+            // child's input (a source handle). DUPLEX points both ways — under
+            // the still-strict refinement handle it takes the consume side.
+            // (The handle type stops mattering once Slice 4 switches the canvas
+            // to Loose mode; ADR-0023.)
+            const ownerConsumes = flow.interaction !== "PUSH";
+            const display = FLOW_INTERACTION_DISPLAY[flow.interaction];
             return (
               <li
                 key={flow.id}
                 className="relative flex items-center gap-2 rounded bg-white/5 px-2 py-1"
               >
                 <span
-                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${
-                    inbound
-                      ? "bg-emerald-500/20 text-emerald-300"
-                      : "bg-amber-500/20 text-amber-300"
-                  }`}
-                  title={`${flow.polarity} ${flow.kind}`}
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${display.tone}`}
+                  title={`${display.label} ${flow.kind}`}
                 >
-                  {inbound ? "in" : "out"}
+                  {display.short}
                 </span>
                 <div className="flex min-w-0 flex-col">
                   <span className="truncate text-xs">{flow.title}</span>
@@ -167,11 +171,11 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
                     input (source). The id encodes the Flow for `onConnect`. */}
                 {routable && canEdit && (
                   <Handle
-                    type={inbound ? "target" : "source"}
-                    position={inbound ? Position.Right : Position.Left}
+                    type={ownerConsumes ? "target" : "source"}
+                    position={ownerConsumes ? Position.Right : Position.Left}
                     id={flowHandleId(flow.id)}
                     title={
-                      inbound
+                      ownerConsumes
                         ? "Drag a Component's output here to route this flow"
                         : "Drag onto a Component's input to route this flow"
                     }

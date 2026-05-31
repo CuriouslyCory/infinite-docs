@@ -182,13 +182,20 @@ enum FlowSpecKind {
     CUSTOM
 }
 
-// A Flow's direction relative to its owner Component (CONTEXT.md "Polarity";
-// ADR-0009 reaffirmed). INBOUND = owner consumes (e.g. GET /pets on an API);
-// OUTBOUND = owner emits (SSE, events). The Edge keeps no stored direction —
-// polarity selects which Edge a Flow rides at routing time (a later slice).
-enum FlowPolarity {
-    INBOUND
-    OUTBOUND
+// How a Flow's owner Component participates in the interaction (CONTEXT.md
+// "Interaction"; ADR-0023). The owner-relative encoder from which a Connection's
+// arrowheads are DERIVED — never a stored direction on the Edge:
+//   REQUEST   — owner is called in request/response (REST, RPC) → arrow at owner
+//   PUSH      — owner emits unprompted (SSE, webhook out, event) → arrow away
+//   SUBSCRIBE — owner consumes an external stream/feed → arrow at owner
+//   DUPLEX    — owner both sends and receives (WebSocket) → arrows both ends
+// Replaces the former binary FlowPolarity (INBOUND→REQUEST, OUTBOUND→PUSH);
+// see ADR-0023, which supersedes ADR-0009/0013.
+enum FlowInteraction {
+    REQUEST
+    PUSH
+    SUBSCRIBE
+    DUPLEX
 }
 
 // The data-model representation of a Component (see CONTEXT.md "Component / Node
@@ -349,7 +356,7 @@ model Flow {
     kind         FlowKind     @default(GENERIC)
     key          String
     title        String
-    polarity     FlowPolarity
+    interaction  FlowInteraction
     signature    Json?
     createdAt    DateTime     @default(now())
     updatedAt    DateTime     @updatedAt

@@ -2,7 +2,8 @@
 
 import { Suspense, useContext, useEffect } from "react";
 
-import { type FlowKind, type FlowPolarity } from "~/lib/schemas";
+import { FLOW_INTERACTION_DISPLAY } from "~/lib/flow-interaction-display";
+import { type FlowInteraction, type FlowKind } from "~/lib/schemas";
 import { api } from "~/trpc/react";
 
 import {
@@ -95,20 +96,13 @@ function UnroutedFlowList({
       slug: endpoints.slug,
     });
 
-  // Polarity gates which endpoint's Flows this Connection can carry (Slice 4 /
-  // ADR-0013): the arrow is structural, so a source-endpoint Flow rides it only
-  // when OUTBOUND (owner emits, arrow points away), a target-endpoint Flow only
-  // when INBOUND (owner consumes, arrow points at it). Offering the others would
-  // dispatch a `routeFlow` the service rejects with POLARITY_MISMATCH — those
-  // Flows are routable on the reverse Connection instead, so we hide them here
-  // rather than surface a doomed pick.
+  // Every unrouted Flow from either endpoint is offered — a Connection is
+  // undirected and carries Flows in either direction; the Flow's interaction
+  // verb decides which way its arrow points, not whether it can ride here
+  // (ADR-0023, retiring the former polarity gate and reverse-Connection offer).
   const routedSet = new Set(routedFlowIds);
-  const sourceUnrouted = sourceFlows.filter(
-    (f) => !routedSet.has(f.id) && f.polarity === "OUTBOUND",
-  );
-  const targetUnrouted = targetFlows.filter(
-    (f) => !routedSet.has(f.id) && f.polarity === "INBOUND",
-  );
+  const sourceUnrouted = sourceFlows.filter((f) => !routedSet.has(f.id));
+  const targetUnrouted = targetFlows.filter((f) => !routedSet.has(f.id));
 
   if (sourceUnrouted.length === 0 && targetUnrouted.length === 0) {
     return (
@@ -154,7 +148,7 @@ function FlowGroup({
     id: string;
     key: string;
     title: string;
-    polarity: FlowPolarity;
+    interaction: FlowInteraction;
     kind: FlowKind;
   }[];
   onPick: (flowId: string, kind: FlowKind) => void;
@@ -173,14 +167,10 @@ function FlowGroup({
               onClick={() => onPick(flow.id, flow.kind)}
             >
               <span
-                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${
-                  flow.polarity === "INBOUND"
-                    ? "bg-emerald-500/20 text-emerald-300"
-                    : "bg-sky-500/20 text-sky-300"
-                }`}
-                title={`${flow.polarity} ${flow.kind}`}
+                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${FLOW_INTERACTION_DISPLAY[flow.interaction].tone}`}
+                title={`${FLOW_INTERACTION_DISPLAY[flow.interaction].label} ${flow.kind}`}
               >
-                {flow.polarity === "INBOUND" ? "IN" : "OUT"}
+                {FLOW_INTERACTION_DISPLAY[flow.interaction].short}
               </span>
               <div className="flex min-w-0 flex-col">
                 <span className="truncate text-sm">{flow.title}</span>

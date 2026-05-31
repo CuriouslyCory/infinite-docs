@@ -331,13 +331,26 @@ export const flowSpecKind = z.enum([
 export type FlowSpecKind = z.infer<typeof flowSpecKind>;
 
 /**
- * A Flow's directional relationship to its owner Component. INBOUND = owner
- * consumes; OUTBOUND = owner emits. The owner-relative encoder that lets
- * bidirectional pipes resolve to two Connections without a stored direction
- * field on the Edge (ADR-0009 reaffirmed; see CONTEXT.md "Polarity").
+ * How a Flow's owner Component participates in the interaction — the
+ * owner-relative encoder from which a Connection's arrowheads are DERIVED
+ * (never a stored direction on the Edge; ADR-0023, superseding ADR-0009/0013):
+ *
+ *   REQUEST   — owner is called in request/response (REST, RPC) → arrow at owner
+ *   PUSH      — owner emits unprompted (SSE, webhook out, event) → arrow away
+ *   SUBSCRIBE — owner consumes an external stream/feed → arrow at owner
+ *   DUPLEX    — owner both sends and receives (WebSocket) → arrows both ends
+ *
+ * Client-safe source of truth for the value set; the Prisma `FlowInteraction`
+ * enum mirrors it, kept in lockstep by a compile-time parity guard. The arrow
+ * rule itself lives in `~/lib/flow-direction`. See CONTEXT.md "Interaction".
  */
-export const flowPolarity = z.enum(["INBOUND", "OUTBOUND"]);
-export type FlowPolarity = z.infer<typeof flowPolarity>;
+export const flowInteraction = z.enum([
+  "REQUEST",
+  "PUSH",
+  "SUBSCRIBE",
+  "DUPLEX",
+]);
+export type FlowInteraction = z.infer<typeof flowInteraction>;
 
 // The bounded-loader hard cap on `FlowSpec.source` size — pasted spec bytes.
 // Enforced at the Zod boundary AND re-enforced inside the parser (belt +
@@ -383,22 +396,24 @@ export const addFlowInput = z.object({
   kind: flowKind.default("GENERIC"),
   key: z.string().min(1).max(200),
   title: z.string().min(1).max(200),
-  polarity: flowPolarity,
+  interaction: flowInteraction,
 });
 export type AddFlowInput = z.input<typeof addFlowInput>;
 
 /**
- * Input for editing a Flow's `title` (the displayable label) or `signature`
- * (the structured payload). Addressed by Flow `id`; the service authorizes
- * against the Project owner. Spec-derived Flows (`sourceSpecId != null`)
- * REJECT edits — the spec is the source of truth (re-paste the spec to
- * change them). `key`/`kind`/`polarity` are NOT editable in this slice
- * (memory: "prefer narrow required inputs"); add additively when a real need
- * surfaces. `title` is UNTRUSTED.
+ * Input for editing a Flow's `title` (the displayable label), `interaction`
+ * (the verb that drives its arrow direction), or `signature` (the structured
+ * payload). Addressed by Flow `id`; the service authorizes against the Project
+ * owner. Spec-derived Flows (`sourceSpecId != null`) REJECT edits — the spec is
+ * the source of truth (re-paste the spec to change them). `interaction` is
+ * editable so an owner can correct a parser default or refine a hand-authored
+ * Flow (e.g. mark a channel DUPLEX); `key`/`kind` stay non-editable until a real
+ * need surfaces (memory: "prefer narrow required inputs"). `title` is UNTRUSTED.
  */
 export const updateFlowInput = z.object({
   id: z.string().min(1),
   title: z.string().min(1).max(200).optional(),
+  interaction: flowInteraction.optional(),
   signature: z.unknown().optional(),
 });
 export type UpdateFlowInput = z.infer<typeof updateFlowInput>;

@@ -98,7 +98,7 @@ describe("attachFlowSpec", () => {
       "POST /pets",
     ]);
     for (const flow of flows) {
-      expect(flow.polarity).toBe("INBOUND");
+      expect(flow.interaction).toBe("REQUEST");
       expect(flow.kind).toBe("OPENAPI_OPERATION");
       expect(flow.sourceSpecId).toBe(result.flowSpec.id);
     }
@@ -295,12 +295,12 @@ describe("addFlow", () => {
       kind: "SSE_STREAM",
       key: "channel:ticks",
       title: "Tick stream",
-      polarity: "OUTBOUND",
+      interaction: "PUSH",
     });
 
     expect(flow.sourceSpecId).toBeNull();
     expect(flow.key).toBe("channel:ticks");
-    expect(flow.polarity).toBe("OUTBOUND");
+    expect(flow.interaction).toBe("PUSH");
     expect(flow.kind).toBe("SSE_STREAM");
   });
 
@@ -312,7 +312,7 @@ describe("addFlow", () => {
       kind: "SSE_STREAM",
       key: "channel:ticks",
       title: "Tick stream",
-      polarity: "OUTBOUND",
+      interaction: "PUSH",
     });
 
     const error = await addFlow(testDb, actor, {
@@ -320,7 +320,7 @@ describe("addFlow", () => {
       kind: "SSE_STREAM",
       key: "channel:ticks",
       title: "Tick stream redux",
-      polarity: "OUTBOUND",
+      interaction: "PUSH",
     }).then(
       () => null,
       (e: unknown) => e,
@@ -341,7 +341,7 @@ describe("addFlow", () => {
         kind: "GENERIC",
         key: "duplicated-key",
         title: "T",
-        polarity: "INBOUND",
+        interaction: "REQUEST",
       });
 
     const results = await Promise.allSettled([draw(), draw()]);
@@ -373,7 +373,7 @@ describe("addFlow", () => {
         kind: "GENERIC",
         key: "shared-key",
         title: "T",
-        polarity: "INBOUND",
+        interaction: "REQUEST",
       },
     });
 
@@ -385,7 +385,7 @@ describe("addFlow", () => {
           kind: "GENERIC",
           key: "shared-key",
           title: "T2",
-          polarity: "INBOUND",
+          interaction: "REQUEST",
         },
       })
       .then(
@@ -417,7 +417,7 @@ describe("addFlow", () => {
         kind: "GENERIC",
         key: "x",
         title: "y",
-        polarity: "INBOUND",
+        interaction: "REQUEST",
       }),
     ).rejects.toBeInstanceOf(ForbiddenError);
   });
@@ -431,7 +431,7 @@ describe("updateFlow", () => {
       kind: "GENERIC",
       key: "a",
       title: "Old title",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
 
     const updated = await updateFlow(testDb, actor, {
@@ -472,7 +472,7 @@ describe("updateFlow", () => {
       kind: "GENERIC",
       key: "a",
       title: "Old title",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
     const intruder = await makeUser("Intruder");
     const intruderActor: Actor = { userId: intruder.id, via: "session" };
@@ -494,7 +494,7 @@ describe("deleteFlow", () => {
       kind: "GENERIC",
       key: "a",
       title: "T",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
 
     await deleteFlow(testDb, actor, { id: flow.id });
@@ -511,7 +511,7 @@ describe("deleteFlow", () => {
       kind: "GENERIC",
       key: "a",
       title: "T",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
     const intruder = await makeUser("Intruder");
     const intruderActor: Actor = { userId: intruder.id, via: "session" };
@@ -533,14 +533,14 @@ describe("getFlowsForNode", () => {
       kind: "GENERIC",
       key: "a",
       title: "Alpha",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
     await addFlow(testDb, actor, {
       ownerNodeId: node.id,
       kind: "GENERIC",
       key: "b",
       title: "Beta",
-      polarity: "OUTBOUND",
+      interaction: "PUSH",
     });
 
     const flows = await getFlowsForNode(testDb, null, {
@@ -579,7 +579,7 @@ describe("getFlowPalette", () => {
       kind: "GENERIC",
       key: "a",
       title: "Alpha",
-      polarity: "INBOUND",
+      interaction: "REQUEST",
     });
 
     // null actor === anonymous capability viewer; the slug is the read grant.
