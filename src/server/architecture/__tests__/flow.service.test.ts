@@ -12,6 +12,7 @@ import {
   addFlow,
   attachFlowSpec,
   deleteFlow,
+  getFlowPalette,
   getFlowsForNode,
   updateFlow,
 } from "../flow.service";
@@ -460,6 +461,29 @@ describe("updateFlow", () => {
     });
     expect(after.title).toBe(derived.title);
   });
+
+  it("rejects a non-owner editing a Flow (and leaves it unchanged)", async () => {
+    // A user-authored Flow, so the rejection is unambiguously the authz gate —
+    // assertCanWrite runs BEFORE the spec-derived ValidationError, and a
+    // derived Flow would muddy which check fired.
+    const { actor, node } = await seedComponent();
+    const flow = await addFlow(testDb, actor, {
+      ownerNodeId: node.id,
+      kind: "GENERIC",
+      key: "a",
+      title: "Old title",
+      polarity: "INBOUND",
+    });
+    const intruder = await makeUser("Intruder");
+    const intruderActor: Actor = { userId: intruder.id, via: "session" };
+
+    await expect(
+      updateFlow(testDb, intruderActor, { id: flow.id, title: "Hijacked" }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    const after = await testDb.flow.findUniqueOrThrow({ where: { id: flow.id } });
+    expect(after.title).toBe("Old title");
+  });
 });
 
 describe("deleteFlow", () => {
@@ -478,6 +502,26 @@ describe("deleteFlow", () => {
     const fresh = await testDb.flow.findUniqueOrThrow({ where: { id: flow.id } });
     expect(fresh.deletedAt).not.toBeNull();
     expect(fresh.deletionId).toBeNull();
+  });
+
+  it("rejects a non-owner deleting a Flow (and leaves it active)", async () => {
+    const { actor, node } = await seedComponent();
+    const flow = await addFlow(testDb, actor, {
+      ownerNodeId: node.id,
+      kind: "GENERIC",
+      key: "a",
+      title: "T",
+      polarity: "INBOUND",
+    });
+    const intruder = await makeUser("Intruder");
+    const intruderActor: Actor = { userId: intruder.id, via: "session" };
+
+    await expect(
+      deleteFlow(testDb, intruderActor, { id: flow.id }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    const after = await testDb.flow.findUniqueOrThrow({ where: { id: flow.id } });
+    expect(after.deletedAt).toBeNull();
   });
 });
 
@@ -524,5 +568,38 @@ describe("getFlowsForNode", () => {
       slug: projectA.slug,
     });
     expect(ok).toEqual([]);
+  });
+});
+
+describe("getFlowPalette", () => {
+  it("pages a Component's Flows slug-readable without a session (capability read)", async () => {
+    const { actor, node, project } = await seedComponent();
+    await addFlow(testDb, actor, {
+      ownerNodeId: node.id,
+      kind: "GENERIC",
+      key: "a",
+      title: "Alpha",
+      polarity: "INBOUND",
+    });
+
+    // null actor === anonymous capability viewer; the slug is the read grant.
+    const page = await getFlowPalette(testDb, null, {
+      ownerNodeId: node.id,
+      slug: project.slug,
+    });
+    expect(page.flows.map((f) => f.title)).toEqual(["Alpha"]);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("rejects when the owner Component does not belong to the slugged project", async () => {
+    const { node: nodeA } = await seedComponent("A");
+    const { project: projectB } = await seedComponent("B");
+
+    await expect(
+      getFlowPalette(testDb, null, {
+        ownerNodeId: nodeA.id,
+        slug: projectB.slug,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 });

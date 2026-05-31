@@ -61,15 +61,21 @@ function lossyMarkdownDelta(pasted: string, serialized: string): boolean {
  *
  * Mounted with `key={ownerNodeId}` by the caller so selecting a different
  * Component remounts with fresh content rather than re-seeding mid-edit.
+ *
+ * `readOnly` is the capability-viewer mode (#16): the editor is locked to the
+ * rendered view — no Edit toggle, no empty-state CTA — so a non-owner reads the
+ * docs but can never enter edit mode or commit. `onCommit` is then absent.
  */
 export function ComponentDocsEditor({
   ownerNodeId,
   initialDocumentation,
   onCommit,
+  readOnly = false,
 }: {
   ownerNodeId: string;
   initialDocumentation: string;
-  onCommit: (id: string, documentation: string) => void;
+  onCommit?: (id: string, documentation: string) => void;
+  readOnly?: boolean;
 }) {
   const [mode, setMode] = useState<"view" | "edit">("view");
   // Drives the empty-state hint without re-serializing on every render;
@@ -120,7 +126,7 @@ export function ComponentDocsEditor({
       if (markdown === lastSavedRef.current) return;
       lastSavedRef.current = markdown;
       setSavedDoc(markdown);
-      onCommit(ownerNodeId, markdown);
+      onCommit?.(ownerNodeId, markdown);
     } catch (error) {
       console.error("Failed to serialize documentation:", error);
       // dirtyRef stays true so the next save attempt retries this edit.
@@ -274,7 +280,7 @@ export function ComponentDocsEditor({
         <h3 className="text-xs font-semibold tracking-wide text-white/60 uppercase">
           Documentation
         </h3>
-        {mode === "view" ? (
+        {readOnly ? null : mode === "view" ? (
           <button
             type="button"
             className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-white/60 transition hover:bg-white/10 hover:text-white"
@@ -295,13 +301,17 @@ export function ComponentDocsEditor({
       </div>
 
       {mode === "view" && isEmpty ? (
-        <button
-          type="button"
-          onClick={enterEdit}
-          className="rounded border border-dashed border-white/15 px-3 py-4 text-left text-xs text-white/40 transition hover:border-white/30 hover:text-white/60"
-        >
-          No documentation yet — click Edit to describe this Component.
-        </button>
+        readOnly ? (
+          <p className="px-1 py-4 text-xs text-white/40">No documentation.</p>
+        ) : (
+          <button
+            type="button"
+            onClick={enterEdit}
+            className="rounded border border-dashed border-white/15 px-3 py-4 text-left text-xs text-white/40 transition hover:border-white/30 hover:text-white/60"
+          >
+            No documentation yet — click Edit to describe this Component.
+          </button>
+        )
       ) : (
         <Plate
           editor={editor}

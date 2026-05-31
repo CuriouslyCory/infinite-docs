@@ -32,7 +32,6 @@ export default function setup(): void {
     });
   } catch (error: unknown) {
     const err = error as { stdout?: string; stderr?: string; message?: string };
-    // eslint-disable-next-line no-console -- surface migrate failures in CI/CI logs
     console.error("[global-setup] migrate deploy failed:", {
       message: err.message,
       stdout: err.stdout,

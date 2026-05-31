@@ -321,7 +321,7 @@ in: the **Component-detail panel** (no editable record exists), **Descent** (no 
 every interactive pointer handler by a single discriminator (`isPassiveNode` in `canvas.tsx`)
 so a new passive kind composes by extension rather than by sprinkling fresh guards through the
 click / double-click / hover paths (ADR-0016). The term is **passive** — not "read-only" (which
-is overloaded with the capability-URL viewer surface, owner-edit vs visitor-read) and not
+is overloaded with the capability-URL viewer surface, owner-edit vs viewer-read) and not
 "non-interactive" (which over-claims — passive nodes still expand and collapse their own
 internals; they are inert *with respect to the Canvas's interactive surfaces*, not globally
 inert).
@@ -335,7 +335,12 @@ that descends from it. Soft-deletable (`deletedAt`). The first concrete model in
 An unguessable, per-Project URL segment (`slug @unique`) that, by mere possession, grants
 **read** access to that Project — no sign-in required. It is a bearer capability: the link *is*
 the permission. **Mutations are never granted by the slug**; writes require the signed-in owner.
-Anyone with the link can read; only the owner can change. *(See ADR-0002.)*
+Anyone with the link can read; only the owner can change. A non-owner who holds the slug is a
+**viewer** — the canonical term for this person in prose, code (`canEdit = false`), and UI ("View
+only"); never "visitor" or "guest". The web client presents a **read-only mode** to a viewer
+(every edit affordance hidden, a read-only **Component-detail panel**, a "View only" header
+badge), but that mode is *presentation, not authorization*: every mutation is still denied at the
+service layer regardless of what the client renders (issue #16). *(See ADR-0002.)*
 
 ### Project route
 The web address at which a Project opens — its **capability-URL slug** as a path segment —
@@ -454,6 +459,19 @@ a discriminable error and the canvas offers the **reverse Connection** instead (
 records the original decision; ADR-0013 records the enforcement and the reverse-Connection
 reconciliation.)*
 
+### Component-detail panel
+The slide-in surface that opens when a **Component** is selected on the **Canvas** — a sidebar,
+not a modal, so panning and zooming continue behind it (performance). It hosts the Component's
+**kind** row, its **FlowSpec** paste field, its **Flow palette**, and the markdown
+**documentation** editor (ADR-0015). **Dual-audience:** the owner sees the full edit surface; a
+**viewer** (a non-owner holding the capability slug) sees the *same panel read-only* — rendered
+documentation (Plate `readOnly`) and the read-only Flow palette, with no kind picker, no paste
+field, and no docs Edit toggle. The read-only affordances are *omitted, not disabled*, so the
+viewer panel never signals an edit it cannot perform; read-only mode is presentation only — writes
+remain owner-only at the service layer (ADR-0002). The word is **Component-detail panel** — never
+"inspector", "sidebar" (names the layout, not the surface), or "properties panel". *(Realized now;
+the read-only viewer variant landed with issue #16. See ADR-0002, ADR-0011, ADR-0015.)*
+
 ### Flow palette
 The read-only UX surface listing a **Component**'s **Flows**. Surfaces on the
 **Component-detail panel** that opens when the owner selects a Component on the **Canvas** —
@@ -461,8 +479,9 @@ alongside the paste field for its **FlowSpec** — and inside the **"+ flow"** p
 opens when the owner selects a **Connection** (so the unrouted Flows on either endpoint are
 pickable in place). Each item shows the Flow's `title`, `kind`, and `polarity`. When the
 Component owns at least one Flow, its node body wears a **"N flows" pill** to signal the
-palette is non-empty. *(Realized now on the Component-detail panel of a Component you own,
-inside the per-Connection "+ flow" popover, and — since Slice 3 (#36) — on the **boundary
+palette is non-empty. *(Realized now on the Component-detail panel of a Component (editable for
+the owner, read-only for a **viewer** — issue #16), inside the per-Connection "+ flow" popover,
+and — since Slice 3 (#36) — on the **boundary
 proxy**: the same surface projected inward, where each item carries a refinement Port so a
 child Component can route the external Flow onto its interior pipe (ADR-0012). The first page
 ships in **getCanvas** `flowPalettes`; the overflow pages in via `getFlowPalette`.)*
