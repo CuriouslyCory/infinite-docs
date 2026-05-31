@@ -37,6 +37,7 @@ import {
   routeFlow,
   unrouteFlow,
 } from "~/server/architecture/flow-route.service";
+import { exportMarkdown } from "~/server/architecture/export.service";
 import {
   addFlowInput,
   attachFlowSpecInput,
@@ -46,6 +47,7 @@ import {
   deleteEdgeInput,
   deleteFlowInput,
   deleteNodeInput,
+  exportMarkdownInput,
   getCanvasInput,
   getFlowPaletteInput,
   getFlowsForNodeInput,
@@ -127,6 +129,22 @@ export const architectureRouter = createTRPCRouter({
         : null;
       try {
         return await getCanvas(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Public: deterministic markdown export of a Project or one of its
+  // subtrees. Slug is the read capability (ADR-0002) — same posture as
+  // `getCanvas`. See ADR-0017 (determinism contract) and #15.
+  exportMarkdown: publicProcedure
+    .input(exportMarkdownInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor | null = ctx.session?.user
+        ? { userId: ctx.session.user.id, via: "session" }
+        : null;
+      try {
+        return await exportMarkdown(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

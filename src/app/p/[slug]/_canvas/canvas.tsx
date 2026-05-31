@@ -33,6 +33,7 @@ import {
 import { api } from "~/trpc/react";
 
 import { AddComponent } from "./add-component";
+import { CopyMarkdownToolbar } from "./copy-markdown";
 import {
   BoundaryGroupNodeView,
   type BoundaryGroupNode,
@@ -1483,14 +1484,19 @@ function CanvasInner({
                 >
                   <Background />
                   <Controls />
-                  {canEdit && (
-                    <Panel position="top-left">
+                  <Panel position="top-left" className="flex gap-2">
+                    {canEdit && (
                       <AddComponent
                         onAdd={addComponent}
                         pending={createNode.isPending}
                       />
-                    </Panel>
-                  )}
+                    )}
+                    {/* Slug-readable: visible to any viewer, not gated on
+                        edit. Always exports the whole project (ADR-0017 /
+                        #15) — the scope-specific export lives on the
+                        breadcrumb bar. */}
+                    <CopyMarkdownToolbar slug={slug} />
+                  </Panel>
                   {canEdit && selectedNodeId !== null && (
                     <Panel
                       position="top-right"

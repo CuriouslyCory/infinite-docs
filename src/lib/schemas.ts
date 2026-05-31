@@ -455,3 +455,27 @@ export const getRoutedFlowIdsForEdgeInput = z.object({
 export type GetRoutedFlowIdsForEdgeInput = z.infer<
   typeof getRoutedFlowIdsForEdgeInput
 >;
+
+/**
+ * Input for deterministic markdown export (M2 / #15). Addressed by the
+ * capability `slug` (the read grant, ADR-0002), so it works without a session —
+ * the same posture `getCanvas` uses. `canvasNodeId` selects what to export:
+ * `null` = the whole Project (no Boundary section — the root has no
+ * ancestors); a Node id = the subtree rooted at that Component (Boundary
+ * section enumerates the externals incident to the subtree root on its parent
+ * Canvas, so the export is self-describing). `mode` picks the rendering:
+ * `"full"` includes authored Component documentation (heading-shifted via AST,
+ * never regex; ADR-0017); `"index"` omits doc bodies and renders a cheap
+ * structural map (titles, kinds, anchors, per-Component Connection counts) for
+ * navigation / agent indexing. Both modes are byte-stable across runs and
+ * locales (the determinism contract — ADR-0017).
+ */
+export const exportMarkdownMode = z.enum(["full", "index"]);
+export type ExportMarkdownMode = z.infer<typeof exportMarkdownMode>;
+
+export const exportMarkdownInput = z.object({
+  slug: z.string().min(1),
+  canvasNodeId: z.string().nullable().default(null),
+  mode: exportMarkdownMode.default("full"),
+});
+export type ExportMarkdownInput = z.input<typeof exportMarkdownInput>;
