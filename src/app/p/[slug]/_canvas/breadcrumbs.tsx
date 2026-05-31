@@ -5,6 +5,8 @@ import Link from "next/link";
 
 import { api } from "~/trpc/react";
 
+import { CopyCurrentScopeButton } from "./copy-markdown";
+
 /**
  * The breadcrumb bar — the rendered navigation UI for a Canvas scope's ancestor
  * trail. CONTEXT.md splits the two: the *trail* is the `breadcrumbs` data, this
@@ -83,6 +85,10 @@ export function Breadcrumbs({
           </span>
         );
       })}
+      {/* Scope-anchored markdown copy (#15 / ADR-0017). At the root scope
+          this exports the whole project; descended, it exports the current
+          subtree with its self-describing Boundary context. */}
+      <CopyCurrentScopeButton slug={slug} canvasNodeId={canvasNodeId} />
     </nav>
   );
 }

@@ -468,6 +468,37 @@ parsers do not cover. The word in prose and the enum name in code are **spec kin
 `GRAPHQL` / `CUSTOM` persist source and record `parseError` until their parsers land
 additively.)*
 
+### Markdown export
+The byte-stable serialization of a **Project** — or one of its subtrees — to markdown for human
+"Copy as markdown" use and (next, via M5) MCP read resources. Slug-readable (ADR-0002, the same
+posture **getCanvas** uses), with three modes:
+
+- **Full project** (`canvasNodeId: null`, `mode: "full"`) — every **Component** in the Project,
+  authored documentation included (heading-shifted), plus a **Connections** section.
+- **Subtree** (`canvasNodeId: R`, `mode: "full"`) — R + descendants only, with a **Boundary
+  context** section enumerating the externals incident to R on its parent **Canvas** so the
+  export is self-describing (a deep slice is readable without re-walking up to the root).
+- **Index** (`mode: "index"`) — a cheap structural map: titles, **Component kind**s, anchors,
+  per-Component **Connection** counts; doc bodies omitted. The navigable view an indexing
+  agent reads first.
+
+Each Component carries an addressable HTML-style anchor `{#nodeId}`. Authored documentation is
+**heading-shifted via an mdast AST walk** (`unist-util-visit` over `remark-parse`), never via
+regex — a fenced code block containing a literal `#` line round-trips intact. Output is
+**deterministic across runs AND OS locales**: ordering is **depth → title → id** computed in
+application code with a Unicode codepoint comparator (`<`/`>`), never delegated to SQL collation
+or `String#localeCompare` / `Intl` (those are banned in the serializer module). `remark-stringify`
+options are pinned explicitly so a library version bump cannot silently re-baseline the byte
+output. Locked by a golden-file byte-equality test that also mutates `LANG` / `LC_ALL` to prove
+locale invariance. *(Realized now via `exportMarkdown(db, actor, input)` in
+`src/server/architecture/export.service.ts` — slug-readable, depth-independent reads honouring the
+single-round-trip posture (ADR-0001) — and the pure `serializeGraph` in
+`src/server/architecture/markdown.ts`, which a future MCP read path reuses behind a token gate.
+The "Copy as markdown" toolbar action and the breadcrumb-bar scope-anchored copy ship the
+client-side surface. **Flow** / **FlowRoute** sections are out of scope here — Slice 5 / #38
+extends the format additively (`### Flows` Component subsection, `flows:` Connection subsection)
+without re-baselining the #15 golden file. See ADR-0017.)*
+
 ## Standing notes
 
 ### Prompt-injection standing note
