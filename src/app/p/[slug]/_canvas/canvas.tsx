@@ -336,6 +336,8 @@ function CanvasInner({
   // Destructured so the stable `mutateAsync` can be a dep of the context values
   // below without dragging the whole (per-render) mutation object into them.
   const { mutateAsync: renameNode } = api.architecture.updateNode.useMutation();
+  const { mutateAsync: editDocumentation } =
+    api.architecture.updateNodeDocumentation.useMutation();
   const updatePositions = api.architecture.updatePositions.useMutation();
   const connectNodes = api.architecture.connectNodes.useMutation();
   const { mutateAsync: editEdge } = api.architecture.updateEdge.useMutation();
@@ -488,6 +490,38 @@ function CanvasInner({
       });
     },
     [setNodes, utils, canvasInput, patchCanvas, renameNode],
+  );
+
+  // Persist a Component's documentation on the debounced autosave from the
+  // detail panel. Optimistic on the query-cache mirror only — `documentation`
+  // is not drawn on the node body, so the React Flow store needs no patch; the
+  // mirror keeps a deselect-then-reselect showing the latest text without a
+  // refetch. Fire-and-forget with a snapshot rollback + toast on failure, the
+  // same shape as `commitRename`.
+  const commitDocumentation = useCallback(
+    (id: string, documentation: string): void => {
+      const prevDoc = utils.architecture.getCanvas
+        .getData(canvasInput)
+        ?.interiorNodes.find((n) => n.id === id)?.documentation;
+
+      patchCanvas((c) => ({
+        interiorNodes: c.interiorNodes.map((n) =>
+          n.id === id ? { ...n, documentation } : n,
+        ),
+      }));
+
+      void editDocumentation({ id, documentation }).catch(() => {
+        if (prevDoc !== undefined) {
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.map((n) =>
+              n.id === id ? { ...n, documentation: prevDoc } : n,
+            ),
+          }));
+        }
+        toast.error("Couldn’t save documentation. Please try again.");
+      });
+    },
+    [utils, canvasInput, patchCanvas, editDocumentation],
   );
 
   // Persist Component positions on drag-stop in ONE batched mutation, so a
@@ -1334,8 +1368,13 @@ function CanvasInner({
                       <ComponentDetailPanel
                         slug={slug}
                         ownerNodeId={selectedNodeId}
+                        initialDocumentation={
+                          interiorNodes.find((n) => n.id === selectedNodeId)
+                            ?.documentation ?? ""
+                        }
                         onClose={closeDetailPanel}
                         onFlowCountChange={commitFlowCount}
+                        onCommitDocumentation={commitDocumentation}
                       />
                     </Panel>
                   )}

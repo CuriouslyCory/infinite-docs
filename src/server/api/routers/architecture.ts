@@ -15,6 +15,7 @@ import {
   getCanvas,
   restoreNode,
   updateNode,
+  updateNodeDocumentation,
   updatePositions,
 } from "~/server/architecture/node.service";
 import {
@@ -56,6 +57,7 @@ import {
   unrouteFlowInput,
   updateEdgeInput,
   updateFlowInput,
+  updateNodeDocumentationInput,
   updateNodeInput,
   updatePositionsInput,
 } from "~/lib/schemas";
@@ -138,6 +140,19 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await updateNode(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation (debounced docs autosave). `protectedProcedure` is the
+  // transport gate; the real authorization is in the service (ADR-0001).
+  updateNodeDocumentation: protectedProcedure
+    .input(updateNodeDocumentationInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await updateNodeDocumentation(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

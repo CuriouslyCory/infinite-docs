@@ -4,3 +4,69 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
+
+/*
+ * Markdown rendering for the Component docs editor (Plate; issues #11/#12).
+ * Tailwind's preflight strips heading sizes and list markers, so the rendered
+ * markdown needs explicit element styling. Scoped to `.plate-doc` so it only
+ * touches the docs surface, not the rest of the app.
+ */
+.plate-doc {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.plate-doc h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0.6em 0 0.3em;
+}
+.plate-doc h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0.6em 0 0.3em;
+}
+.plate-doc h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.6em 0 0.3em;
+}
+.plate-doc p {
+  margin: 0.4em 0;
+}
+.plate-doc ul,
+.plate-doc ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.plate-doc ul {
+  list-style: disc;
+}
+.plate-doc ol {
+  list-style: decimal;
+}
+.plate-doc li {
+  margin: 0.15em 0;
+}
+.plate-doc a {
+  color: hsl(280, 100%, 78%);
+  text-decoration: underline;
+}
+.plate-doc code {
+  border-radius: 0.25rem;
+  background: rgb(255 255 255 / 0.1);
+  padding: 0.1em 0.3em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+.plate-doc blockquote {
+  border-left: 3px solid rgb(255 255 255 / 0.2);
+  margin: 0.5em 0;
+  padding-left: 0.75em;
+  color: rgb(255 255 255 / 0.7);
+}
+.plate-doc strong {
+  font-weight: 700;
+}
+.plate-doc em {
+  font-style: italic;
+}

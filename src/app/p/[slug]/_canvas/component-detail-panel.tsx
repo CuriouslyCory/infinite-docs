@@ -1,11 +1,24 @@
 "use client";
 
 import { X } from "lucide-react";
+import dynamic from "next/dynamic";
 import { Suspense, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { flowSpecKind, type FlowSpecKind } from "~/lib/schemas";
 import { api } from "~/trpc/react";
+
+// Lazy-loaded so the Plate bundle code-splits into its own chunk and only
+// downloads on first Component selection — it never weighs down the canvas
+// island's initial load (performance philosophy #1). The panel already lives
+// inside the SSR-disabled canvas island (ADR-0004), so no `ssr: false` needed.
+const ComponentDocsEditor = dynamic(
+  () =>
+    import("./component-docs-editor").then((m) => m.ComponentDocsEditor),
+  {
+    loading: () => <p className="text-xs text-white/40">Loading editor…</p>,
+  },
+);
 
 /**
  * Slide-in detail surface for a selected Component, opened when the owner
@@ -15,11 +28,14 @@ import { api } from "~/trpc/react";
  * 1. **Attach spec** — paste an OpenAPI document, server-side bounded parse,
  *    materialize Flow rows.
  * 2. **Flow palette (read-only)** — the active Flows the Component owns.
+ * 3. **Documentation** — the Plate markdown editor (issues #11 / #12): a
+ *    rendered view that toggles to an editable surface with debounced
+ *    optimistic autosave.
  *
- * A future slice will add the docs editor (issue #11) and the "+ route"
- * affordance on a selected Connection (#35). The panel deliberately does NOT
- * block the canvas (a sidebar, not a modal) so the user can keep zooming /
- * panning while it is open — performance philosophy #1.
+ * A future slice will add the "+ route" affordance on a selected Connection
+ * (#35). The panel deliberately does NOT block the canvas (a sidebar, not a
+ * modal) so the user can keep zooming / panning while it is open — performance
+ * philosophy #1.
  *
  * Visibility is gated on the owner's `canEdit` permission AND on having a
  * non-temp selection. Dismissed by deselect, Escape, or the close button.
@@ -27,11 +43,15 @@ import { api } from "~/trpc/react";
 export function ComponentDetailPanel({
   slug,
   ownerNodeId,
+  initialDocumentation,
   onClose,
   onFlowCountChange,
+  onCommitDocumentation,
 }: {
   slug: string;
   ownerNodeId: string;
+  /** The selected Component's current markdown docs, seeding the editor. */
+  initialDocumentation: string;
   onClose: () => void;
   /**
    * Called when the server returns a new flow count for the selected
@@ -40,6 +60,8 @@ export function ComponentDetailPanel({
    * does NOT reach the RF store (the seed is fire-and-forget by design).
    */
   onFlowCountChange: (ownerNodeId: string, flowCount: number) => void;
+  /** Debounced optimistic docs autosave; the mutation lives on the canvas. */
+  onCommitDocumentation: (ownerNodeId: string, documentation: string) => void;
 }) {
   // Escape closes the panel from anywhere — the canvas keeps focus after the
   // single-select that opens the panel, so a handler on the panel root would
@@ -82,11 +104,12 @@ export function ComponentDetailPanel({
         </Suspense>
       </section>
 
-      {/*
-        Component docs editor lands here in issue #11 (Edit Component docs).
-        The slot is reserved deliberately so the docs editor composes into
-        this same panel rather than introducing a competing surface.
-      */}
+      <ComponentDocsEditor
+        key={ownerNodeId}
+        ownerNodeId={ownerNodeId}
+        initialDocumentation={initialDocumentation}
+        onCommit={onCommitDocumentation}
+      />
     </div>
   );
 }

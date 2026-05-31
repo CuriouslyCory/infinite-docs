@@ -76,14 +76,34 @@ export type GetCanvasInput = z.input<typeof getCanvasInput>;
  * service loads the Node, resolves its Project, and enforces owner-only access
  * (ADR-0001), which is also how a future MCP "rename" tool arrives (it holds a
  * node id, not a project handle). `title` is UNTRUSTED user content, stored
- * verbatim (prompt-injection standing note, CONTEXT.md). Title only for now;
- * editing `kind`/`documentation` is an additive change in a later milestone.
+ * verbatim (prompt-injection standing note, CONTEXT.md). Title only — editing
+ * `documentation` is its own narrow mutation (`updateNodeDocumentationInput`),
+ * editing `kind` remains an additive change in a later milestone.
  */
 export const updateNodeInput = z.object({
   id: z.string().min(1),
   title: z.string().min(1).max(200),
 });
 export type UpdateNodeInput = z.infer<typeof updateNodeInput>;
+
+/**
+ * Input for editing a Component's markdown `documentation`. A dedicated narrow
+ * mutation (not an optional field on `updateNodeInput`) so the canvas autosave
+ * sends only `{ id, documentation }` on every debounced keystroke and rename
+ * keeps its own required-`title` contract (the codebase's granular-mutation
+ * convention — cf. `updateNode` / `updatePositions`). Addressed by the Node
+ * `id`; the service resolves the Project and enforces owner-only access
+ * (ADR-0001). `documentation` is UNTRUSTED user content, stored verbatim, never
+ * interpolated (prompt-injection standing note, CONTEXT.md). Empty string is
+ * allowed (clears the docs); the cap bounds the autosave payload.
+ */
+export const updateNodeDocumentationInput = z.object({
+  id: z.string().min(1),
+  documentation: z.string().max(100_000),
+});
+export type UpdateNodeDocumentationInput = z.infer<
+  typeof updateNodeDocumentationInput
+>;
 
 /**
  * Input for the batch position write committed on drag-stop. Addressed by
