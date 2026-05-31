@@ -75,7 +75,7 @@ const _prismaKindIsZodKind: Record<PrismaNodeKind, NodeKind> = {
 
 If either side is missing, `pnpm check` fails with a non-exhaustive `Record` error pointing at the file.
 
-### 4. `src/lib/node-kinds.ts` — the client catalog (FOUR things)
+### 4. `src/lib/node-kinds.ts` — the client catalog (SIX things)
 
 a. Import the lucide icon at the top:
 
