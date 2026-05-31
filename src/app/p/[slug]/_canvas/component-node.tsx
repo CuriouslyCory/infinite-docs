@@ -1,20 +1,10 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import {
-  Box,
-  ChevronRight,
-  Cog,
-  Database,
-  Globe,
-  Layers,
-  Pencil,
-  Server,
-  Trash2,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronRight, Pencil, Trash2 } from "lucide-react";
 import { createContext, useContext, useRef, useState } from "react";
 
+import { KIND_ICON } from "~/lib/node-kinds";
 import { type NodeKind } from "~/lib/schemas";
 
 export type ComponentNodeData = {
@@ -73,20 +63,6 @@ export const DeleteComponentContext = createContext<(id: string) => void>(
  * open a Component's interior Canvas. Default is false (read-only).
  */
 export const CanEditContext = createContext<boolean>(false);
-
-// Kind → icon. Kind is cosmetic (CONTEXT.md "Component kind"); this is the only
-// place the six kinds acquire a glyph. A finite `Record` keyed by `NodeKind` is
-// not widened by `noUncheckedIndexedAccess`, so indexing it needs no guard.
-// Exported so the boundary-proxy node renders externals with the same glyphs
-// (a proxy is a read-only stand-in for a real Component of some kind).
-export const KIND_ICON: Record<NodeKind, LucideIcon> = {
-  GENERIC: Box,
-  SERVICE: Cog,
-  DATABASE: Database,
-  EXTERNAL_API: Globe,
-  HOST: Server,
-  QUEUE: Layers,
-};
 
 /**
  * The Component node type for the Canvas — the React Flow node that renders a

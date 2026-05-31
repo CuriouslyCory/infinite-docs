@@ -62,16 +62,63 @@ Broader Component editing (`kind`) and reparenting (`move`) with cycle
 prevention land in later milestones.)*
 
 ### Component kind (`NodeKind`)
-A Component's category, stored on its **Node** as `kind: NodeKind`. One of six
-values: `SERVICE`, `DATABASE`, `EXTERNAL_API`, `HOST`, `QUEUE`, and `GENERIC`
-(the default). The word in prose and the enum name in code are **kind** /
-`NodeKind` — never "type" (which collides with the canvas library's node-type
-registry key) or "category". **Kind is cosmetic:** it drives only the
-Component's icon and color and carries no behavioural or authorization meaning;
-two Components differing only in kind are otherwise identical. User-facing labels
-are *Service, Database, External API, Host, Queue, Generic*; the `EXTERNAL_API`
-value is shown as "External API". *(The `kind` field and its six values are
-realized now; later kinds, if any, are an additive change.)*
+A Component's category, stored on its **Node** as `kind: NodeKind`. The value
+set spans the hierarchy the tool documents — global infrastructure down to
+individual code branches: `GENERIC` (the default), `GLOBAL_INFRA`, `REGION`,
+`DATACENTER`, `NETWORK`, `HOST`, `CONTAINER`, `SERVICE`, `MICROSERVICE`, `CRON`,
+`QUEUE`, `APPLICATION`, `MODULE`, `CLASS`, `FUNCTION`, `VARIABLE`, `BRANCH`,
+`DATABASE`, `TABLE`, `STORED_PROCEDURE`, `EXTERNAL_API`, `ENDPOINT`, `WEBHOOK`,
+`TOPIC`, `CONSUMER`, `PRODUCER`. The word in prose and the enum name in code are
+**kind** / `NodeKind` — never "type" (which collides with the canvas library's
+node-type registry key) or "category". **Kind is cosmetic:** it drives only the
+Component's icon and color and the **kind affinity** ranking the picker offers,
+and carries no behavioural or authorization meaning; two Components differing
+only in kind are otherwise identical — the expanded value set does not weaken
+this: no kind grants nesting permission, gates a service operation, or alters
+de-dupe (ADR-0018). User-facing labels are spelled out in `KIND_LABEL` (keyed by
+`NodeKind`, so a new kind fails to compile until labelled), with multi-word kinds
+written in full (`EXTERNAL_API` → "External API", `STORED_PROCEDURE` → "Stored
+procedure"). A Component's kind is editable after creation via the narrow
+owner-only `updateNodeKind` mutation (the **kind palette** reopens from the
+**Component-detail panel**'s Kind row), never slug-granted (ADR-0002). *(The
+expanded enum, the **kind palette** picker, **kind affinity** ranking, and
+`updateNodeKind` are all realized now. Further kinds remain an additive change.
+See ADR-0018, ADR-0019.)*
+
+### Kind affinity (`KIND_AFFINITY`)
+The ordered list of Component **kinds** the picker promotes when a Component is
+created or re-kinded inside a parent of a given kind — inside a `DATABASE`, the
+palette ranks `TABLE` / `STORED_PROCEDURE` first; inside a `HOST`, `CONTAINER` /
+`SERVICE` / `MICROSERVICE` / `CRON`; inside a `FUNCTION`, `BRANCH` / `VARIABLE`.
+The Project root has its own affinity keyed by the sentinel `"ROOT"`
+(infrastructure-flavored: `GLOBAL_INFRA`, `DATACENTER`, `REGION`, `NETWORK`,
+`HOST`, `EXTERNAL_API`). **Affinity is presentation-only:** every kind remains
+selectable below the affined ones, the service accepts any kind regardless of
+parent kind, and kind stays cosmetic — the picker cannot encode a rule the data
+model does not (ADR-0019). The map is a client-safe constant in
+`~/lib/node-kinds.ts` alongside `KIND_LABEL` and `KIND_ICON`; it is not stored,
+not server-derived, and not a function of **Canvas scope** (the same ranking
+applies under any scope whose Component carries that kind). The word in prose and
+the constant name in code are **kind affinity** / `KIND_AFFINITY` — never "kind
+suggestions" (names the UI output, not the relation), "kind ranking" (names the
+mechanism), or "nesting rules" / "parent-child constraints" (actively wrong — no
+constraint exists). *(Realized now alongside the **kind palette**. See ADR-0019.)*
+
+### Kind palette
+The Command-palette UX surface for picking a **Component kind** — a searchable,
+keyboard-navigable list (built on the shadcn/`cmdk` `Command` primitive) that
+replaced the original `<select>` dropdown. Renders the full `NodeKind` set with
+the **kind-affine** entries grouped under a "Suggested" heading above a separator
+and the remainder under "All kinds" below, preserving the invariant that every
+kind is always reachable (search spans both groups). It is the only
+kind-selection surface in the canvas: the "Add Component" control opens it, and —
+since Slice 2 — the **Component-detail panel** reopens the same palette to change
+a Component's kind. Applies the same prose/UI pattern **Flow palette** does —
+*palette* names the surface, not the library. Never "kind picker" (too generic —
+it could name a `<select>`), "command palette" (collides with the library term),
+or "kind selector". *(Realized now; the `<select>` it replaces is retired. The
+canonical-command-palette ADR is deferred until a second palette adopter, per
+docs-travel-with-code-slices.)*
 
 ### Connection
 The user-facing link between two Components, drawn on a **Canvas** by dragging from one
@@ -202,8 +249,11 @@ non-root scopes is realized now via **Descent**.)*
 The ordered ancestor chain of a **Canvas scope**: the **Components** from the
 **Project** root down to, and including, the scope's own Component. Returned by
 **getCanvas** as `breadcrumbs`, named in **Node** terms in code (like
-`interiorNodes`) even though users see Components. Shape `{ id, title }[]`, ordered
-**root → current** (root-most first, the current scope last). The **root scope**
+`interiorNodes`) even though users see Components. Shape `{ id, title, kind }[]`,
+ordered **root → current** (root-most first, the current scope last). The `kind`
+is carried so the **kind palette** can compute **kind affinity** for the current
+scope without a second round trip; the breadcrumb **bar** does not render it
+today, though the data is available for future kind-flavored crumb icons. The **root scope**
 has no Component, so its breadcrumbs are the empty array `[]` — no `"root"`
 sentinel lives inside the chain (that string is a canvas-island key, not data;
 ADR-0004). Computed in a **single recursive query**, never a per-level walk

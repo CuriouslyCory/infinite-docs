@@ -1,70 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { Plus } from "lucide-react";
 
 import { type NodeKind } from "~/lib/schemas";
 
-// User-facing labels for the six kinds. Keyed by `NodeKind`, so adding a kind
-// fails to compile until it gets a label here. Concrete kinds first, Generic
-// last (the catch-all default). See CONTEXT.md "Component kind". Exported so the
-// boundary-group node labels its inherited members with the same vocabulary.
-export const KIND_LABEL: Record<NodeKind, string> = {
-  SERVICE: "Service",
-  DATABASE: "Database",
-  EXTERNAL_API: "External API",
-  HOST: "Host",
-  QUEUE: "Queue",
-  GENERIC: "Generic",
-};
-
-const KIND_ORDER: readonly NodeKind[] = [
-  "SERVICE",
-  "DATABASE",
-  "EXTERNAL_API",
-  "HOST",
-  "QUEUE",
-  "GENERIC",
-];
+import { KindPickerPopover } from "./kind-palette";
 
 /**
- * The "Add Component" control: a kind picker plus a button. Dumb by design — it
- * owns only the selected kind and delegates the create to the Canvas island via
- * `onAdd`, so all tRPC/optimistic logic stays in one place.
+ * The "Add Component" control: a button that opens the **kind palette** (a
+ * shadcn/cmdk Command popover; ADR-0020). Selecting a kind delegates the create
+ * to the Canvas island via `onAdd`, so all tRPC/optimistic logic stays in one
+ * place — the picker stays dumb. `parentKind` is the current Canvas scope's
+ * Component kind (`null` at the Project root), which keys the palette's **kind
+ * affinity** ranking (CONTEXT.md "Kind affinity").
  */
 export function AddComponent({
   onAdd,
+  parentKind,
   pending,
 }: {
   onAdd: (kind: NodeKind) => void;
+  parentKind: NodeKind | null;
   pending: boolean;
 }) {
-  const [kind, setKind] = useState<NodeKind>("GENERIC");
-
   return (
-    <div className="flex items-center gap-2 rounded-lg bg-black/40 p-2 backdrop-blur">
-      <label htmlFor="component-kind" className="sr-only">
-        Component kind
-      </label>
-      <select
-        id="component-kind"
-        value={kind}
-        onChange={(e) => setKind(e.target.value as NodeKind)}
-        className="rounded-md bg-white/10 px-2 py-1.5 text-sm text-white focus:outline-none"
-      >
-        {KIND_ORDER.map((k) => (
-          <option key={k} value={k} className="text-black">
-            {KIND_LABEL[k]}
-          </option>
-        ))}
-      </select>
-      <button
-        type="button"
-        onClick={() => onAdd(kind)}
-        disabled={pending}
-        className="rounded-md bg-[hsl(280,100%,70%)] px-3 py-1.5 text-sm font-semibold text-black transition hover:bg-[hsl(280,100%,80%)] disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {pending ? "Adding…" : "Add Component"}
-      </button>
-    </div>
+    <KindPickerPopover
+      parentKind={parentKind}
+      onSelect={onAdd}
+      trigger={({ open, toggle }) => (
+        <button
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          onClick={toggle}
+          disabled={pending}
+          className="flex items-center gap-1.5 rounded-lg bg-[hsl(280,100%,70%)] px-3 py-1.5 text-sm font-semibold text-black backdrop-blur transition hover:bg-[hsl(280,100%,80%)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Plus size={14} aria-hidden />
+          {pending ? "Adding…" : "Add Component"}
+        </button>
+      )}
+    />
   );
 }

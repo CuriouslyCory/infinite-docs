@@ -21,20 +21,42 @@ export const getProjectBySlugInput = z.object({
 export type GetProjectBySlugInput = z.infer<typeof getProjectBySlugInput>;
 
 /**
- * The six Component kinds. This Zod enum is the client-safe source of truth for
- * the value set (the kind picker imports `nodeKind.options` as values); the
+ * The Component kinds. This Zod enum is the client-safe source of truth for
+ * the value set (the kind palette imports `nodeKind.options` as values); the
  * Prisma `NodeKind` enum mirrors it, and a compile-time parity guard in the
  * service layer fails the build if the two ever drift. Kind is cosmetic — it
- * drives only icon/color (see CONTEXT.md "Component kind"). Never import the
- * Prisma enum into client code (it reaches the server graph); import this.
+ * drives only icon/color and the kind-affinity picker ranking (see CONTEXT.md
+ * "Component kind", "Kind affinity"; ADR-0018, ADR-0019). New kinds are an
+ * additive change. Never import the Prisma enum into client code (it reaches
+ * the server graph); import this.
  */
 export const nodeKind = z.enum([
   "GENERIC",
-  "SERVICE",
-  "DATABASE",
-  "EXTERNAL_API",
+  "GLOBAL_INFRA",
+  "REGION",
+  "DATACENTER",
+  "NETWORK",
   "HOST",
+  "CONTAINER",
+  "SERVICE",
+  "MICROSERVICE",
+  "CRON",
   "QUEUE",
+  "APPLICATION",
+  "MODULE",
+  "CLASS",
+  "FUNCTION",
+  "VARIABLE",
+  "BRANCH",
+  "DATABASE",
+  "TABLE",
+  "STORED_PROCEDURE",
+  "EXTERNAL_API",
+  "ENDPOINT",
+  "WEBHOOK",
+  "TOPIC",
+  "CONSUMER",
+  "PRODUCER",
 ]);
 export type NodeKind = z.infer<typeof nodeKind>;
 
@@ -78,13 +100,30 @@ export type GetCanvasInput = z.input<typeof getCanvasInput>;
  * node id, not a project handle). `title` is UNTRUSTED user content, stored
  * verbatim (prompt-injection standing note, CONTEXT.md). Title only — editing
  * `documentation` is its own narrow mutation (`updateNodeDocumentationInput`),
- * editing `kind` remains an additive change in a later milestone.
+ * and editing `kind` is its own narrow mutation (`updateNodeKindInput`).
  */
 export const updateNodeInput = z.object({
   id: z.string().min(1),
   title: z.string().min(1).max(200),
 });
 export type UpdateNodeInput = z.infer<typeof updateNodeInput>;
+
+/**
+ * Input for changing a Component's `kind`. A dedicated narrow mutation (not an
+ * optional field on `updateNodeInput`) so the kind palette commits only
+ * `{ id, kind }`, mirroring the granular-mutation convention (`updateNode` /
+ * `updateNodeDocumentation`). Addressed by the Node `id`; the service loads it,
+ * resolves its Project, and enforces owner-only access (ADR-0001). Kind is
+ * cosmetic — this changes only icon/color/affinity ranking, never behaviour
+ * (CONTEXT.md "Component kind"; ADR-0018). Any `kind` is accepted regardless of
+ * the parent's kind — affinity ranks the picker, it does not constrain the write
+ * (ADR-0019).
+ */
+export const updateNodeKindInput = z.object({
+  id: z.string().min(1),
+  kind: nodeKind,
+});
+export type UpdateNodeKindInput = z.infer<typeof updateNodeKindInput>;
 
 // The bounded-payload cap on `Node.documentation` — pasted/typed markdown bytes.
 // Sized to be far past any practical Component doc (~100 KB is roughly 30k words)
