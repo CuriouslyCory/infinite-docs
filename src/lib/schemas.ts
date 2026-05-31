@@ -556,3 +556,19 @@ export const exportMarkdownInput = z.object({
   mode: exportMarkdownMode.default("full"),
 });
 export type ExportMarkdownInput = z.input<typeof exportMarkdownInput>;
+
+/**
+ * Input for the owner-gated MCP read path (#18). The same three serializer
+ * modes as {@link exportMarkdownInput}, but addressed by the internal
+ * `projectId` rather than the capability `slug`: the MCP path resolves an Actor
+ * from a bearer token and authorizes by ownership (`assertCanRead`), so the slug
+ * — a parallel bearer grant — must never be the key here (ADR-0002, ADR-0021).
+ * `projectId` is required and narrow: the agent dereferences a resource URI the
+ * server minted, never a user id (no resource accepts one).
+ */
+export const mcpReadInput = z.object({
+  projectId: z.string().min(1),
+  canvasNodeId: z.string().nullable().default(null),
+  mode: exportMarkdownMode.default("full"),
+});
+export type McpReadInput = z.input<typeof mcpReadInput>;

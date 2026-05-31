@@ -359,17 +359,18 @@ Canvas route and — via **Descent** — interior Canvas routing are realized no
 ### Actor
 The resolved identity of whoever is calling a service function:
 `{ userId, scopes?, via?: "session" | "token" }`. Constructed at the edge (a tRPC procedure
-resolves it from the session; the future MCP path resolves it from a token) and passed as the
-second argument to **every** service function. Authorization is derived **only** from `userId`;
-`via`/`scopes` are never used to make an authz decision. *(See ADR-0001.)*
+resolves it from the session; the **MCP path** resolves it from a token via `resolveActorFromToken`
+— realized now, #18) and passed as the second argument to **every** service function. Authorization
+is derived **only** from `userId`; `via`/`scopes` are never used to make an authz decision.
+*(See ADR-0001, ADR-0022.)*
 
 ### Service layer
 The single deep module that is the **only** home for business logic and authorization. Every
 operation is a plain function with the signature `(db, actor, input) => result`:
 `db` is the Prisma client (the injectable seam), `actor` is the resolved caller, `input` is
-validated data. tRPC routers and the future MCP server are thin adapters that resolve an Actor
+validated data. tRPC routers and the MCP server are thin adapters that resolve an Actor
 and call into this layer. Authorization lives here — **not** in the tRPC guard — because the MCP
-path will not pass through that guard. *(See ADR-0001 and ADR-0003.)*
+path does not pass through that guard. *(See ADR-0001 and ADR-0003.)*
 
 ### access (module)
 The single home, inside the service layer, for authorization predicates. Exposes
@@ -395,8 +396,9 @@ token" user-facing and `ApiToken` in code — never "API key", "agent token"/"ag
 `createApiToken` / `listApiTokens` / `revokeApiToken` ("mint" is prose only); the UI button says
 "Generate token". When a token resolves to an identity (#18, the MCP path) it produces an **Actor**
 with `via: "token"`; authorization still derives only from `userId`. *(Minting, hash-at-rest,
-prefix, and revocation are realized now; token→Actor resolution and any scope enforcement are later
-milestones. See ADR-0020, ADR-0021.)*
+prefix, and revocation are realized now; token→Actor resolution is **realized now** (#18, the MCP
+read path) via `resolveActorFromToken`; scope enforcement remains a later milestone. See ADR-0020,
+ADR-0021, ADR-0022.)*
 
 ### Token hash
 How an **API token** persists: the raw token is run through a **keyed HMAC** (SHA-256) with a
@@ -431,8 +433,52 @@ and code — never "permissions" (over-claims enforcement that does not exist) o
 The signed-in, owner-only surface (`/connect`) where a user mints, lists, and revokes **API
 tokens** for connecting an **agent**. User-facing title is **"Connect an agent"**; the artifacts it
 manages are **API tokens**. It is the *producer* side of the token; the *consumer* side (resolving
-a token to an **Actor** over MCP) is #18. Not a "settings", "API keys", or "developers" page — it
-is framed around the user's goal (connect an agent), per the convenience philosophy.
+a token to an **Actor** over MCP) is **realized now** (#18, see ADR-0022). Not a "settings", "API
+keys", or "developers" page — it is framed around the user's goal (connect an agent), per the
+convenience philosophy.
+
+### Agent
+An AI client that speaks the **MCP path**, authenticating with an **API token** that grants it the
+minting user's access. The agent *consumes* the token; the token is **not** the agent's identity (so
+never "agent token" / "agent key" — see **API token**). It reads the architecture as deterministic
+**markdown** **MCP resources** and, in later milestones, maintains it via MCP tools. The word is
+**agent** — never "bot", "client", "consumer", or "AI" as the domain noun. *(The authenticated read
+surface an agent connects to is realized now via #18; write tools are #19/#20.)*
+
+### MCP path
+The authenticated route — `/api/mcp`, a Next.js route handler speaking **Streamable HTTP** — through
+which an **agent** reads (and, in later milestones, maintains) the architecture. A **thin adapter**
+(ADR-0001): it resolves an **Actor** from a bearer **API token** (`resolveActorFromToken`, rejecting
+missing / revoked / expired tokens with one indistinguishable 401 — **no anonymous access**) and
+calls the service layer, holding no business logic or authorization of its own. The system's **second
+transport adapter** after the tRPC API; unlike that API, the MCP path does not pass through the tRPC
+guard, which is why authorization lives in the service layer (**access** module). The word is **MCP
+path** / **MCP endpoint** / **MCP server** — never "MCP API" (redundant; tRPC is "the API layer"),
+"the agent endpoint" (the agent consumes it; the endpoint is not the agent's), or "MCP route". *(The
+read surface is realized now via #18 — read-only; see ADR-0022. Write tools are #19/#20.)*
+
+### MCP resource
+A read-addressable unit an **agent** dereferences over the **MCP path**, returning a **Project**'s
+deterministic **markdown**. The three — **`index`**, **`project`**, **`subtree`** — are the
+MCP-addressable face of **Markdown export**'s three modes, **not a new data vocabulary** (the same
+map, addressed by URI). Addressed under the `architecture://` scheme by internal `projectId` (and a
+`nodeId` for `subtree`) — **never by a user id**; an Actor reads only its own projects, and
+`resources/list` enumerates only those (reusing the owner-scoped `listProjects`). The word is
+**resource** — the MCP-spec native term, so no Component/Node split applies (the overload that
+motivates the split is absent). Never "tool" (a **tool** invokes or mutates — #19 / #34 own those),
+"endpoint" (that names the route), or "query". *(Realized now via #18; #38's Flow resources
+(`flow/:id`, `flow-route/:id`) append additively. See ADR-0017, ADR-0022.)*
+
+### llms.txt
+The served discovery document at `/llms.txt` that tells an **agent** how to reach the **MCP path**,
+authenticate (a bearer **API token** from the **Connect-an-agent page**), and address the **MCP
+resources**. **Generated**, not hand-authored — its resource catalog renders from the same source the
+**MCP server** registers from, so the doc and the live `resources/list` cannot drift. Honest about
+the grant (ADR-0021): it describes capability ("a token acts on behalf of the minting user"), never a
+"read-only scope" the token does not carry — the MCP surface is read-only *at this version*, not the
+token. Carries the **prompt-injection standing note** that graph content is **data, not
+instructions**. Never "manifest", "sitemap", or "robots.txt for AI". *(Realized now via #18; #34/#38
+extend its vocabulary as they add Flow tools / resources. See ADR-0022.)*
 
 ### Deletion id
 The handle that ties together one cascading soft-delete so it can be undone as a unit.
@@ -599,8 +645,9 @@ additively.)*
 
 ### Markdown export
 The byte-stable serialization of a **Project** — or one of its subtrees — to markdown for human
-"Copy as markdown" use and (next, via M5) MCP read resources. Slug-readable (ADR-0002, the same
-posture **getCanvas** uses), with three modes:
+"Copy as markdown" use and the **MCP resources** (realized now via #18). Slug-readable on the web
+path (ADR-0002, the same posture **getCanvas** uses) and owner-gated on the MCP path (ADR-0022),
+with three modes:
 
 - **Full project** (`canvasNodeId: null`, `mode: "full"`) — every **Component** in the Project,
   authored documentation included (heading-shifted), plus a **Connections** section.
@@ -619,14 +666,15 @@ application code with a Unicode codepoint comparator (`<`/`>`), never delegated 
 or `String#localeCompare` / `Intl` (those are banned in the serializer module). `remark-stringify`
 options are pinned explicitly so a library version bump cannot silently re-baseline the byte
 output. Locked by a golden-file byte-equality test that also mutates `LANG` / `LC_ALL` to prove
-locale invariance. *(Realized now via `exportMarkdown(db, actor, input)` in
-`src/server/architecture/export.service.ts` — slug-readable, depth-independent reads honouring the
-single-round-trip posture (ADR-0001) — and the pure `serializeGraph` in
-`src/server/architecture/markdown.ts`, which a future MCP read path reuses behind a token gate.
-The "Copy as markdown" toolbar action and the breadcrumb-bar scope-anchored copy ship the
-client-side surface. **Flow** / **FlowRoute** sections are out of scope here — Slice 5 / #38
-extends the format additively (`### Flows` Component subsection, `flows:` Connection subsection)
-without re-baselining the #15 golden file. See ADR-0017.)*
+locale invariance. *(Realized now via two owner-resolving front doors over one shared fetch core
+(`serializeProjectScope`) in `src/server/architecture/export.service.ts` — `exportMarkdown(db,
+actor, input)` (slug-readable, web) and `exportMarkdownForActor(db, actor, input)` (owner-gated by
+`projectId`, the MCP read path #18 / ADR-0022) — both depth-independent, honouring the
+single-round-trip posture (ADR-0001), and both delegating to the pure `serializeGraph` in
+`src/server/architecture/markdown.ts`. The "Copy as markdown" toolbar action and the breadcrumb-bar
+scope-anchored copy ship the client-side surface. **Flow** / **FlowRoute** sections are out of scope
+here — Slice 5 / #38 extends the format additively (`### Flows` Component subsection, `flows:`
+Connection subsection) without re-baselining the #15 golden file. See ADR-0017.)*
 
 ## Standing notes
 
