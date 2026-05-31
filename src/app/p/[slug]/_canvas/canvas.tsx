@@ -1459,6 +1459,13 @@ function CanvasInner({
     [utils, router, slug],
   );
 
+  // Resolve the selected Component once for the detail panel (owner-edit or
+  // viewer-read), de-duping the kind/documentation lookups.
+  const selectedNode =
+    selectedNodeId === null
+      ? undefined
+      : interiorNodes.find((n) => n.id === selectedNodeId);
+
   return (
     <RenameComponentContext.Provider value={commitRename}>
       <EditEdgeContext.Provider value={commitEdgeEdit}>
@@ -1524,7 +1531,9 @@ function CanvasInner({
                       canvasNodeId: node.id,
                     });
                     router.prefetch(`/p/${slug}/n/${node.id}`);
-                    if (canEdit) prefetchDocsEditor();
+                    // Viewers open the read-only docs panel too, so warm the
+                    // Plate chunk for everyone — no first-open flash (perf #1).
+                    prefetchDocsEditor();
                   }}
                   onNodeDragStop={(_event, _node, dragged) =>
                     void persistPositions(dragged)
@@ -1555,28 +1564,43 @@ function CanvasInner({
                         breadcrumb bar. */}
                     <CopyMarkdownToolbar slug={slug} />
                   </Panel>
-                  {canEdit && selectedNodeId !== null && (
+                  {selectedNodeId !== null && (
                     <Panel
                       position="top-right"
                       className="top-0! right-0! bottom-0! m-0! flex"
                     >
-                      <ComponentDetailPanel
-                        slug={slug}
-                        ownerNodeId={selectedNodeId}
-                        currentKind={
-                          interiorNodes.find((n) => n.id === selectedNodeId)
-                            ?.kind ?? "GENERIC"
-                        }
-                        parentKind={parentKind}
-                        initialDocumentation={
-                          interiorNodes.find((n) => n.id === selectedNodeId)
-                            ?.documentation ?? ""
-                        }
-                        onClose={closeDetailPanel}
-                        onChangeKind={commitNodeKind}
-                        onFlowCountChange={commitFlowCount}
-                        onCommitDocumentation={commitDocumentation}
-                      />
+                      {/* Owner gets the editable panel; a capability viewer
+                          gets the same surface read-only (#16). The discriminated
+                          `readOnly` prop keeps the write callbacks off the viewer
+                          path at compile time. */}
+                      {canEdit ? (
+                        <ComponentDetailPanel
+                          readOnly={false}
+                          slug={slug}
+                          ownerNodeId={selectedNodeId}
+                          currentKind={selectedNode?.kind ?? "GENERIC"}
+                          parentKind={parentKind}
+                          initialDocumentation={
+                            selectedNode?.documentation ?? ""
+                          }
+                          onClose={closeDetailPanel}
+                          onChangeKind={commitNodeKind}
+                          onFlowCountChange={commitFlowCount}
+                          onCommitDocumentation={commitDocumentation}
+                        />
+                      ) : (
+                        <ComponentDetailPanel
+                          readOnly={true}
+                          slug={slug}
+                          ownerNodeId={selectedNodeId}
+                          currentKind={selectedNode?.kind ?? "GENERIC"}
+                          parentKind={parentKind}
+                          initialDocumentation={
+                            selectedNode?.documentation ?? ""
+                          }
+                          onClose={closeDetailPanel}
+                        />
+                      )}
                     </Panel>
                   )}
                   {nodes.length === 0 && (

@@ -50,20 +50,17 @@ export function prefetchDocsEditor(): void {
  * modal) so the user can keep zooming / panning while it is open — performance
  * philosophy #1.
  *
- * Visibility is gated on the owner's `canEdit` permission AND on having a
- * non-temp selection. Dismissed by deselect, Escape, or the close button.
+ * Dual-audience (#16): the owner sees the full edit surface; a capability
+ * **viewer** (`readOnly`) sees the same panel with docs + the Flow palette but
+ * NO write affordances — no Kind picker, no Attach-spec field, no docs Edit
+ * toggle. `readOnly` is a required discriminator: the write callbacks
+ * (`onChangeKind` / `onFlowCountChange` / `onCommitDocumentation`) are typed to
+ * exist only in owner mode, so handing the viewer panel a mutation is a compile
+ * error, never a leaked affordance. Read-only mode is presentation, not the
+ * authorization boundary — every mutation is still denied at the service layer
+ * (ADR-0002). Dismissed by deselect, Escape, or the close button.
  */
-export function ComponentDetailPanel({
-  slug,
-  ownerNodeId,
-  currentKind,
-  parentKind,
-  initialDocumentation,
-  onClose,
-  onChangeKind,
-  onFlowCountChange,
-  onCommitDocumentation,
-}: {
+type ComponentDetailPanelProps = {
   slug: string;
   ownerNodeId: string;
   /** The selected Component's current kind, shown in the Kind row. */
@@ -77,18 +74,37 @@ export function ComponentDetailPanel({
   /** The selected Component's current markdown docs, seeding the editor. */
   initialDocumentation: string;
   onClose: () => void;
-  /** Optimistic change-kind commit; the mutation lives on the canvas. */
-  onChangeKind: (ownerNodeId: string, kind: NodeKind) => void;
-  /**
-   * Called when the server returns a new flow count for the selected
-   * Component, so the canvas can update the React Flow store and the
-   * "N flows" pill on the same frame. The query-cache invalidation alone
-   * does NOT reach the RF store (the seed is fire-and-forget by design).
-   */
-  onFlowCountChange: (ownerNodeId: string, flowCount: number) => void;
-  /** Debounced optimistic docs autosave; the mutation lives on the canvas. */
-  onCommitDocumentation: (ownerNodeId: string, documentation: string) => void;
-}) {
+} & (
+  | {
+      /** Owner mode: full edit affordances wired to the canvas's mutations. */
+      readOnly: false;
+      /** Optimistic change-kind commit; the mutation lives on the canvas. */
+      onChangeKind: (ownerNodeId: string, kind: NodeKind) => void;
+      /**
+       * Called when the server returns a new flow count for the selected
+       * Component, so the canvas can update the React Flow store and the
+       * "N flows" pill on the same frame. The query-cache invalidation alone
+       * does NOT reach the RF store (the seed is fire-and-forget by design).
+       */
+      onFlowCountChange: (ownerNodeId: string, flowCount: number) => void;
+      /** Debounced optimistic docs autosave; the mutation lives on the canvas. */
+      onCommitDocumentation: (ownerNodeId: string, documentation: string) => void;
+    }
+  | {
+      /** Capability-viewer mode: read docs + Flow list, zero write affordances. */
+      readOnly: true;
+    }
+);
+
+export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
+  const {
+    slug,
+    ownerNodeId,
+    currentKind,
+    parentKind,
+    initialDocumentation,
+    onClose,
+  } = props;
   // Escape closes the panel from anywhere — the canvas keeps focus after the
   // single-select that opens the panel, so a handler on the panel root would
   // never fire from the user's most likely starting point.
@@ -115,24 +131,34 @@ export function ComponentDetailPanel({
         </button>
       </header>
 
-      <KindSection
-        currentKind={currentKind}
-        parentKind={parentKind}
-        onChangeKind={(kind) => onChangeKind(ownerNodeId, kind)}
-      />
+      {props.readOnly ? (
+        <ReadOnlyKindRow currentKind={currentKind} />
+      ) : (
+        <KindSection
+          currentKind={currentKind}
+          parentKind={parentKind}
+          onChangeKind={(kind) => props.onChangeKind(ownerNodeId, kind)}
+        />
+      )}
 
-      <AttachSpecSection
-        ownerNodeId={ownerNodeId}
-        slug={slug}
-        onFlowCountChange={onFlowCountChange}
-      />
+      {!props.readOnly && (
+        <AttachSpecSection
+          ownerNodeId={ownerNodeId}
+          slug={slug}
+          onFlowCountChange={props.onFlowCountChange}
+        />
+      )}
 
       <section className="flex flex-col gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
           Flow palette
         </h3>
         <Suspense fallback={<p className="text-xs text-white/40">Loading…</p>}>
-          <FlowPalette ownerNodeId={ownerNodeId} slug={slug} />
+          <FlowPalette
+            ownerNodeId={ownerNodeId}
+            slug={slug}
+            readOnly={props.readOnly}
+          />
         </Suspense>
       </section>
 
@@ -140,9 +166,34 @@ export function ComponentDetailPanel({
         key={ownerNodeId}
         ownerNodeId={ownerNodeId}
         initialDocumentation={initialDocumentation}
-        onCommit={onCommitDocumentation}
+        readOnly={props.readOnly}
+        onCommit={props.readOnly ? undefined : props.onCommitDocumentation}
       />
     </div>
+  );
+}
+
+/**
+ * Read-only Kind row for the viewer panel: the same icon + label the owner's
+ * picker shows, but a static display — no popover, no focus target. Omitted
+ * affordance, not a disabled one, so it never signals "you could edit this".
+ */
+function ReadOnlyKindRow({ currentKind }: { currentKind: NodeKind }) {
+  const Icon = KIND_ICON[currentKind];
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
+        Kind
+      </h3>
+      <div className="flex items-center gap-2 rounded bg-white/5 px-2 py-1.5 text-sm text-white">
+        <Icon
+          size={14}
+          aria-hidden
+          className="shrink-0 text-[hsl(280,100%,80%)]"
+        />
+        <span className="truncate">{KIND_LABEL[currentKind]}</span>
+      </div>
+    </section>
   );
 }
 
@@ -287,9 +338,11 @@ function AttachSpecSection({
 function FlowPalette({
   ownerNodeId,
   slug,
+  readOnly,
 }: {
   ownerNodeId: string;
   slug: string;
+  readOnly: boolean;
 }) {
   const [flows] = api.architecture.getFlowsForNode.useSuspenseQuery({
     ownerNodeId,
@@ -299,7 +352,9 @@ function FlowPalette({
   if (flows.length === 0) {
     return (
       <p className="text-xs text-white/40">
-        No flows yet. Paste a spec above to materialize them.
+        {readOnly
+          ? "No flows."
+          : "No flows yet. Paste a spec above to materialize them."}
       </p>
     );
   }

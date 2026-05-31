@@ -5,6 +5,7 @@ import { Suspense } from "react";
 
 import { CanvasIsland } from "~/app/p/[slug]/_canvas";
 import { Breadcrumbs } from "~/app/p/[slug]/_canvas/breadcrumbs";
+import { ViewOnlyBadge } from "~/app/p/[slug]/_components/view-only-badge";
 import { auth } from "~/server/auth";
 import { HydrateClient, api } from "~/trpc/server";
 
@@ -76,6 +77,7 @@ export default async function InteriorCanvasPage({
               projectTitle={project.title}
             />
           </Suspense>
+          {!canEdit && <ViewOnlyBadge />}
         </header>
         <div className="min-h-0 flex-1">
           <CanvasIsland

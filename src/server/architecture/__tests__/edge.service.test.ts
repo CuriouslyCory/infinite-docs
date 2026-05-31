@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { Prisma } from "../../../../generated/prisma/client";
@@ -8,7 +10,12 @@ import {
   NotFoundError,
   ValidationError,
 } from "../errors";
-import { connectNodes, deleteEdge, updateEdge } from "../edge.service";
+import {
+  connectNodes,
+  deleteEdge,
+  restoreEdge,
+  updateEdge,
+} from "../edge.service";
 import { createNode, getCanvas } from "../node.service";
 import { createProject } from "../project.service";
 import { resetDb, testDb } from "./helpers/test-db";
@@ -492,6 +499,35 @@ describe("deleteEdge", () => {
 
     const persisted = await testDb.edge.findUnique({ where: { id: edge.id } });
     expect(persisted?.deletedAt).toBeNull();
+  });
+});
+
+describe("restoreEdge", () => {
+  it("rejects a non-owner undoing a Connection delete (and leaves it soft-deleted)", async () => {
+    const { actor, project, a, b } = await seedTwoRootNodes();
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    });
+    // Hand-stamp a deletion batch so restore's authz path is reachable without
+    // the routed-Flow cascade (a lone deleteEdge mints no deletionId — see the
+    // deleteEdge test above). The gate runs only after the stamped Edge and its
+    // Project resolve, so the row must exist as a deleted, stamped Edge first.
+    const deletionId = randomUUID();
+    await testDb.edge.update({
+      where: { id: edge.id },
+      data: { deletedAt: new Date(), deletionId },
+    });
+    const intruder: Actor = { userId: "intruder" };
+
+    await expect(
+      restoreEdge(testDb, intruder, { deletionId }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    const persisted = await testDb.edge.findUnique({ where: { id: edge.id } });
+    expect(persisted?.deletedAt).not.toBeNull();
+    expect(persisted?.deletionId).toBe(deletionId);
   });
 });
 

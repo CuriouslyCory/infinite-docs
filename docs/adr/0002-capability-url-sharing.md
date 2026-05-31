@@ -52,3 +52,25 @@ exists-but-forbidden.
   owner-writes, link-reads. Richer collaboration, if ever needed, is a later, separate decision.
 - The owner check is an identity comparison against `actor.userId`; it is transport-agnostic and
   applies equally to the web app and the future MCP path.
+
+## Viewer surfaces (issue #16)
+
+A non-owner who holds the slug is a **viewer**. The web client derives ownership from the data it
+already has — `isOwner = session?.user?.id === project.ownerId` (`project.ownerId` ships in
+`getProjectBySlug`, no new exposure) — and presents a **read-only mode** when `!isOwner`:
+
+- Every edit affordance is hidden (add / drag / connect / delete, rename, kind change, label edit,
+  FlowSpec paste, Flow CRUD, routing).
+- A read-only **Component-detail panel** still opens so the viewer can read a Component's
+  documentation (Plate `readOnly`, ADR-0015) and its **Flow palette** — the same content
+  `getCanvas` / `getFlowsForNode` already serve by slug. This resolves the gap ADR-0015
+  §Alternatives flagged: `documentation` was already shipped to slug viewers but not yet surfaced.
+- A **"View only"** badge in the project header makes the read-only state legible.
+
+**The read-only mode is presentation, not the authorization boundary.** Hidden affordances and the
+badge are UX; they do not gate anything. Every mutation is denied at the service layer
+(`access.assertCanWrite`, ADR-0001) regardless of what the client renders — a viewer who forges a
+request is rejected there. Do not loosen a service-layer gate on the reasoning that "the UI hides
+it anyway"; both the transport gate (`protectedProcedure`) and the service policy
+(`assertCanWrite`) are required, and the service policy is the one that actually decides. This
+posture is verified by per-mutation non-owner-denial tests and capability-read-allow tests.

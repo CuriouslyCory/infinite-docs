@@ -80,7 +80,7 @@ caller happens to have on hand.
 The term is recorded in CONTEXT.md under **Passive node**, and the
 `Boundary group` and `Boundary proxy` entries cross-reference it. The name
 is deliberately **passive** rather than "read-only" (which is overloaded
-with the capability-URL viewer surface — owner-edit vs visitor-read) or
+with the capability-URL viewer surface — owner-edit vs viewer-read) or
 "non-interactive" (which over-claims — passive nodes still expand and
 collapse their own internals; they are inert *with respect to the Canvas's
 interactive surfaces*, not globally inert).
