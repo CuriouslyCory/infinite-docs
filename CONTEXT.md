@@ -52,16 +52,13 @@ The data-model representation of a Component: the stored graph vertex with
 `parentId` (its containing Component, or null at the **Project** root), plus
 `kind` (see **Component kind**), position (`posX`, `posY`), `documentation`, and a
 soft-delete column (`deletedAt`). Never surfaced to users by this name.
-*(The `Node` model, creation (including child Components under a validated parent
-via `createNode` with a non-null `parentId`), scoped read at any depth
-(**getCanvas**, with **breadcrumbs**), inline rename (`updateNode`, title only for
-now), batch position writes (`updatePositions`), **Connection**/**Edge** wiring
-(see **Edge**), and cascading **soft-delete** with **undo** (`deleteNode` removes
-the Node, its subtree, and every incident or interior **Edge** as one batch;
-`restoreNode` reverses it — see **Deletion id**) are realized now; editing the
-`documentation` is realized now too (`updateNodeDocumentation`, a narrow
-owner-only write feeding the Component-detail markdown editor — ADR-0015), while
-broader Component editing (`kind`) and reparenting (`move`) with cycle
+*(The `Node` model and the operations on it — `createNode` (root or child under
+a validated parent), `getCanvas` (with **breadcrumbs**), `updateNode` (title
+only), `updateNodeDocumentation` (the narrow owner-only autosave feeding the
+detail-panel markdown editor — ADR-0015), `updatePositions` (batched on
+drag-stop), and the cascading `deleteNode` / `restoreNode` pair (see **Deletion
+id**) — are realized now. **Connection**/**Edge** wiring is its own entry.
+Broader Component editing (`kind`) and reparenting (`move`) with cycle
 prevention land in later milestones.)*
 
 ### Component kind (`NodeKind`)

@@ -86,6 +86,14 @@ export const updateNodeInput = z.object({
 });
 export type UpdateNodeInput = z.infer<typeof updateNodeInput>;
 
+// The bounded-payload cap on `Node.documentation` — pasted/typed markdown bytes.
+// Sized to be far past any practical Component doc (~100 KB is roughly 30k words)
+// while bounding the autosave payload. UTF-8 bytes, mirroring
+// `MAX_FLOW_SPEC_SOURCE_BYTES`'s precedent — a `string().max()` counts UTF-16
+// code units, which under-counts emoji and CJK by 2×; the byte refine below
+// gives a predictable wire-size budget regardless of script.
+export const MAX_NODE_DOCUMENTATION_BYTES = 100_000;
+
 /**
  * Input for editing a Component's markdown `documentation`. A dedicated narrow
  * mutation (not an optional field on `updateNodeInput`) so the canvas autosave
@@ -99,7 +107,15 @@ export type UpdateNodeInput = z.infer<typeof updateNodeInput>;
  */
 export const updateNodeDocumentationInput = z.object({
   id: z.string().min(1),
-  documentation: z.string().max(100_000),
+  // `string().max()` counts UTF-16 code units; the cap is named `_BYTES` and
+  // measured in UTF-8 bytes, so refine to UTF-8 bytes here too — same pattern
+  // as `attachFlowSpecInput.source` below.
+  documentation: z
+    .string()
+    .refine(
+      (s) => new TextEncoder().encode(s).length <= MAX_NODE_DOCUMENTATION_BYTES,
+      { message: "Documentation exceeds the 100 KB cap." },
+    ),
 });
 export type UpdateNodeDocumentationInput = z.infer<
   typeof updateNodeDocumentationInput

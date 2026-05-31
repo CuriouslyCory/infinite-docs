@@ -65,13 +65,26 @@ with the slice that introduces them.
    start empty and are authored in this editor** — there is no legacy markdown
    to lose. Widening the set is additive (add the plugin + a style rule).
 
-6. **Lazy-loaded, no shadcn cascade.** The editor is `next/dynamic`-imported in
-   the detail panel so the Plate bundle code-splits and only downloads on first
-   Component selection (it never weighs down the canvas island's initial load).
-   It is hand-styled with Tailwind + a scoped `.plate-doc` rule in `globals.css`
-   (Tailwind preflight strips heading/list styling), **not** the Plate UI kit —
-   that would pull radix / cva / clsx / tailwind-merge and dozens of vendored
-   components this repo deliberately does not use.
+6. **Lazy-loaded with hover-warm; no shadcn cascade.** The editor is
+   `next/dynamic`-imported in the detail panel so the Plate bundle code-splits
+   and only downloads on first Component selection (it never weighs down the
+   canvas island's initial load). To avoid every owner paying a "Loading
+   editor…" flash on their first click, the canvas hover handler (`onNodeMouseEnter`)
+   also calls `prefetchDocsEditor()` — a module-scope memoized `import()` of the
+   chunk — so by the time the user actually clicks the Component, the chunk is
+   parsed and ready. Same pattern as the existing `getCanvas` / `router.prefetch`
+   hover-warming. It is hand-styled with Tailwind + a scoped `.plate-doc` rule
+   in `globals.css` (Tailwind preflight strips heading/list styling), **not**
+   the Plate UI kit — that would pull radix / cva / clsx / tailwind-merge and
+   dozens of vendored components this repo deliberately does not use.
+
+7. **Editor contract for hosting inside the canvas event surface.** Mounting an
+   editable surface inside a React Flow `<Panel>` means several invisible
+   contracts: every interactive element carries `.nodrag` (the toolbar wrapper
+   and `PlateContent`) so a drag inside the editor doesn't pan the canvas, and
+   the section root stops Backspace / Delete propagation so React Flow's
+   `deleteKeyCode` handler can't sweep the selected Component while the user is
+   editing. These are part of the editor contract, not incidental styling.
 
 ## Alternatives considered
 
@@ -86,8 +99,19 @@ with the slice that introduces them.
   `readOnly` Plate is the same renderer, guaranteed consistent.
 - **Plate UI kit (shadcn).** Rejected for scope/dependency weight; a minimal
   hand-styled toolbar covers the supported feature set.
+- **Click / focus the rendered surface to edit (no explicit toggle).** Rejected:
+  view-first with an explicit Edit affordance is a clearer state signal in a
+  mixed read/write detail panel, and the dashed empty-state CTA already gives a
+  one-click path for empty docs. Focus-to-edit would also conflict with the
+  rendered-only path planned for the capability-URL viewer (#16) — same surface
+  for both audiences keeps the implementation single-rooted.
 - **Render docs to capability-slug viewers now.** Deferred: the panel holds
-  owner-only tools and gating; viewer rendering belongs with #16.
+  owner-only tools and gating; viewer rendering belongs with #16. NOTE:
+  `getCanvas` already returns `documentation` to capability-slug viewers (used
+  by the owner's `commitDocumentation` cache snapshot); the viewer-render slice
+  is what closes "shipped over the wire but not surfaced" — the next slice
+  should either ship the read-only viewer or strip `documentation` from the
+  slug-visible payload until it does.
 
 ## Consequences
 
@@ -107,6 +131,21 @@ with the slice that introduces them.
 ### Costs accepted
 
 - A heavy client dependency (Plate) enters the bundle — mitigated by lazy
-  loading so it is off the canvas island's critical path.
+  loading (off the canvas island's critical path) and hover-warming (off the
+  click-to-edit critical path).
 - Markdown fidelity is bounded by the plugin set; pasted exotic markdown
   degrades. Acceptable while docs are authored in-editor from an empty start.
+  The editor surfaces a one-time `toast.warning` when a paste's serialized
+  round-trip differs meaningfully from its source, so silent loss never
+  passes unnoticed (the heuristic is lenient — false-positive toasts are
+  harmless; a missed loss would be the failure).
+
+### Follow-ups parked here for the next slice
+
+- **`useOptimisticFieldCommit(field, mutation)` extraction.** `commitRename`
+  and `commitDocumentation` on the canvas are now structurally identical
+  (snapshot → optimistic patch → fire-and-forget → conditional rollback +
+  toast; serialize-per-id for autosave). Two instances is the threshold; the
+  third autosaving field is the extraction trigger — fold into a shared hook
+  at that point, not before.
+- **Capability-slug viewer rendering** (issue #16) — see §Alternatives.

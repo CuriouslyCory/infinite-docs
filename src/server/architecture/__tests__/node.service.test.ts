@@ -612,6 +612,81 @@ describe("updateNodeDocumentation", () => {
       }),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
+
+  it("reports not-found for a soft-deleted Node", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Doomed",
+    });
+    await testDb.node.update({
+      where: { id: node.id },
+      data: { deletedAt: new Date() },
+    });
+
+    // The `deletedAt: null` filter on the load is load-bearing — the autosave
+    // path should report not-found, not silently write over a tombstoned row.
+    await expect(
+      updateNodeDocumentation(testDb, actor, {
+        id: node.id,
+        documentation: "X",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("rejects documentation that exceeds the UTF-8 byte cap", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Service",
+    });
+
+    // One byte over MAX_NODE_DOCUMENTATION_BYTES (100_000). Pure ASCII so
+    // UTF-8 bytes === character count.
+    const oversize = "x".repeat(100_001);
+    await expect(
+      updateNodeDocumentation(testDb, actor, {
+        id: node.id,
+        documentation: oversize,
+      }),
+    ).rejects.toThrow();
+
+    const persisted = await testDb.node.findUnique({ where: { id: node.id } });
+    expect(persisted?.documentation).toBe("");
+  });
+
+  it("is idempotent — writing the same documentation twice persists once", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Service",
+    });
+
+    const markdown = "# Overview";
+    const first = await updateNodeDocumentation(testDb, actor, {
+      id: node.id,
+      documentation: markdown,
+    });
+    const second = await updateNodeDocumentation(testDb, actor, {
+      id: node.id,
+      documentation: markdown,
+    });
+
+    // Same value, second write is a no-op on `documentation` content — but
+    // Prisma still bumps `updatedAt`. The persisted documentation is exactly
+    // what we wrote. This pins the contract `commitDocumentation`'s
+    // "current cache value unchanged" guard relies on (canvas.tsx).
+    expect(first.documentation).toBe(markdown);
+    expect(second.documentation).toBe(markdown);
+    const persisted = await testDb.node.findUnique({ where: { id: node.id } });
+    expect(persisted?.documentation).toBe(markdown);
+  });
 });
 
 describe("updatePositions", () => {

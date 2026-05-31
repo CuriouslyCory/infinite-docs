@@ -20,6 +20,16 @@ const ComponentDocsEditor = dynamic(
   },
 );
 
+// Hover-warm hook for the canvas: trigger the Plate chunk's network fetch the
+// first time the user hovers ANY Component, so the chunk is parsed and ready
+// by the time they click. Memoized via a module-scope Promise so repeat
+// invocations are no-ops — the dynamic import itself is cached after the first
+// call, but capturing the Promise keeps the hot path branch-free (ADR-0015 §6).
+let docsEditorChunk: Promise<unknown> | undefined;
+export function prefetchDocsEditor(): void {
+  docsEditorChunk ??= import("./component-docs-editor");
+}
+
 /**
  * Slide-in detail surface for a selected Component, opened when the owner
  * single-selects a Component on the Canvas (Slice 1 of the flow-routed plan;
