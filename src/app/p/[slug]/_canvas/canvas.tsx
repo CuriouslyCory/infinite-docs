@@ -34,6 +34,10 @@ import { api } from "~/trpc/react";
 
 import { AddComponent } from "./add-component";
 import {
+  BoundaryGroupNodeView,
+  type BoundaryGroupNode,
+} from "./boundary-group-node";
+import {
   BoundaryProxyNodeView,
   flowIdFromHandle,
   type BoundaryProxyNode,
@@ -83,19 +87,31 @@ import {
 const nodeTypes = {
   component: ComponentNodeView,
   "boundary-proxy": BoundaryProxyNodeView,
+  "boundary-group": BoundaryGroupNodeView,
 };
 const edgeTypes = { connection: ConnectionEdgeView };
 
-// The Canvas holds two node kinds: interactive Components (draggable, persisted)
-// and read-only boundary proxies (derived, never persisted). Both live in the
-// one React Flow `nodes` array.
-type CanvasRFNode = ComponentNode | BoundaryProxyNode;
+// The Canvas holds three node kinds: interactive Components (draggable,
+// persisted), read-only boundary proxies (derived, never persisted), and the
+// boundary-group container that bundles inherited proxies (also derived). All
+// live in the one React Flow `nodes` array.
+type CanvasRFNode = ComponentNode | BoundaryProxyNode | BoundaryGroupNode;
+
+// "Passive node" is the taxonomy term (CONTEXT.md, ADR-0016) for a derived,
+// read-only Canvas node — currently boundary-proxy and the boundary-group
+// container — excluded from the detail panel, Descent, and hover-prefetch.
+// Param is the discriminated union so a stray non-Canvas node cannot be passed
+// and a new union member surfaces here when added.
+function isPassiveNode(node: CanvasRFNode): boolean {
+  return node.type === "boundary-proxy" || node.type === "boundary-group";
+}
 
 // Boundary proxies have no stored position (they are derived, #13). Lay them
 // out deterministically in a row above the interior Components so they read as
 // "the outside, up top" and fitView frames them with the content. Direct
 // (routable) proxies sort ahead of inherited ones (the query already orders
-// them that way), so the routable Ports cluster on the left.
+// them that way), so the routable Ports cluster on the left; the boundary-group
+// container holding the inherited proxies sits in the column after them.
 const BOUNDARY_ROW_Y = -220;
 const BOUNDARY_COL_W = 260;
 
@@ -119,6 +135,35 @@ function toBoundaryRFNode(
       ownerTargetEdgeId: proxy.ownerTargetEdgeId,
       flows: palette?.flows ?? [],
       hasMore: palette?.hasMore ?? false,
+    },
+  };
+}
+
+// Bundle the inherited proxies into one read-only container node (#14). Its id
+// is derived from the scope (not from any member), so it stays stable across
+// getCanvas refetches — React Flow reuses the node and preserves the user's
+// expand toggle even as the member set changes. Boundary proxies never exist at
+// the root scope (deriveBoundaryProxies returns none), but the `?? "root"`
+// keeps the id total. No palette/edge data: inherited proxies are not routable
+// here (ADR-0012), so the container needs only enough to list its members.
+function toBoundaryGroupRFNode(
+  inherited: CanvasBoundaryProxy[],
+  indexAfterDirect: number,
+  canvasNodeId: string | null,
+): BoundaryGroupNode {
+  return {
+    id: `boundary-group:${canvasNodeId ?? "root"}`,
+    type: "boundary-group",
+    position: { x: indexAfterDirect * BOUNDARY_COL_W, y: BOUNDARY_ROW_Y },
+    draggable: false,
+    selectable: false,
+    deletable: false,
+    data: {
+      members: inherited.map((p) => ({
+        nodeId: p.nodeId,
+        title: p.title,
+        kind: p.kind,
+      })),
     },
   };
 }
@@ -321,11 +366,30 @@ function CanvasInner({
   // proxies seed alongside the Components: they are read-only and never the
   // subject of a Component mutation (their ids never match a rename/delete/
   // reconcile target), so they ride safely in the same store (#14).
+  //
+  // Direct proxies render individually (they are the routable work surface, #36);
+  // the inherited ones bundle into one boundary-group container so a deep Canvas
+  // is not buried under N un-routable stand-ins (#14). The container renders even
+  // for a single inherited proxy — one consistent affordance, and a refetch that
+  // flips the inherited count between 1 and 2 never reshuffles the surface.
+  const directProxies = boundaryProxies.filter((p) => p.origin === "direct");
+  const inheritedProxies = boundaryProxies.filter(
+    (p) => p.origin === "inherited",
+  );
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasRFNode>([
     ...interiorNodes.map(toRFNode),
-    ...boundaryProxies.map((p, i) =>
+    ...directProxies.map((p, i) =>
       toBoundaryRFNode(p, flowPalettes[p.nodeId], i),
     ),
+    ...(inheritedProxies.length > 0
+      ? [
+          toBoundaryGroupRFNode(
+            inheritedProxies,
+            directProxies.length,
+            canvasNodeId,
+          ),
+        ]
+      : []),
   ]);
   // Initial edges seed: pure structural shape (no edgeFlows yet). The
   // `edgesWithFlows` useMemo below hydrates the aggregation + endpoint
@@ -590,9 +654,10 @@ function CanvasInner({
   // multi-select drag (onSelectionDragStop also routes here) commits together.
   // Rolls back store + cache and toasts on failure.
   const persistPositions = useCallback(
-    // Accepts the union React Flow hands `onNodeDragStop`; boundary proxies are
-    // `draggable: false` so they never appear here, and any that did would be
-    // skipped — they have no `interiorNodes` row to look up.
+    // Accepts the union React Flow hands `onNodeDragStop`; boundary proxies and
+    // the boundary-group container are `draggable: false` so they never appear
+    // here, and any that did would be skipped — they have no `interiorNodes`
+    // row to look up.
     async (moved: CanvasRFNode[]) => {
       const cached = utils.architecture.getCanvas.getData(canvasInput);
       const byId = new Map(
@@ -1378,14 +1443,15 @@ function CanvasInner({
                     // have no editable detail panel. Single-click selection
                     // only for real Components — double-click still descends.
                     if (node.id.startsWith("temp_")) return;
-                    if (node.type === "boundary-proxy") return;
+                    if (isPassiveNode(node)) return;
                     setSelectedNodeId(node.id);
                   }}
                   onPaneClick={() => setSelectedNodeId(null)}
                   onNodeDoubleClick={(_event, node) => {
-                    // Boundary proxies are read-only — they have no interior to
-                    // descend into (descend into the real Component instead).
-                    if (node.type === "boundary-proxy") return;
+                    // Boundary proxies and the boundary-group container are
+                    // read-only — they have no interior to descend into (descend
+                    // into the real Component instead).
+                    if (isPassiveNode(node)) return;
                     descend(node.id);
                   }}
                   onNodeMouseEnter={(_event, node) => {
@@ -1394,7 +1460,7 @@ function CanvasInner({
                     // Also warm the Plate docs-editor chunk so first selection of a
                     // Component doesn't pay a "Loading editor…" flash (ADR-0015 §6).
                     if (node.id.startsWith("temp_")) return;
-                    if (node.type === "boundary-proxy") return;
+                    if (isPassiveNode(node)) return;
                     void utils.architecture.getCanvas.prefetch({
                       slug,
                       canvasNodeId: node.id,

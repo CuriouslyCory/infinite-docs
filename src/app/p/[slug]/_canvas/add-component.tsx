@@ -6,8 +6,9 @@ import { type NodeKind } from "~/lib/schemas";
 
 // User-facing labels for the six kinds. Keyed by `NodeKind`, so adding a kind
 // fails to compile until it gets a label here. Concrete kinds first, Generic
-// last (the catch-all default). See CONTEXT.md "Component kind".
-const KIND_LABEL: Record<NodeKind, string> = {
+// last (the catch-all default). See CONTEXT.md "Component kind". Exported so the
+// boundary-group node labels its inherited members with the same vocabulary.
+export const KIND_LABEL: Record<NodeKind, string> = {
   SERVICE: "Service",
   DATABASE: "Database",
   EXTERNAL_API: "External API",
