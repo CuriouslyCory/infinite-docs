@@ -149,13 +149,22 @@ network call that can itself fail. See the partial-failure consequence below.
   `connectNodes` strict and `routeFlow` the sole cross-scope writer) and over
   client compensation (which can itself fail). The optimistic rollback always
   fires, so the user never sees a partial result; the orphaned Connection
-  surfaces on the next parent `getCanvas`.
+  surfaces on the next parent `getCanvas`. Retrying the gesture after a
+  `routeFlow` failure does not duplicate the reverse Connection: `connectNodes`
+  de-dupes on `(canvasNodeId, sourceId, targetId)` (ADR-0005/0010), so the
+  retry converges on the same Edge and only `routeFlow` re-runs. On `connectNodes`
+  success the canvas writes the new Edge id onto the proxy's matching orientation
+  in the `getCanvas` cache, so an immediate same-polarity re-drag routes directly
+  rather than re-offering and colliding on the now-existing Connection.
 - **The same-Canvas "+ flow" popover hides polarity-mismatched Flows.** Because
   the service now rejects them, the popover filters each endpoint's offered Flows
   by polarity (a source endpoint offers only OUTBOUND, a target endpoint only
   INBOUND) rather than surfacing a pick the service would reject. A same-Canvas
   reverse offer from the popover is deferred (the Scene-5 reverse offer is the
-  cross-scope palette-drag path).
+  cross-scope palette-drag path). This popover tightening closes the *actionable*
+  path to a wrong-polarity route now; the only residue of the read/write
+  asymmetry below is the passive `edgeFlows.total` pill, which is display-only and
+  self-heals on the next `getCanvas`.
 - **`pnpm check` cannot see the polarity invariant or the directional-pair SQL.**
   Correctness rests on the `flow-route.service` tests against real Postgres
   (ADR-0003) — the four-case matrix (INBOUND/OUTBOUND × forward/reverse Edge) and

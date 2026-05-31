@@ -727,6 +727,22 @@ function CanvasInner({
                 sourceId: reverse.sourceId,
                 targetId: reverse.targetId,
               });
+              // The reverse Connection now exists, so record its id on the
+              // proxy's matching orientation. Without this the cache keeps the
+              // null that triggered the offer, and the next same-polarity drag
+              // re-offers and then collides on the duplicate Connection. The
+              // patch lives here (not in runOptimisticInnerRoute's rollback)
+              // because the Edge persists even if the routeFlow below fails —
+              // ADR-0013's accepted live-but-routeless reverse Connection.
+              patchCanvas((c) => ({
+                boundaryProxies: c.boundaryProxies.map((p) =>
+                  p.nodeId !== proxyNodeId
+                    ? p
+                    : polarity === "OUTBOUND"
+                      ? { ...p, ownerSourceEdgeId: created.id }
+                      : { ...p, ownerTargetEdgeId: created.id },
+                ),
+              }));
               return routeFlow({
                 flowId,
                 outerEdgeId: created.id,
@@ -742,6 +758,7 @@ function CanvasInner({
       utils,
       canvasInput,
       runOptimisticInnerRoute,
+      patchCanvas,
       routeFlow,
       connectNodes,
       projectId,
