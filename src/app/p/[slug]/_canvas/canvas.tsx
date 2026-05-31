@@ -91,19 +91,20 @@ const nodeTypes = {
 };
 const edgeTypes = { connection: ConnectionEdgeView };
 
-// Boundary proxies and the boundary-group container are read-only stand-ins,
-// never interactive Components: they are excluded from the detail panel,
-// Descent, and hover-prefetch. Centralised so the three pointer handlers below
-// stay in lockstep as boundary node kinds grow (#14).
-function isPassiveNode(node: { type?: string }): boolean {
-  return node.type === "boundary-proxy" || node.type === "boundary-group";
-}
-
 // The Canvas holds three node kinds: interactive Components (draggable,
 // persisted), read-only boundary proxies (derived, never persisted), and the
 // boundary-group container that bundles inherited proxies (also derived). All
 // live in the one React Flow `nodes` array.
 type CanvasRFNode = ComponentNode | BoundaryProxyNode | BoundaryGroupNode;
+
+// "Passive node" is the taxonomy term (CONTEXT.md, ADR-0016) for a derived,
+// read-only Canvas node — currently boundary-proxy and the boundary-group
+// container — excluded from the detail panel, Descent, and hover-prefetch.
+// Param is the discriminated union so a stray non-Canvas node cannot be passed
+// and a new union member surfaces here when added.
+function isPassiveNode(node: CanvasRFNode): boolean {
+  return node.type === "boundary-proxy" || node.type === "boundary-group";
+}
 
 // Boundary proxies have no stored position (they are derived, #13). Lay them
 // out deterministically in a row above the interior Components so they read as

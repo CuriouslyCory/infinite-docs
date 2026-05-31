@@ -251,15 +251,30 @@ externals routed at scopes the viewer cannot act on here. Collapsed by default; 
 each inherited proxy by title and **Component kind** but no **Flow palette** (inherited proxies
 are context, not a work surface — only **direct** proxies are routable at this scope; see
 **Boundary proxy** and ADR-0012). Like the proxies it contains, a Boundary group is **derived,
-never persisted**: it has no **Node** row, no **Edge**, no **Canvas scope** of its own — it is a
-render-layer regrouping of the `boundaryProxies` whose `origin = "inherited"`. Read-only in the
-same sense as a boundary proxy: not draggable, selectable, deletable, or descendable. The code
-term is **`BoundaryGroupNode`** (React Flow node type `"boundary-group"`), mirroring the
+never persisted**: it has no **Node** row, no **Edge**, and no interior **Canvas scope** of its
+own — it is a render-layer regrouping of the `boundaryProxies` whose `origin = "inherited"` at
+the scope it appears on. Read-only in the same sense as a boundary proxy: not draggable,
+selectable, deletable, or descendable — i.e. a **passive node** (see entry). The code term is
+**`BoundaryGroupNode`** (React Flow node type `"boundary-group"`), mirroring the
 **Component**/**Node** split — and distinct from React Flow's own built-in `"group"` node type (a
 parent-of-children layout primitive this is not). Renders even for a single inherited proxy, so a
-refetch flipping the inherited count never reshuffles the Canvas surface. *(Realized as the #14
-grouping follow-up on top of Slice 3's per-proxy rendering — same derivation
+refetch flipping the inherited count never reshuffles the Canvas surface (ADR-0016). *(Realized as
+the #14 grouping follow-up on top of Slice 3's per-proxy rendering — same derivation
 (`deriveBoundaryProxies`), no service change.)*
+
+### Passive node
+A derived, read-only React Flow node on a **Canvas** — currently a **boundary proxy** or a
+**boundary group** — excluded from the three interactive surfaces a **Component** participates
+in: the **Component-detail panel** (no editable record exists), **Descent** (no interior
+**Canvas scope** to open into), and hover-prefetch (nothing to warm). Passive nodes carry no
+**Node** row, are never `draggable`, `selectable`, or `deletable`, and are partitioned out of
+every interactive pointer handler by a single discriminator (`isPassiveNode` in `canvas.tsx`)
+so a new passive kind composes by extension rather than by sprinkling fresh guards through the
+click / double-click / hover paths (ADR-0016). The term is **passive** — not "read-only" (which
+is overloaded with the capability-URL viewer surface, owner-edit vs visitor-read) and not
+"non-interactive" (which over-claims — passive nodes still expand and collapse their own
+internals; they are inert *with respect to the Canvas's interactive surfaces*, not globally
+inert).
 
 ### Project
 The root container of one architecture graph. Owned by a single user (`ownerId`) and addressed
