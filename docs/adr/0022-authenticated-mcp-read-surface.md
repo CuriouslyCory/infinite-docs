@@ -13,7 +13,7 @@ enforced).
 
 ## Context
 
-#17 made a user mint an `ApiToken` (the producer); #15 made the graph serialize to deterministic
+Issue #17 made a user mint an `ApiToken` (the producer); #15 made the graph serialize to deterministic
 markdown. #18 is the consumer that joins them: an authenticated **MCP server**, co-located as a
 Next.js route handler speaking **Streamable HTTP**, that resolves a bearer token to an **Actor** and
 serves the serializer's output as read-only resources. It is the **second transport adapter** after
@@ -47,7 +47,7 @@ pepper rotation becomes a lookup-per-version, a purely additive change.
 ### 2. The read path is a three-layer split (refining ADR-0017)
 
 ADR-0017 split *serialization* (pure `serializeGraph`) from *authorized fetch* (`exportMarkdown`).
-#18 refines that into three layers so two grant postures share fetch but not authz:
+Issue #18 refines that into three layers so two grant postures share fetch but not authz:
 
 - **`serializeGraph(input)`** — pure, untouched.
 - **`serializeProjectScope(db, {projectId, projectTitle}, {canvasNodeId, mode})`** — the shared
@@ -80,7 +80,8 @@ the auth gate, or the route.
 ### 4. Transport: `mcp-handler` over Streamable HTTP, SSE disabled, Node runtime
 
 The route at `src/app/api/[transport]/route.ts` wires `mcp-handler`'s `createMcpHandler` +
-`withMcpAuth(resolveActorFromToken, { required: true })`, which rejects any tokenless request *before*
+`withMcpAuth(handler, makeVerifyMcpToken(db), { required: true })` — the verifier wraps
+`resolveActorFromToken` — which rejects any tokenless request *before*
 a resource handler runs. **SSE is disabled** (`disableSse: true`), so the legacy session/Redis path is
 never reached — reads are stateless and the route needs **zero new configuration** (no Redis, no new
 env var). The route is pinned to `runtime = "nodejs"` because the token HMAC (`node:crypto`) and the
