@@ -63,6 +63,7 @@ model User {
     sessions      Session[]
     posts         Post[]
     projects      Project[]
+    apiTokens     ApiToken[]
 }
 
 // Root container of one architecture graph (see CONTEXT.md).
@@ -83,6 +84,31 @@ model Project {
     flowRoutes FlowRoute[]
 
     @@index([ownerId])
+}
+
+// A bearer credential a signed-in user mints so an AI agent can call the system
+// as that user over the MCP path (see CONTEXT.md "API token"; ADR-0020). The
+// raw token is shown exactly once at mint and NEVER persisted or logged — only
+// its keyed HMAC (`tokenHash`, unique for lookup) and a non-secret `prefix` for
+// display are stored. `keyVersion` selects which server pepper keyed the hash,
+// so the pepper can be rotated without a hash migration. `scopes` are stored but
+// NOT enforced — authorization derives only from the owning user (ADR-0001,
+// ADR-0021). Revocation is soft (`revokedAt`), keeping the prefix/audit trail.
+// Token -> Actor resolution is the consumer side (#18), not modelled here.
+model ApiToken {
+    id         String    @id @default(cuid())
+    userId     String
+    user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    label      String?
+    tokenHash  String    @unique
+    prefix     String
+    keyVersion Int       @default(1)
+    scopes     String[]
+    createdAt  DateTime  @default(now())
+    expiresAt  DateTime?
+    revokedAt  DateTime?
+
+    @@index([userId])
 }
 
 // Cosmetic category of a Component: drives only its icon/color and the kind

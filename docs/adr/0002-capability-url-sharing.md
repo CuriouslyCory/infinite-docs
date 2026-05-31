@@ -52,6 +52,11 @@ exists-but-forbidden.
   owner-writes, link-reads. Richer collaboration, if ever needed, is a later, separate decision.
 - The owner check is an identity comparison against `actor.userId`; it is transport-agnostic and
   applies equally to the web app and the future MCP path.
+- The slug is no longer the only bearer secret: the **API token** (ADR-0020), minted from the
+  Connect-an-agent page for agents on the MCP path, is the second. The "treat as a secret in logs
+  and analytics" posture above applies identically to API tokens and the server-side token pepper,
+  and the not-found-not-forbidden non-disclosure rule extends too — a token belonging to another
+  user is reported not-found, never revealing it exists.
 
 ## Viewer surfaces (issue #16)
 

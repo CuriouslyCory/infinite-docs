@@ -34,12 +34,20 @@ export default async function Home() {
         <div className="flex w-full max-w-2xl flex-col gap-8">
           <div className="flex items-center justify-between">
             <h1 className="text-3xl font-bold tracking-tight">Your projects</h1>
-            <Link
-              href="/api/auth/signout"
-              className="text-sm text-white/60 no-underline transition hover:text-white"
-            >
-              Sign out
-            </Link>
+            <div className="flex items-center gap-4">
+              <Link
+                href="/connect"
+                className="text-sm text-white/60 no-underline transition hover:text-white"
+              >
+                Connect an agent
+              </Link>
+              <Link
+                href="/api/auth/signout"
+                className="text-sm text-white/60 no-underline transition hover:text-white"
+              >
+                Sign out
+              </Link>
+            </div>
           </div>
           <ProjectDashboard />
         </div>
