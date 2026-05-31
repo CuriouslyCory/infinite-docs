@@ -1,8 +1,12 @@
 import type { Actor, Db } from "./actor";
+import { assertCanRead } from "./access";
 import { NotFoundError } from "./errors";
 import {
   exportMarkdownInput,
+  mcpReadInput,
   type ExportMarkdownInput,
+  type ExportMarkdownMode,
+  type McpReadInput,
 } from "~/lib/schemas";
 import {
   serializeGraph,
@@ -13,14 +17,15 @@ import {
 import { type NodeKind as PrismaNodeKind } from "../../../generated/prisma/client";
 
 /**
- * Renders a Project — or one of its subtrees — to deterministic markdown
- * (M2 / #15; ADR-0017).
+ * Deterministic markdown export of a Project or subtree (M2 / #15; ADR-0017).
  *
- * Authz: slug-readable (ADR-0002), the same posture `getCanvas` uses. The
- * slug→project bind below is the gate every raw query in this module
- * relies on; `actor` is accepted to match the readable-procedure
- * `(db, actor, input)` shape (ADR-0001) and is plumbed for a future
- * owner-gated mode (e.g. an MCP-token full-history export).
+ * Two authorized front doors share one fetch-and-serialize core
+ * ({@link serializeProjectScope}):
+ *
+ *  - {@link exportMarkdown} — slug-readable (ADR-0002): possession of the
+ *    capability slug is the read grant. The web "Copy as markdown" path.
+ *  - {@link exportMarkdownForActor} — owner-gated (#18): a bearer-token Actor
+ *    reads only its own projects, addressed by internal id. The MCP read path.
  *
  * Read shape — depth-independent, no waterfall (ADR-0001 single-round-trip):
  *
@@ -36,9 +41,8 @@ import { type NodeKind as PrismaNodeKind } from "../../../generated/prisma/clien
  *    ADR-0012, without the Flow palette aggregation — Flows are #38's
  *    surface and would only inflate the payload).
  *
- * Serialization is delegated to the pure `serializeGraph` (no `db`, no
- * authz), which is the unit a future MCP read path (#18) reuses behind a
- * token gate.
+ * Serialization is delegated to the pure `serializeGraph` (no `db`, no authz) —
+ * the unit both front doors reuse without re-implementing the format.
  *
  * Raw-SQL discipline (ADR-0006): every identifier is double-quoted
  * PascalCase; the scope id and project id are bound parameters; user-
@@ -74,20 +78,29 @@ interface BoundaryRow {
   is_direct: boolean;
 }
 
-export async function exportMarkdown(
-  db: Db,
-  _actor: Actor | null,
-  input: ExportMarkdownInput,
-): Promise<{ markdown: string }> {
-  const { slug, canvasNodeId, mode } = exportMarkdownInput.parse(input);
+interface ResolvedProject {
+  projectId: string;
+  projectTitle: string;
+}
 
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true, title: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
+/**
+ * The shared fetch-and-serialize core, keyed by an ALREADY-RESOLVED,
+ * already-authorized project. Holds the depth-independent reads (whole-project:
+ * two flat reads; subtree: three concurrent CTEs) and delegates to the pure
+ * `serializeGraph`. It carries NO authorization and NO slug: the two front doors
+ * above it — `exportMarkdown` (slug grant, ADR-0002) and `exportMarkdownForActor`
+ * (owner gate, #18) — each resolve a project under their own posture and then
+ * share this body. Keeping the two grant models in physically separate callers
+ * means neither can weaken the other (they share fetch, not authz; ADR-0017's
+ * pure/fetch split refined into three layers).
+ */
+async function serializeProjectScope(
+  db: Db,
+  project: ResolvedProject,
+  opts: { canvasNodeId: string | null; mode: ExportMarkdownMode },
+): Promise<{ markdown: string }> {
+  const { projectId, projectTitle } = project;
+  const { canvasNodeId, mode } = opts;
 
   let nodes: SerializerNode[];
   let edges: SerializerEdge[];
@@ -96,7 +109,7 @@ export async function exportMarkdown(
   if (canvasNodeId === null) {
     const [nodeRows, edgeRows] = await Promise.all([
       db.node.findMany({
-        where: { projectId: project.id, deletedAt: null },
+        where: { projectId: projectId, deletedAt: null },
         select: {
           id: true,
           parentId: true,
@@ -106,7 +119,7 @@ export async function exportMarkdown(
         },
       }),
       db.edge.findMany({
-        where: { projectId: project.id, deletedAt: null },
+        where: { projectId: projectId, deletedAt: null },
         select: {
           id: true,
           canvasNodeId: true,
@@ -132,13 +145,13 @@ export async function exportMarkdown(
           SELECT n.id, n."parentId", n.title, n.kind, n.documentation, 0 AS depth
           FROM "Node" n
           WHERE n.id = ${canvasNodeId}
-            AND n."projectId" = ${project.id}
+            AND n."projectId" = ${projectId}
             AND n."deletedAt" IS NULL
           UNION ALL
           SELECT c.id, c."parentId", c.title, c.kind, c.documentation, s.depth + 1
           FROM "Node" c
           JOIN subtree s ON c."parentId" = s.id
-          WHERE c."projectId" = ${project.id}
+          WHERE c."projectId" = ${projectId}
             AND c."deletedAt" IS NULL
             AND s.depth < ${SUBTREE_DEPTH_CAP}
         )
@@ -148,33 +161,33 @@ export async function exportMarkdown(
           SELECT n.id, n."parentId", 0 AS depth
           FROM "Node" n
           WHERE n.id = ${canvasNodeId}
-            AND n."projectId" = ${project.id}
+            AND n."projectId" = ${projectId}
             AND n."deletedAt" IS NULL
           UNION ALL
           SELECT c.id, c."parentId", s.depth + 1
           FROM "Node" c
           JOIN subtree s ON c."parentId" = s.id
-          WHERE c."projectId" = ${project.id}
+          WHERE c."projectId" = ${projectId}
             AND c."deletedAt" IS NULL
             AND s.depth < ${SUBTREE_DEPTH_CAP}
         )
         SELECT e.id, e."canvasNodeId", e."sourceId", e."targetId", e.label
         FROM "Edge" e
         JOIN subtree s ON e."canvasNodeId" = s.id
-        WHERE e."projectId" = ${project.id}
+        WHERE e."projectId" = ${projectId}
           AND e."deletedAt" IS NULL`,
       db.$queryRaw<BoundaryRow[]>`
         WITH RECURSIVE ancestry AS (
           SELECT n.id, n."parentId", 0 AS depth
           FROM "Node" n
           WHERE n.id = ${canvasNodeId}
-            AND n."projectId" = ${project.id}
+            AND n."projectId" = ${projectId}
             AND n."deletedAt" IS NULL
           UNION ALL
           SELECT p.id, p."parentId", a.depth + 1
           FROM "Node" p
           JOIN ancestry a ON p.id = a."parentId"
-          WHERE p."projectId" = ${project.id}
+          WHERE p."projectId" = ${projectId}
             AND p."deletedAt" IS NULL
             AND a.depth < ${SUBTREE_DEPTH_CAP}
         )
@@ -230,7 +243,7 @@ export async function exportMarkdown(
   }
 
   const markdown = serializeGraph({
-    project: { title: project.title },
+    project: { title: projectTitle },
     rootCanvasNodeId: canvasNodeId,
     nodes,
     edges,
@@ -239,4 +252,72 @@ export async function exportMarkdown(
   });
 
   return { markdown };
+}
+
+/**
+ * Renders a Project — or one of its subtrees — to deterministic markdown, the
+ * web "Copy as markdown" / capability-URL path (M2 / #15; ADR-0017).
+ *
+ * Authz: slug-readable (ADR-0002), the same posture `getCanvas` uses —
+ * possession of the unguessable slug IS the read grant, so no `access` check
+ * runs here and `actor` is unused. (The owner-gated MCP read path is
+ * {@link exportMarkdownForActor}.)
+ */
+export async function exportMarkdown(
+  db: Db,
+  _actor: Actor | null,
+  input: ExportMarkdownInput,
+): Promise<{ markdown: string }> {
+  const { slug, canvasNodeId, mode } = exportMarkdownInput.parse(input);
+
+  const project = await db.project.findFirst({
+    where: { slug, deletedAt: null },
+    select: { id: true, title: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+
+  return serializeProjectScope(
+    db,
+    { projectId: project.id, projectTitle: project.title },
+    { canvasNodeId, mode },
+  );
+}
+
+/**
+ * Renders a Project — or one of its subtrees — to deterministic markdown for the
+ * owner-gated MCP read path (#18). Unlike {@link exportMarkdown}, the project is
+ * addressed by internal `projectId` (never the slug) and the read is authorized
+ * by ownership: the bearer-token Actor may read ONLY its own projects.
+ *
+ * Fetch-then-authorize over already-loaded data (ADR-0001): the `findFirst`
+ * filters `deletedAt: null` so a soft-deleted project is not-found, and only a
+ * live project's `ownerId` reaches `assertCanRead`. A project owned by another
+ * user throws `ForbiddenError`; the MCP adapter collapses both not-found and
+ * forbidden to one indistinguishable "not found" so existence never leaks
+ * (ADR-0002). `assertCanRead` is called WITHOUT `viaCapabilitySlug`, so it is
+ * owner-only — the slug grant can never be reached from this path.
+ */
+export async function exportMarkdownForActor(
+  db: Db,
+  actor: Actor,
+  input: McpReadInput,
+): Promise<{ markdown: string }> {
+  const { projectId, canvasNodeId, mode } = mcpReadInput.parse(input);
+
+  const project = await db.project.findFirst({
+    where: { id: projectId, deletedAt: null },
+    select: { id: true, title: true, ownerId: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanRead(actor, { ownerId: project.ownerId });
+
+  return serializeProjectScope(
+    db,
+    { projectId: project.id, projectTitle: project.title },
+    { canvasNodeId, mode },
+  );
 }

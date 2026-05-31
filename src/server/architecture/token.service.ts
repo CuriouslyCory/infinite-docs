@@ -142,3 +142,44 @@ export async function revokeApiToken(
     select: publicTokenSelect,
   });
 }
+
+/**
+ * Resolves a presented raw bearer token to an {@link Actor}, or `null` if the
+ * token is absent, unknown, revoked, or expired. The consumer side of #17's
+ * mint (#18, the MCP path): it re-derives the same keyed HMAC the row was stored
+ * under (`hashToken`, ADR-0020) and looks the token up by `tokenHash @unique`,
+ * so the raw value is matched without ever being stored. No timing-safe compare
+ * is needed — equality is a Postgres unique-index probe (no hash is compared in
+ * JS) and the raw token is 256-bit CSPRNG entropy, so there is no guessing
+ * surface to time-attack.
+ *
+ * Every rejection — missing, unknown hash, revoked, or expired — returns the
+ * SAME `null`; the caller maps it to one indistinguishable 401 and never
+ * discloses which check failed (ADR-0002 non-disclosure, the posture
+ * `revokeApiToken` uses for foreign tokens). Once resolved, authorization still
+ * derives ONLY from `userId`; `scopes` ride onto the Actor for shape stability
+ * but never gate anything (ADR-0021).
+ *
+ * Single key version today: `hashToken` defaults to `CURRENT_KEY_VERSION`, and
+ * every minted token is v1, so one lookup is exact. When the pepper rotates
+ * (a new version in `pepperForVersion`), this becomes a lookup per live version
+ * — a purely additive change to the hash step, no schema or caller change.
+ */
+export async function resolveActorFromToken(
+  db: Db,
+  rawToken: string | undefined | null,
+): Promise<Actor | null> {
+  if (!rawToken) return null;
+
+  const row = await db.apiToken.findUnique({
+    where: { tokenHash: hashToken(rawToken) },
+    select: { userId: true, scopes: true, revokedAt: true, expiresAt: true },
+  });
+  if (!row) return null;
+  if (row.revokedAt !== null) return null;
+  if (row.expiresAt !== null && row.expiresAt.getTime() <= Date.now()) {
+    return null;
+  }
+
+  return { userId: row.userId, scopes: row.scopes, via: "token" };
+}
