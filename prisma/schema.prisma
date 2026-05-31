@@ -85,17 +85,48 @@ model Project {
     @@index([ownerId])
 }
 
-// Cosmetic category of a Component: drives only its icon/color, never behaviour
-// or authorization (see CONTEXT.md "Component kind"). Mirrored by the Zod enum
-// `nodeKind` in ~/lib/schemas, which is the client-safe source of truth; a
-// compile-time parity guard in the service layer keeps the two in lockstep.
+// Cosmetic category of a Component: drives only its icon/color and the kind
+// affinity ranking the picker offers, never behaviour or authorization (see
+// CONTEXT.md "Component kind"; ADR-0018). The value set spans the hierarchy the
+// tool documents — global infrastructure down to individual code branches — and
+// stays additive: a new kind is one enum row plus one label + icon, never a
+// code-path branch. Mirrored by the Zod enum `nodeKind` in ~/lib/schemas, which
+// is the client-safe source of truth; a compile-time parity guard in the service
+// layer keeps the two in lockstep.
 enum NodeKind {
     GENERIC
-    SERVICE
-    DATABASE
-    EXTERNAL_API
+    // Global / regional
+    GLOBAL_INFRA
+    REGION
+    // Physical / network
+    DATACENTER
+    NETWORK
     HOST
+    // Runtime
+    CONTAINER
+    SERVICE
+    MICROSERVICE
+    CRON
     QUEUE
+    // Software
+    APPLICATION
+    MODULE
+    CLASS
+    FUNCTION
+    VARIABLE
+    BRANCH
+    // Data
+    DATABASE
+    TABLE
+    STORED_PROCEDURE
+    // Interface
+    EXTERNAL_API
+    ENDPOINT
+    WEBHOOK
+    // Messaging
+    TOPIC
+    CONSUMER
+    PRODUCER
 }
 
 // A Flow's category — drives palette icons and how a renderer formats the

@@ -23,6 +23,7 @@ import {
   restoreNodeInput,
   updateNodeDocumentationInput,
   updateNodeInput,
+  updateNodeKindInput,
   updatePositionsInput,
   type CreateNodeInput,
   type DeleteNodeInput,
@@ -31,6 +32,7 @@ import {
   type RestoreNodeInput,
   type UpdateNodeDocumentationInput,
   type UpdateNodeInput,
+  type UpdateNodeKindInput,
   type UpdatePositionsInput,
 } from "~/lib/schemas";
 
@@ -43,19 +45,59 @@ import {
 // forbid in client code (ADR-0004); the client only ever sees the Zod enum.
 const _zodKindIsPrismaKind: Record<NodeKind, PrismaNodeKind> = {
   GENERIC: "GENERIC",
-  SERVICE: "SERVICE",
-  DATABASE: "DATABASE",
-  EXTERNAL_API: "EXTERNAL_API",
+  GLOBAL_INFRA: "GLOBAL_INFRA",
+  REGION: "REGION",
+  DATACENTER: "DATACENTER",
+  NETWORK: "NETWORK",
   HOST: "HOST",
+  CONTAINER: "CONTAINER",
+  SERVICE: "SERVICE",
+  MICROSERVICE: "MICROSERVICE",
+  CRON: "CRON",
   QUEUE: "QUEUE",
+  APPLICATION: "APPLICATION",
+  MODULE: "MODULE",
+  CLASS: "CLASS",
+  FUNCTION: "FUNCTION",
+  VARIABLE: "VARIABLE",
+  BRANCH: "BRANCH",
+  DATABASE: "DATABASE",
+  TABLE: "TABLE",
+  STORED_PROCEDURE: "STORED_PROCEDURE",
+  EXTERNAL_API: "EXTERNAL_API",
+  ENDPOINT: "ENDPOINT",
+  WEBHOOK: "WEBHOOK",
+  TOPIC: "TOPIC",
+  CONSUMER: "CONSUMER",
+  PRODUCER: "PRODUCER",
 };
 const _prismaKindIsZodKind: Record<PrismaNodeKind, NodeKind> = {
   GENERIC: "GENERIC",
-  SERVICE: "SERVICE",
-  DATABASE: "DATABASE",
-  EXTERNAL_API: "EXTERNAL_API",
+  GLOBAL_INFRA: "GLOBAL_INFRA",
+  REGION: "REGION",
+  DATACENTER: "DATACENTER",
+  NETWORK: "NETWORK",
   HOST: "HOST",
+  CONTAINER: "CONTAINER",
+  SERVICE: "SERVICE",
+  MICROSERVICE: "MICROSERVICE",
+  CRON: "CRON",
   QUEUE: "QUEUE",
+  APPLICATION: "APPLICATION",
+  MODULE: "MODULE",
+  CLASS: "CLASS",
+  FUNCTION: "FUNCTION",
+  VARIABLE: "VARIABLE",
+  BRANCH: "BRANCH",
+  DATABASE: "DATABASE",
+  TABLE: "TABLE",
+  STORED_PROCEDURE: "STORED_PROCEDURE",
+  EXTERNAL_API: "EXTERNAL_API",
+  ENDPOINT: "ENDPOINT",
+  WEBHOOK: "WEBHOOK",
+  TOPIC: "TOPIC",
+  CONSUMER: "CONSUMER",
+  PRODUCER: "PRODUCER",
 };
 void _zodKindIsPrismaKind;
 void _prismaKindIsZodKind;
@@ -369,7 +411,7 @@ export async function getCanvas(
   edgeFlows: EdgeFlowsEntry[];
   boundaryProxies: BoundaryProxyEntry[];
   flowPalettes: Record<string, FlowPalette>;
-  breadcrumbs: { id: string; title: string }[];
+  breadcrumbs: { id: string; title: string; kind: NodeKind }[];
 }> {
   const { slug, canvasNodeId } = getCanvasInput.parse(input);
 
@@ -424,23 +466,23 @@ export async function getCanvas(
       // is a tree today); a walk that reaches it is detected below and throws
       // rather than returning a silently-truncated trail.
       canvasNodeId === null
-        ? Promise.resolve<{ id: string; title: string }[]>([])
-        : db.$queryRaw<{ id: string; title: string }[]>`
+        ? Promise.resolve<{ id: string; title: string; kind: NodeKind }[]>([])
+        : db.$queryRaw<{ id: string; title: string; kind: NodeKind }[]>`
             WITH RECURSIVE ancestry AS (
-              SELECT n.id, n.title, n."parentId", 0 AS depth
+              SELECT n.id, n.title, n.kind, n."parentId", 0 AS depth
               FROM "Node" n
               WHERE n.id = ${canvasNodeId}
                 AND n."projectId" = ${project.id}
                 AND n."deletedAt" IS NULL
               UNION ALL
-              SELECT p.id, p.title, p."parentId", a.depth + 1
+              SELECT p.id, p.title, p.kind, p."parentId", a.depth + 1
               FROM "Node" p
               JOIN ancestry a ON p.id = a."parentId"
               WHERE p."projectId" = ${project.id}
                 AND p."deletedAt" IS NULL
                 AND a.depth < ${ANCESTRY_DEPTH_CAP}
             )
-            SELECT id, title FROM ancestry ORDER BY depth DESC`,
+            SELECT id, title, kind FROM ancestry ORDER BY depth DESC`,
       // Route aggregation: routed + orphan + byKind per outer Edge on this
       // Canvas. JOIN to Flow keeps soft-deleted rows so orphan detection
       // works; `is_orphan` flags them. byKind is the kind of every active
@@ -649,6 +691,41 @@ export async function updateNode(
   assertCanWrite(actor, project);
 
   return db.node.update({ where: { id: node.id }, data: { title } });
+}
+
+/**
+ * Changes a Component's `kind`. Same load-then-authorize shape as `updateNode`
+ * (find the live Node, resolve its Project, authorize owner-only via
+ * `access.assertCanWrite`; ADR-0001) — a separate narrow mutation so the kind
+ * palette commits only `{ id, kind }`. Ownership comes from the actor, never
+ * `input`.
+ *
+ * Kind is cosmetic (CONTEXT.md "Component kind"; ADR-0018): this is a single
+ * `kind` write with NO cascade — no Edge, Flow, or FlowRoute is touched, because
+ * none of them depend on kind. Any `kind` is accepted regardless of the parent's
+ * kind: affinity ranks the picker, it does not constrain the write (ADR-0019).
+ */
+export async function updateNodeKind(
+  db: Db,
+  actor: Actor,
+  input: UpdateNodeKindInput,
+): Promise<Node> {
+  const { id, kind } = updateNodeKindInput.parse(input);
+
+  const node = await db.node.findFirst({ where: { id, deletedAt: null } });
+  if (!node) {
+    throw new NotFoundError();
+  }
+  const project = await db.project.findFirst({
+    where: { id: node.projectId, deletedAt: null },
+    select: { ownerId: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanWrite(actor, project);
+
+  return db.node.update({ where: { id: node.id }, data: { kind } });
 }
 
 /**

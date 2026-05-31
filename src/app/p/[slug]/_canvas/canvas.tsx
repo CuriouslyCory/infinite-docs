@@ -356,8 +356,15 @@ function CanvasInner({
     () => ({ slug, canvasNodeId }),
     [slug, canvasNodeId],
   );
-  const [{ interiorNodes, interiorEdges, edgeFlows, boundaryProxies, flowPalettes }] =
-    api.architecture.getCanvas.useSuspenseQuery(canvasInput);
+  const [
+    { interiorNodes, interiorEdges, edgeFlows, boundaryProxies, flowPalettes, breadcrumbs },
+  ] = api.architecture.getCanvas.useSuspenseQuery(canvasInput);
+
+  // The kind palette ranks its suggestions by the scope's own Component kind —
+  // the parent of any Component added here (CONTEXT.md "Kind affinity"). The
+  // current scope is the last breadcrumb; the root scope has none, so `null`
+  // keys the root affinity.
+  const parentKind = breadcrumbs.at(-1)?.kind ?? null;
 
   // Seed React Flow's store ONCE from the hydrated query; thereafter the store
   // owns interaction state. The island is keyed by scope (./index), so a Descent
@@ -423,6 +430,8 @@ function CanvasInner({
   // Destructured so the stable `mutateAsync` can be a dep of the context values
   // below without dragging the whole (per-render) mutation object into them.
   const { mutateAsync: renameNode } = api.architecture.updateNode.useMutation();
+  const { mutateAsync: changeNodeKind } =
+    api.architecture.updateNodeKind.useMutation();
   const { mutateAsync: editDocumentation } =
     api.architecture.updateNodeDocumentation.useMutation();
   const updatePositions = api.architecture.updatePositions.useMutation();
@@ -587,6 +596,54 @@ function CanvasInner({
       });
     },
     [setNodes, utils, canvasInput, patchCanvas, renameNode],
+  );
+
+  // Change a Component's kind: optimistic icon swap in the store + cache mirror,
+  // one updateNodeKind mutation, both rolled back with a toast on failure. Same
+  // conditional-rollback shape as `commitRename` (a newer change's optimistic
+  // patch must not be clobbered by an older failing change's rollback). Kind is
+  // cosmetic, so no edge/flow state is touched (ADR-0018).
+  const commitNodeKind = useCallback(
+    (id: string, kind: NodeKind): void => {
+      const prevKind = utils.architecture.getCanvas
+        .getData(canvasInput)
+        ?.interiorNodes.find((n) => n.id === id)?.kind;
+
+      setNodes((ns) =>
+        ns.map((n) =>
+          n.id === id && n.type === "component"
+            ? { ...n, data: { ...n.data, kind } }
+            : n,
+        ),
+      );
+      patchCanvas((c) => ({
+        interiorNodes: c.interiorNodes.map((n) =>
+          n.id === id ? { ...n, kind } : n,
+        ),
+      }));
+
+      void changeNodeKind({ id, kind }).catch(() => {
+        const currentKind = utils.architecture.getCanvas
+          .getData(canvasInput)
+          ?.interiorNodes.find((n) => n.id === id)?.kind;
+        if (currentKind === kind && prevKind !== undefined) {
+          setNodes((ns) =>
+            ns.map((n) =>
+              n.id === id && n.type === "component"
+                ? { ...n, data: { ...n.data, kind: prevKind } }
+                : n,
+            ),
+          );
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.map((n) =>
+              n.id === id ? { ...n, kind: prevKind } : n,
+            ),
+          }));
+        }
+        toast.error("Couldn’t change the kind. Please try again.");
+      });
+    },
+    [setNodes, utils, canvasInput, patchCanvas, changeNodeKind],
   );
 
   // Per-ownerNodeId chain of in-flight docs saves. Two debounced saves crossing
@@ -1488,6 +1545,7 @@ function CanvasInner({
                     {canEdit && (
                       <AddComponent
                         onAdd={addComponent}
+                        parentKind={parentKind}
                         pending={createNode.isPending}
                       />
                     )}
@@ -1505,11 +1563,17 @@ function CanvasInner({
                       <ComponentDetailPanel
                         slug={slug}
                         ownerNodeId={selectedNodeId}
+                        currentKind={
+                          interiorNodes.find((n) => n.id === selectedNodeId)
+                            ?.kind ?? "GENERIC"
+                        }
+                        parentKind={parentKind}
                         initialDocumentation={
                           interiorNodes.find((n) => n.id === selectedNodeId)
                             ?.documentation ?? ""
                         }
                         onClose={closeDetailPanel}
+                        onChangeKind={commitNodeKind}
                         onFlowCountChange={commitFlowCount}
                         onCommitDocumentation={commitDocumentation}
                       />

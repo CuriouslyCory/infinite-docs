@@ -16,6 +16,7 @@ import {
   restoreNode,
   updateNode,
   updateNodeDocumentation,
+  updateNodeKind,
   updatePositions,
 } from "~/server/architecture/node.service";
 import {
@@ -61,6 +62,7 @@ import {
   updateFlowInput,
   updateNodeDocumentationInput,
   updateNodeInput,
+  updateNodeKindInput,
   updatePositionsInput,
 } from "~/lib/schemas";
 import { toTRPCError } from "~/server/architecture/trpc-errors";
@@ -158,6 +160,20 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await updateNode(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: change a Component's kind (the kind palette). Kind is
+  // cosmetic — no cascade. `protectedProcedure` is the transport gate; the real
+  // authorization is in the service (ADR-0001; ADR-0018).
+  updateNodeKind: protectedProcedure
+    .input(updateNodeKindInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await updateNodeKind(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { nodeKind } from "~/lib/schemas";
+
 import { type Actor } from "../actor";
 import { connectNodes, deleteEdge } from "../edge.service";
 import { ConflictError, ForbiddenError, NotFoundError } from "../errors";
@@ -12,6 +14,7 @@ import {
   restoreNode,
   updateNode,
   updateNodeDocumentation,
+  updateNodeKind,
   updatePositions,
 } from "../node.service";
 import { createProject } from "../project.service";
@@ -195,6 +198,31 @@ describe("createNode", () => {
       }),
     ).rejects.toBeInstanceOf(ForbiddenError);
   });
+
+  // Round-trips every value in the expanded NodeKind enum (ADR-0018) through the
+  // create → persist → getCanvas read. A regression net for the Zod↔Prisma parity
+  // guard: a kind present in the Zod enum but missing from the Prisma migration
+  // would throw here, not just fail to type-check. nodeKind.options is the Zod
+  // source of truth (the value set the kind palette also iterates).
+  it("persists and reads back every kind in the expanded taxonomy", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+
+    for (const kind of nodeKind.options) {
+      const node = await createNode(testDb, actor, {
+        projectId: project.id,
+        kind,
+        title: kind,
+      });
+      expect(node.kind).toBe(kind);
+    }
+
+    const canvas = await getCanvas(testDb, null, { slug: project.slug });
+    expect(canvas.interiorNodes.map((n) => n.kind).sort()).toEqual(
+      [...nodeKind.options].sort(),
+    );
+  });
 });
 
 describe("getCanvas", () => {
@@ -307,18 +335,20 @@ describe("getCanvas breadcrumbs", () => {
     expect(canvas.breadcrumbs).toEqual([]);
   });
 
-  it("returns [parent, current] ordered root -> current for a one-level scope", async () => {
+  it("returns [parent, current] ordered root -> current, each carrying its kind", async () => {
     const user = await makeUser();
     const actor: Actor = { userId: user.id, via: "session" };
     const project = await makeProject(user.id);
     const parent = await createNode(testDb, actor, {
       projectId: project.id,
       title: "Parent",
+      kind: "HOST",
     });
     const child = await createNode(testDb, actor, {
       projectId: project.id,
       parentId: parent.id,
       title: "Child",
+      kind: "CONTAINER",
     });
 
     const canvas = await getCanvas(testDb, null, {
@@ -326,9 +356,11 @@ describe("getCanvas breadcrumbs", () => {
       canvasNodeId: child.id,
     });
 
+    // `kind` is carried on every breadcrumb so the kind palette can compute
+    // affinity for the current scope without a second round trip (ADR-0019).
     expect(canvas.breadcrumbs).toEqual([
-      { id: parent.id, title: "Parent" },
-      { id: child.id, title: "Child" },
+      { id: parent.id, title: "Parent", kind: "HOST" },
+      { id: child.id, title: "Child", kind: "CONTAINER" },
     ]);
   });
 
@@ -428,7 +460,9 @@ describe("getCanvas scope validation", () => {
     });
 
     expect(canvas.interiorNodes).toEqual([]);
-    expect(canvas.breadcrumbs).toEqual([{ id: leaf.id, title: "Leaf" }]);
+    expect(canvas.breadcrumbs).toEqual([
+      { id: leaf.id, title: "Leaf", kind: "GENERIC" },
+    ]);
   });
 });
 
@@ -512,6 +546,152 @@ describe("updateNode", () => {
 
     const persisted = await testDb.node.findUnique({ where: { id: node.id } });
     expect(persisted?.title).toBe("Old");
+  });
+});
+
+describe("updateNodeKind", () => {
+  it("changes the kind and the new value persists", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Thing",
+      kind: "GENERIC",
+    });
+
+    const updated = await updateNodeKind(testDb, actor, {
+      id: node.id,
+      kind: "DATABASE",
+    });
+
+    expect(updated.kind).toBe("DATABASE");
+    const persisted = await testDb.node.findUnique({ where: { id: node.id } });
+    expect(persisted?.kind).toBe("DATABASE");
+  });
+
+  it("accepts any kind regardless of the parent's kind (affinity ranks, never constrains — ADR-0019)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    // A DATABASE parent; affinity would suggest TABLE/STORED_PROCEDURE for a
+    // child, but the service must still accept an "off-affinity" kind.
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "DB",
+      kind: "DATABASE",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+      kind: "TABLE",
+    });
+
+    const updated = await updateNodeKind(testDb, actor, {
+      id: child.id,
+      kind: "GLOBAL_INFRA",
+    });
+
+    expect(updated.kind).toBe("GLOBAL_INFRA");
+  });
+
+  it("does not touch incident Connections or owned Flows (kind is cosmetic)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "B",
+    });
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    });
+    const flow = await addFlow(testDb, actor, {
+      ownerNodeId: a.id,
+      kind: "GENERIC",
+      key: "f1",
+      title: "F1",
+      polarity: "INBOUND",
+    });
+
+    await updateNodeKind(testDb, actor, { id: a.id, kind: "SERVICE" });
+
+    const edgeAfter = await testDb.edge.findUnique({ where: { id: edge.id } });
+    const flowAfter = await testDb.flow.findUnique({ where: { id: flow.id } });
+    expect(edgeAfter?.deletedAt).toBeNull();
+    expect(flowAfter?.deletedAt).toBeNull();
+  });
+
+  it("rejects a non-owner changing the kind", async () => {
+    const owner = await makeUser("Owner");
+    const ownerActor: Actor = { userId: owner.id, via: "session" };
+    const project = await makeProject(owner.id);
+    const node = await createNode(testDb, ownerActor, {
+      projectId: project.id,
+      title: "Keep",
+      kind: "HOST",
+    });
+    const intruder: Actor = { userId: "intruder" };
+
+    await expect(
+      updateNodeKind(testDb, intruder, { id: node.id, kind: "DATABASE" }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    const persisted = await testDb.node.findUnique({ where: { id: node.id } });
+    expect(persisted?.kind).toBe("HOST");
+  });
+
+  it("reports not-found for an unknown Node", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+
+    await expect(
+      updateNodeKind(testDb, actor, { id: "nope", kind: "SERVICE" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("reports not-found for a soft-deleted Node", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Doomed",
+    });
+    await testDb.node.update({
+      where: { id: node.id },
+      data: { deletedAt: new Date() },
+    });
+
+    await expect(
+      updateNodeKind(testDb, actor, { id: node.id, kind: "SERVICE" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("rejects an invalid kind at the schema boundary", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Thing",
+      kind: "GENERIC",
+    });
+
+    await expect(
+      // @ts-expect-error — "NONSENSE" is not a NodeKind; the Zod parse rejects it.
+      updateNodeKind(testDb, actor, { id: node.id, kind: "NONSENSE" }),
+    ).rejects.toThrow();
+
+    const persisted = await testDb.node.findUnique({ where: { id: node.id } });
+    expect(persisted?.kind).toBe("GENERIC");
   });
 });
 

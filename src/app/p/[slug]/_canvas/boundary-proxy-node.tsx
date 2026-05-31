@@ -7,7 +7,9 @@ import { useContext, useState } from "react";
 import { type NodeKind } from "~/lib/schemas";
 import { type CanvasFlowPaletteItem } from "~/lib/types";
 
-import { CanEditContext, KIND_ICON } from "./component-node";
+import { KIND_ICON } from "~/lib/node-kinds";
+
+import { CanEditContext } from "./component-node";
 
 /**
  * The handle id prefix that marks a React Flow Handle as a Flow palette item on

@@ -1,12 +1,15 @@
 "use client";
 
-import { X } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { Suspense, useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { flowSpecKind, type FlowSpecKind } from "~/lib/schemas";
+import { KIND_ICON, KIND_LABEL } from "~/lib/node-kinds";
+import { flowSpecKind, type FlowSpecKind, type NodeKind } from "~/lib/schemas";
 import { api } from "~/trpc/react";
+
+import { KindPickerPopover } from "./kind-palette";
 
 // Lazy-loaded so the Plate bundle code-splits into its own chunk and only
 // downloads on first Component selection — it never weighs down the canvas
@@ -53,16 +56,29 @@ export function prefetchDocsEditor(): void {
 export function ComponentDetailPanel({
   slug,
   ownerNodeId,
+  currentKind,
+  parentKind,
   initialDocumentation,
   onClose,
+  onChangeKind,
   onFlowCountChange,
   onCommitDocumentation,
 }: {
   slug: string;
   ownerNodeId: string;
+  /** The selected Component's current kind, shown in the Kind row. */
+  currentKind: NodeKind;
+  /**
+   * The kind of the selected Component's PARENT (the current Canvas scope) —
+   * `null` at the root. Keys the kind palette's affinity ranking when changing
+   * kind, exactly as it does when adding a Component (CONTEXT.md "Kind affinity").
+   */
+  parentKind: NodeKind | null;
   /** The selected Component's current markdown docs, seeding the editor. */
   initialDocumentation: string;
   onClose: () => void;
+  /** Optimistic change-kind commit; the mutation lives on the canvas. */
+  onChangeKind: (ownerNodeId: string, kind: NodeKind) => void;
   /**
    * Called when the server returns a new flow count for the selected
    * Component, so the canvas can update the React Flow store and the
@@ -99,6 +115,12 @@ export function ComponentDetailPanel({
         </button>
       </header>
 
+      <KindSection
+        currentKind={currentKind}
+        parentKind={parentKind}
+        onChangeKind={(kind) => onChangeKind(ownerNodeId, kind)}
+      />
+
       <AttachSpecSection
         ownerNodeId={ownerNodeId}
         slug={slug}
@@ -121,6 +143,53 @@ export function ComponentDetailPanel({
         onCommit={onCommitDocumentation}
       />
     </div>
+  );
+}
+
+function KindSection({
+  currentKind,
+  parentKind,
+  onChangeKind,
+}: {
+  currentKind: NodeKind;
+  parentKind: NodeKind | null;
+  onChangeKind: (kind: NodeKind) => void;
+}) {
+  const Icon = KIND_ICON[currentKind];
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
+        Kind
+      </h3>
+      {/* Opens the SAME kind palette the Add control uses (ADR-0020), keyed by
+          the PARENT's kind for affinity and marking the current kind. */}
+      <KindPickerPopover
+        parentKind={parentKind}
+        currentKind={currentKind}
+        onSelect={onChangeKind}
+        trigger={({ open, toggle }) => (
+          <button
+            type="button"
+            aria-haspopup="listbox"
+            aria-expanded={open}
+            onClick={toggle}
+            className="nodrag flex items-center gap-2 rounded bg-white/10 px-2 py-1.5 text-sm text-white transition hover:bg-white/15"
+          >
+            <Icon
+              size={14}
+              aria-hidden
+              className="shrink-0 text-[hsl(280,100%,80%)]"
+            />
+            <span className="truncate">{KIND_LABEL[currentKind]}</span>
+            <ChevronDown
+              size={14}
+              aria-hidden
+              className="ml-auto shrink-0 text-white/40"
+            />
+          </button>
+        )}
+      />
+    </section>
   );
 }
 

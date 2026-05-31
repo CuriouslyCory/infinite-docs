@@ -4,10 +4,8 @@ import { type Node, type NodeProps } from "@xyflow/react";
 import { Boxes, ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 
+import { KIND_ICON, KIND_LABEL } from "~/lib/node-kinds";
 import { type NodeKind } from "~/lib/schemas";
-
-import { KIND_LABEL } from "./add-component";
-import { KIND_ICON } from "./component-node";
 
 export type BoundaryGroupMember = {
   nodeId: string;

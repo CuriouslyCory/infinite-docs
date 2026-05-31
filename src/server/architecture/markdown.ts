@@ -73,14 +73,39 @@ export interface SerializerInput {
 }
 
 // User-facing kind labels (CONTEXT.md "Component kind"). The enum identifiers
-// are code surface; never leak them into rendered output.
+// are code surface; never leak them into rendered output. A deliberate
+// server-side copy keyed by `PrismaNodeKind` — the client catalog
+// (`~/lib/node-kinds`) carries the same labels but pulls in `lucide-react`, which
+// must never reach this pure serializer module (ADR-0017). The exhaustive
+// `Record<PrismaNodeKind, string>` forces a new kind to be labelled here too, so
+// the two maps cannot silently drift in coverage.
 const KIND_LABEL: Record<PrismaNodeKind, string> = {
   GENERIC: "Generic",
-  SERVICE: "Service",
-  DATABASE: "Database",
-  EXTERNAL_API: "External API",
+  GLOBAL_INFRA: "Global infrastructure",
+  REGION: "Region",
+  DATACENTER: "Data center",
+  NETWORK: "Network",
   HOST: "Host",
+  CONTAINER: "Container",
+  SERVICE: "Service",
+  MICROSERVICE: "Microservice",
+  CRON: "Cron",
   QUEUE: "Queue",
+  APPLICATION: "Application",
+  MODULE: "Module",
+  CLASS: "Class",
+  FUNCTION: "Function",
+  VARIABLE: "Variable",
+  BRANCH: "Branch",
+  DATABASE: "Database",
+  TABLE: "Table",
+  STORED_PROCEDURE: "Stored procedure",
+  EXTERNAL_API: "External API",
+  ENDPOINT: "Endpoint",
+  WEBHOOK: "Webhook",
+  TOPIC: "Topic",
+  CONSUMER: "Consumer",
+  PRODUCER: "Producer",
 };
 
 /**
