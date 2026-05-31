@@ -76,14 +76,50 @@ export type GetCanvasInput = z.input<typeof getCanvasInput>;
  * service loads the Node, resolves its Project, and enforces owner-only access
  * (ADR-0001), which is also how a future MCP "rename" tool arrives (it holds a
  * node id, not a project handle). `title` is UNTRUSTED user content, stored
- * verbatim (prompt-injection standing note, CONTEXT.md). Title only for now;
- * editing `kind`/`documentation` is an additive change in a later milestone.
+ * verbatim (prompt-injection standing note, CONTEXT.md). Title only — editing
+ * `documentation` is its own narrow mutation (`updateNodeDocumentationInput`),
+ * editing `kind` remains an additive change in a later milestone.
  */
 export const updateNodeInput = z.object({
   id: z.string().min(1),
   title: z.string().min(1).max(200),
 });
 export type UpdateNodeInput = z.infer<typeof updateNodeInput>;
+
+// The bounded-payload cap on `Node.documentation` — pasted/typed markdown bytes.
+// Sized to be far past any practical Component doc (~100 KB is roughly 30k words)
+// while bounding the autosave payload. UTF-8 bytes, mirroring
+// `MAX_FLOW_SPEC_SOURCE_BYTES`'s precedent — a `string().max()` counts UTF-16
+// code units, which under-counts emoji and CJK by 2×; the byte refine below
+// gives a predictable wire-size budget regardless of script.
+export const MAX_NODE_DOCUMENTATION_BYTES = 100_000;
+
+/**
+ * Input for editing a Component's markdown `documentation`. A dedicated narrow
+ * mutation (not an optional field on `updateNodeInput`) so the canvas autosave
+ * sends only `{ id, documentation }` on every debounced keystroke and rename
+ * keeps its own required-`title` contract (the codebase's granular-mutation
+ * convention — cf. `updateNode` / `updatePositions`). Addressed by the Node
+ * `id`; the service resolves the Project and enforces owner-only access
+ * (ADR-0001). `documentation` is UNTRUSTED user content, stored verbatim, never
+ * interpolated (prompt-injection standing note, CONTEXT.md). Empty string is
+ * allowed (clears the docs); the cap bounds the autosave payload.
+ */
+export const updateNodeDocumentationInput = z.object({
+  id: z.string().min(1),
+  // `string().max()` counts UTF-16 code units; the cap is named `_BYTES` and
+  // measured in UTF-8 bytes, so refine to UTF-8 bytes here too — same pattern
+  // as `attachFlowSpecInput.source` below.
+  documentation: z
+    .string()
+    .refine(
+      (s) => new TextEncoder().encode(s).length <= MAX_NODE_DOCUMENTATION_BYTES,
+      { message: "Documentation exceeds the 100 KB cap." },
+    ),
+});
+export type UpdateNodeDocumentationInput = z.infer<
+  typeof updateNodeDocumentationInput
+>;
 
 /**
  * Input for the batch position write committed on drag-stop. Addressed by

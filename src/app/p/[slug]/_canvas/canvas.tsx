@@ -18,7 +18,7 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import { useRouter } from "next/navigation";
-import { Suspense, useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 
 import { canConnect } from "~/lib/connection-rules";
@@ -38,7 +38,10 @@ import {
   flowIdFromHandle,
   type BoundaryProxyNode,
 } from "./boundary-proxy-node";
-import { ComponentDetailPanel } from "./component-detail-panel";
+import {
+  ComponentDetailPanel,
+  prefetchDocsEditor,
+} from "./component-detail-panel";
 import {
   CanEditContext,
   ComponentNodeView,
@@ -247,6 +250,25 @@ function optimisticCanvasEdge(
 }
 
 /**
+ * Picks the toast message for a failed `updateNodeDocumentation` autosave.
+ * The only Zod issue the input schema raises is the byte cap (id is a bare
+ * non-empty string), so a `BAD_REQUEST` with a `zodError` payload means the
+ * doc exceeded `MAX_NODE_DOCUMENTATION_BYTES` — surface that distinctly so a
+ * user pasting a too-large doc sees WHY each keystroke fails, instead of a
+ * generic "try again" loop.
+ */
+function messageForDocsSaveFailure(error: unknown): string {
+  if (error && typeof error === "object" && "data" in error) {
+    const data = (error as { data?: { code?: string; zodError?: unknown } })
+      .data;
+    if (data?.code === "BAD_REQUEST" && data.zodError) {
+      return "Doc is too long to save (cap is ~100 KB). Trim the text to keep autosaving.";
+    }
+  }
+  return "Couldn't save documentation. Please try again.";
+}
+
+/**
  * Applies a +1/-1 delta to one Flow-kind bucket of an `edgeFlows` entry's
  * `byKind` map, keeping the optimistic mirror in the same shape the server
  * returns (zero-count kinds omitted, never negative).
@@ -336,6 +358,8 @@ function CanvasInner({
   // Destructured so the stable `mutateAsync` can be a dep of the context values
   // below without dragging the whole (per-render) mutation object into them.
   const { mutateAsync: renameNode } = api.architecture.updateNode.useMutation();
+  const { mutateAsync: editDocumentation } =
+    api.architecture.updateNodeDocumentation.useMutation();
   const updatePositions = api.architecture.updatePositions.useMutation();
   const connectNodes = api.architecture.connectNodes.useMutation();
   const { mutateAsync: editEdge } = api.architecture.updateEdge.useMutation();
@@ -450,6 +474,11 @@ function CanvasInner({
   // one updateNode mutation, both rolled back with a toast on failure. Provided
   // to the nodes through context (below) so it stays one stable reference — the
   // nodes never re-render just because the island re-rendered mid-drag.
+  //
+  // Rollback is CONDITIONAL on the cache still showing what this rename wrote:
+  // a fast-typing rename A→B can overlap a failing A→B′, and an unconditional
+  // rollback to the pre-A snapshot would clobber B's successful optimistic
+  // patch. Same fix lives in `commitDocumentation` for the autosave path.
   const commitRename = useCallback(
     (id: string, title: string): void => {
       const prevTitle = utils.architecture.getCanvas
@@ -470,7 +499,12 @@ function CanvasInner({
       }));
 
       void renameNode({ id, title }).catch(() => {
-        if (prevTitle !== undefined) {
+        const currentTitle = utils.architecture.getCanvas
+          .getData(canvasInput)
+          ?.interiorNodes.find((n) => n.id === id)?.title;
+        // Only restore if the cache still shows what THIS rename optimistically
+        // wrote — a newer rename's optimistic patch must not be undone.
+        if (currentTitle === title && prevTitle !== undefined) {
           setNodes((ns) =>
             ns.map((n) =>
               n.id === id && n.type === "component"
@@ -488,6 +522,68 @@ function CanvasInner({
       });
     },
     [setNodes, utils, canvasInput, patchCanvas, renameNode],
+  );
+
+  // Per-ownerNodeId chain of in-flight docs saves. Two debounced saves crossing
+  // a network hop must land on the server in the order the user typed them —
+  // an older payload landing after a newer one would persist stale text while
+  // the cache shows the latest, surfacing as data loss on next page refresh.
+  // The map's slot is cleared in the chain's `finally` only when this save is
+  // still the head, so concurrent writers don't race on the delete.
+  const inflightDocSavesRef = useRef(new Map<string, Promise<void>>());
+
+  // Persist a Component's documentation on the debounced autosave from the
+  // detail panel. Optimistic on the query-cache mirror only — `documentation`
+  // is not drawn on the node body, so the React Flow store needs no patch; the
+  // mirror keeps a deselect-then-reselect showing the latest text without a
+  // refetch. Fire-and-forget with a CONDITIONAL snapshot rollback + toast on
+  // failure: a newer successful save's optimistic patch must not be undone by
+  // an older failing save's rollback (the same fix `commitRename` carries).
+  // Saves are SERIALIZED per id so the server's row never lands on a stale
+  // payload (see `inflightDocSavesRef`).
+  const commitDocumentation = useCallback(
+    (id: string, documentation: string): void => {
+      const prevDoc = utils.architecture.getCanvas
+        .getData(canvasInput)
+        ?.interiorNodes.find((n) => n.id === id)?.documentation;
+
+      patchCanvas((c) => ({
+        interiorNodes: c.interiorNodes.map((n) =>
+          n.id === id ? { ...n, documentation } : n,
+        ),
+      }));
+
+      const prior =
+        inflightDocSavesRef.current.get(id) ?? Promise.resolve();
+      // `prior.catch(() => undefined)` so a prior failure doesn't poison the
+      // chain — each save's failure handling is local to its own .catch below.
+      const next: Promise<void> = prior
+        .catch(() => undefined)
+        .then(() => editDocumentation({ id, documentation }))
+        .then(() => undefined)
+        .catch((error: unknown) => {
+          const currentDoc = utils.architecture.getCanvas
+            .getData(canvasInput)
+            ?.interiorNodes.find((n) => n.id === id)?.documentation;
+          if (currentDoc === documentation && prevDoc !== undefined) {
+            patchCanvas((c) => ({
+              interiorNodes: c.interiorNodes.map((n) =>
+                n.id === id ? { ...n, documentation: prevDoc } : n,
+              ),
+            }));
+          }
+          toast.error(messageForDocsSaveFailure(error));
+        })
+        .finally(() => {
+          // Only release the slot if this save is still the chain head; a
+          // newer save will have replaced it and is responsible for clearing.
+          if (inflightDocSavesRef.current.get(id) === next) {
+            inflightDocSavesRef.current.delete(id);
+          }
+        });
+      inflightDocSavesRef.current.set(id, next);
+    },
+    [utils, canvasInput, patchCanvas, editDocumentation],
   );
 
   // Persist Component positions on drag-stop in ONE batched mutation, so a
@@ -1295,6 +1391,8 @@ function CanvasInner({
                   onNodeMouseEnter={(_event, node) => {
                     // Make Descent feel instant: warm the interior Canvas payload (tRPC
                     // cache, the same key the descended island reads) and the route shell.
+                    // Also warm the Plate docs-editor chunk so first selection of a
+                    // Component doesn't pay a "Loading editor…" flash (ADR-0015 §6).
                     if (node.id.startsWith("temp_")) return;
                     if (node.type === "boundary-proxy") return;
                     void utils.architecture.getCanvas.prefetch({
@@ -1302,6 +1400,7 @@ function CanvasInner({
                       canvasNodeId: node.id,
                     });
                     router.prefetch(`/p/${slug}/n/${node.id}`);
+                    if (canEdit) prefetchDocsEditor();
                   }}
                   onNodeDragStop={(_event, _node, dragged) =>
                     void persistPositions(dragged)
@@ -1334,8 +1433,13 @@ function CanvasInner({
                       <ComponentDetailPanel
                         slug={slug}
                         ownerNodeId={selectedNodeId}
+                        initialDocumentation={
+                          interiorNodes.find((n) => n.id === selectedNodeId)
+                            ?.documentation ?? ""
+                        }
                         onClose={closeDetailPanel}
                         onFlowCountChange={commitFlowCount}
+                        onCommitDocumentation={commitDocumentation}
                       />
                     </Panel>
                   )}

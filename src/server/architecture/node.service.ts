@@ -21,6 +21,7 @@ import {
   deleteNodeInput,
   getCanvasInput,
   restoreNodeInput,
+  updateNodeDocumentationInput,
   updateNodeInput,
   updatePositionsInput,
   type CreateNodeInput,
@@ -28,6 +29,7 @@ import {
   type GetCanvasInput,
   type NodeKind,
   type RestoreNodeInput,
+  type UpdateNodeDocumentationInput,
   type UpdateNodeInput,
   type UpdatePositionsInput,
 } from "~/lib/schemas";
@@ -647,6 +649,42 @@ export async function updateNode(
   assertCanWrite(actor, project);
 
   return db.node.update({ where: { id: node.id }, data: { title } });
+}
+
+/**
+ * Edits a Component's markdown `documentation`. Same load-then-authorize shape
+ * as `updateNode` (find the live Node, resolve its Project, authorize owner-only
+ * via `access.assertCanWrite`; ADR-0001) — a separate narrow mutation so the
+ * canvas autosave commits only `{ id, documentation }` per debounced keystroke
+ * without re-sending the title. Ownership comes from the actor, never `input`.
+ *
+ * `documentation` is UNTRUSTED user content, stored verbatim — never
+ * interpreted, never interpolated into a query (prompt-injection standing note,
+ * CONTEXT.md). The empty string is a valid value (clears the docs). Defenses for
+ * feeding this content to an LLM live at the serialization/MCP output boundary
+ * (a later milestone), not here.
+ */
+export async function updateNodeDocumentation(
+  db: Db,
+  actor: Actor,
+  input: UpdateNodeDocumentationInput,
+): Promise<Node> {
+  const { id, documentation } = updateNodeDocumentationInput.parse(input);
+
+  const node = await db.node.findFirst({ where: { id, deletedAt: null } });
+  if (!node) {
+    throw new NotFoundError();
+  }
+  const project = await db.project.findFirst({
+    where: { id: node.projectId, deletedAt: null },
+    select: { ownerId: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanWrite(actor, project);
+
+  return db.node.update({ where: { id: node.id }, data: { documentation } });
 }
 
 /**

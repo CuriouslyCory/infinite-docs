@@ -41,23 +41,24 @@ overload pressure.
 ### Component
 The user-facing unit of architecture you place, name, document, and open — a host, database,
 external API, service, module, table, or anything else worth describing. Carries markdown
-documentation. Backed by a **Node** in the data model. Components nest: opening one reveals its
-interior **Canvas**. *(The graph data model and nesting land in a later milestone; the term is
-canonical now.)*
+documentation, edited in the **Component-detail panel** through a WYSIWYG editor that renders
+the markdown formatted and toggles to an editable surface with debounced, optimistic autosave
+(no save button; the stored markdown string is the source of truth — ADR-0015). Backed by a
+**Node** in the data model. Components nest: opening one reveals its interior **Canvas**.
+*(The graph data model and nesting land in a later milestone; the term is canonical now.)*
 
 ### Node
 The data-model representation of a Component: the stored graph vertex with
 `parentId` (its containing Component, or null at the **Project** root), plus
 `kind` (see **Component kind**), position (`posX`, `posY`), `documentation`, and a
 soft-delete column (`deletedAt`). Never surfaced to users by this name.
-*(The `Node` model, creation (including child Components under a validated parent
-via `createNode` with a non-null `parentId`), scoped read at any depth
-(**getCanvas**, with **breadcrumbs**), inline rename (`updateNode`, title only for
-now), batch position writes (`updatePositions`), **Connection**/**Edge** wiring
-(see **Edge**), and cascading **soft-delete** with **undo** (`deleteNode` removes
-the Node, its subtree, and every incident or interior **Edge** as one batch;
-`restoreNode` reverses it — see **Deletion id**) are realized now; broader
-Component editing (`kind`, `documentation`) and reparenting (`move`) with cycle
+*(The `Node` model and the operations on it — `createNode` (root or child under
+a validated parent), `getCanvas` (with **breadcrumbs**), `updateNode` (title
+only), `updateNodeDocumentation` (the narrow owner-only autosave feeding the
+detail-panel markdown editor — ADR-0015), `updatePositions` (batched on
+drag-stop), and the cascading `deleteNode` / `restoreNode` pair (see **Deletion
+id**) — are realized now. **Connection**/**Edge** wiring is its own entry.
+Broader Component editing (`kind`) and reparenting (`move`) with cycle
 prevention land in later milestones.)*
 
 ### Component kind (`NodeKind`)
