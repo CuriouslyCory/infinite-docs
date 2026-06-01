@@ -7,7 +7,12 @@ import { toast } from "sonner";
 
 import { FLOW_INTERACTION_DISPLAY } from "~/lib/flow-interaction-display";
 import { KIND_ICON, KIND_LABEL } from "~/lib/node-kinds";
-import { flowSpecKind, type FlowSpecKind, type NodeKind } from "~/lib/schemas";
+import { type FlowSpecKind, type NodeKind } from "~/lib/schemas";
+import {
+  SPEC_KIND_LABEL,
+  SPEC_KIND_PLACEHOLDER,
+  specKindsFor,
+} from "~/lib/spec-kinds";
 import { api } from "~/trpc/react";
 
 import { KindPickerPopover } from "./kind-palette";
@@ -144,7 +149,9 @@ export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
 
       {!props.readOnly && (
         <AttachSpecSection
+          key={ownerNodeId}
           ownerNodeId={ownerNodeId}
+          currentKind={currentKind}
           slug={slug}
           onFlowCountChange={props.onFlowCountChange}
         />
@@ -247,17 +254,26 @@ function KindSection({
 
 function AttachSpecSection({
   ownerNodeId,
+  currentKind,
   slug,
   onFlowCountChange,
 }: {
   ownerNodeId: string;
+  /** The Component's kind — selects which spec formats the picker offers. */
+  currentKind: NodeKind;
   slug: string;
   onFlowCountChange: (ownerNodeId: string, flowCount: number) => void;
 }) {
   const utils = api.useUtils();
-  const [kind, setKind] = useState<FlowSpecKind>("OPENAPI");
+  const specKinds = specKindsFor(currentKind);
+  const [kind, setKind] = useState<FlowSpecKind>(() => specKinds[0] ?? "CUSTOM");
   const [source, setSource] = useState("");
   const attach = api.architecture.attachFlowSpec.useMutation();
+
+  // Affinity is presentation-only and the component is remounted per
+  // `ownerNodeId`, but the owner can re-kind a Component while it stays
+  // selected — clamp to a valid option so the <select> never shows a stale kind.
+  const selectedKind = specKinds.includes(kind) ? kind : (specKinds[0] ?? kind);
 
   async function onParse() {
     const trimmed = source.trim();
@@ -268,7 +284,7 @@ function AttachSpecSection({
     try {
       const result = await attach.mutateAsync({
         ownerNodeId,
-        kind,
+        kind: selectedKind,
         source: trimmed,
       });
       // Update the React Flow store + cache mirror so the "N flows" pill
@@ -294,6 +310,10 @@ function AttachSpecSection({
     }
   }
 
+  // No structured spec makes sense for this kind (infra / structural) — omit
+  // the affordance entirely rather than offer an empty picker (ADR-0019).
+  if (specKinds.length === 0) return null;
+
   return (
     <section className="flex flex-col gap-2">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
@@ -303,13 +323,13 @@ function AttachSpecSection({
         Kind
         <select
           className="nodrag rounded bg-white/10 px-2 py-1 text-sm text-white outline-none"
-          value={kind}
+          value={selectedKind}
           onChange={(e) => setKind(e.target.value as FlowSpecKind)}
           disabled={attach.isPending}
         >
-          {flowSpecKind.options.map((k) => (
+          {specKinds.map((k) => (
             <option key={k} value={k}>
-              {k}
+              {SPEC_KIND_LABEL[k]}
             </option>
           ))}
         </select>
@@ -318,7 +338,7 @@ function AttachSpecSection({
         Source
         <textarea
           className="nodrag h-32 rounded bg-white/10 p-2 font-mono text-xs text-white outline-none"
-          placeholder="Paste OpenAPI YAML or JSON…"
+          placeholder={SPEC_KIND_PLACEHOLDER[selectedKind]}
           value={source}
           onChange={(e) => setSource(e.target.value)}
           disabled={attach.isPending}
