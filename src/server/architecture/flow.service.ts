@@ -42,26 +42,31 @@ import {
 const _zodFlowKindIsPrisma: Record<FlowKind, PrismaFlowKind> = {
   GENERIC: "GENERIC",
   OPENAPI_OPERATION: "OPENAPI_OPERATION",
+  GRAPHQL_FIELD: "GRAPHQL_FIELD",
   ASYNCAPI_CHANNEL: "ASYNCAPI_CHANNEL",
   SSE_STREAM: "SSE_STREAM",
   WEBSOCKET: "WEBSOCKET",
   FUNCTION_CALL: "FUNCTION_CALL",
   EVENT: "EVENT",
+  DB_TABLE: "DB_TABLE",
 };
 const _prismaFlowKindIsZod: Record<PrismaFlowKind, FlowKind> = {
   GENERIC: "GENERIC",
   OPENAPI_OPERATION: "OPENAPI_OPERATION",
+  GRAPHQL_FIELD: "GRAPHQL_FIELD",
   ASYNCAPI_CHANNEL: "ASYNCAPI_CHANNEL",
   SSE_STREAM: "SSE_STREAM",
   WEBSOCKET: "WEBSOCKET",
   FUNCTION_CALL: "FUNCTION_CALL",
   EVENT: "EVENT",
+  DB_TABLE: "DB_TABLE",
 };
 const _zodFlowSpecKindIsPrisma: Record<FlowSpecKind, PrismaFlowSpecKind> = {
   OPENAPI: "OPENAPI",
   ASYNCAPI: "ASYNCAPI",
   TS_SIGNATURE: "TS_SIGNATURE",
   GRAPHQL: "GRAPHQL",
+  SQL_DDL: "SQL_DDL",
   CUSTOM: "CUSTOM",
 };
 const _prismaFlowSpecKindIsZod: Record<PrismaFlowSpecKind, FlowSpecKind> = {
@@ -69,6 +74,7 @@ const _prismaFlowSpecKindIsZod: Record<PrismaFlowSpecKind, FlowSpecKind> = {
   ASYNCAPI: "ASYNCAPI",
   TS_SIGNATURE: "TS_SIGNATURE",
   GRAPHQL: "GRAPHQL",
+  SQL_DDL: "SQL_DDL",
   CUSTOM: "CUSTOM",
 };
 const _zodFlowInteractionIsPrisma: Record<

@@ -319,7 +319,7 @@ export const deleteEdgeInput = z.object({
 export type DeleteEdgeInput = z.infer<typeof deleteEdgeInput>;
 
 /**
- * The seven Flow kinds. Client-safe source of truth for the value set; the
+ * The nine Flow kinds. Client-safe source of truth for the value set; the
  * Prisma `FlowKind` enum mirrors it, and a compile-time parity guard in the
  * service layer fails the build if the two ever drift. Kind is cosmetic — it
  * drives palette icons and renderer format, never authorization or routing
@@ -329,18 +329,22 @@ export type DeleteEdgeInput = z.infer<typeof deleteEdgeInput>;
 export const flowKind = z.enum([
   "GENERIC",
   "OPENAPI_OPERATION",
+  "GRAPHQL_FIELD",
   "ASYNCAPI_CHANNEL",
   "SSE_STREAM",
   "WEBSOCKET",
   "FUNCTION_CALL",
   "EVENT",
+  "DB_TABLE",
 ]);
 export type FlowKind = z.infer<typeof flowKind>;
 
 /**
- * The five FlowSpec source formats. Slice 1 implements the OPENAPI parser;
- * ASYNCAPI / TS_SIGNATURE / GRAPHQL / CUSTOM persist source and record
- * `parseError` until their parsers land additively (see CONTEXT.md
+ * The six FlowSpec source formats. OPENAPI / ASYNCAPI / GRAPHQL / SQL_DDL /
+ * TS_SIGNATURE each have a bounded parser (flow-parser/parsers); CUSTOM is
+ * hand-authored prose with no parser (source persists with a `parseError`
+ * note). The picker offers a NodeKind-relevant subset, presentation-only
+ * (~/lib/spec-kinds; ADR-0019) — the service accepts any kind (see CONTEXT.md
  * "Flow spec kind"; ADR-0011).
  */
 export const flowSpecKind = z.enum([
@@ -348,6 +352,7 @@ export const flowSpecKind = z.enum([
   "ASYNCAPI",
   "TS_SIGNATURE",
   "GRAPHQL",
+  "SQL_DDL",
   "CUSTOM",
 ]);
 export type FlowSpecKind = z.infer<typeof flowSpecKind>;

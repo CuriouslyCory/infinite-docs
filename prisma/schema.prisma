@@ -163,22 +163,28 @@ enum NodeKind {
 enum FlowKind {
     GENERIC
     OPENAPI_OPERATION
+    GRAPHQL_FIELD
     ASYNCAPI_CHANNEL
     SSE_STREAM
     WEBSOCKET
     FUNCTION_CALL
     EVENT
+    DB_TABLE
 }
 
 // A FlowSpec's source format — selects which parser materializes Flows from
-// `source`. Slice 1 implements OPENAPI; ASYNCAPI / TS_SIGNATURE / GRAPHQL /
-// CUSTOM persist source and record `parseError` until their parsers land in
-// later slices (CONTEXT.md "Flow spec kind"; ADR-0011).
+// `source`. OPENAPI / ASYNCAPI / GRAPHQL / SQL_DDL / TS_SIGNATURE each have a
+// bounded parser in flow-parser/parsers; CUSTOM is hand-authored prose (no
+// parser — source persists with a `parseError` note). Which kinds a Component
+// is OFFERED is presentation-only, keyed by NodeKind in ~/lib/spec-kinds
+// (ADR-0019 precedent: affinity ranks, never constrains) (CONTEXT.md
+// "Flow spec kind"; ADR-0011).
 enum FlowSpecKind {
     OPENAPI
     ASYNCAPI
     TS_SIGNATURE
     GRAPHQL
+    SQL_DDL
     CUSTOM
 }
 
