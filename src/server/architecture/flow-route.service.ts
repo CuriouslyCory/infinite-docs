@@ -254,6 +254,17 @@ async function resolveInnerEdgeId(
     );
   }
 
+  // The inner Edge is undirected, so a pre-existing reverse-drawn pipe between
+  // the same interior pair IS the same Connection (ADR-0023). Match it unordered
+  // on both the find and the post-create read; `idx_edge_dedup` (the unordered
+  // expression index) likewise collapses the orderings, so `createMany` skips
+  // when either direction already exists and two refinements drawn opposite ways
+  // converge on one shared inner Edge.
+  const innerPair = [
+    { sourceId: sourceNodeId, targetId: targetNodeId },
+    { sourceId: targetNodeId, targetId: sourceNodeId },
+  ];
+
   // Find-or-create the inner Edge, then lock it before returning so the
   // FlowRoute the caller is about to write cannot reference an Edge a concurrent
   // sweep (unrouteFlow / deleteEdge) soft-deletes in the gap. Those sweepers take
@@ -277,9 +288,8 @@ async function resolveInnerEdgeId(
     const inner = await db.edge.findFirstOrThrow({
       where: {
         canvasNodeId: scopeNodeId,
-        sourceId: sourceNodeId,
-        targetId: targetNodeId,
         deletedAt: null,
+        OR: innerPair,
       },
       select: { id: true },
     });

@@ -145,15 +145,18 @@ language just above — lands in a later slice of the same rollout.)*
 
 ### Edge
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
-`targetId` (both **Nodes**), an optional `label`, and a soft-delete column (`deletedAt`). The
-`sourceId`→`targetId` ordering (output **Port** → input Port) IS the direction; the arrow is
-structural, with no stored `direction` field (ADR-0009). Scoped to the Canvas it is drawn on
+`targetId` (both **Nodes**), an optional `label`, and a soft-delete column (`deletedAt`).
+`sourceId`/`targetId` are just the two endpoints in arbitrary draw order — they carry **no
+direction** and there is no stored `direction` field; a Connection is undirected and its
+arrowheads are derived from the **Flows** routed on it (ADR-0023; the flow-derived rendering
+lands in a later slice of that rollout). Scoped to the Canvas it is drawn on
 by an **explicit `canvasNodeId`** (the Component whose interior Canvas owns the Edge; null = the
 **Project** root), rather than being inferred from its endpoints — endpoints can later span
 scope levels (the M5 refinement Connection), so scope is recorded, not derived (ADR-0005).
 Three invariants hold and are enforced **in the service, not the database** (ADR-0005): both
 endpoints sit on the **same Canvas** as the Edge, an Edge never links a Node to itself, and no
-two *active* (non-soft-deleted) Edges share the same source, target, and scope. The same-Canvas
+two *active* (non-soft-deleted) Edges share the same scope and **unordered** endpoint pair
+(A→B and B→A are the same Connection; ADR-0023). The same-Canvas
 invariant has exactly **one gated exception**: the **inner Edge** of a cross-scope **FlowRoute**,
 whose **boundary endpoint** legitimately sits at a higher scope. Only `routeFlow` may write it,
 and only when that endpoint is the Flow's owner; `connectNodes` stays strict (Slice 3 /

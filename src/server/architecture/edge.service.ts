@@ -33,11 +33,13 @@ import {
  *
  * 1. no self-Connection (`sourceId !== targetId`);
  * 2. same-Canvas — both endpoints' `parentId` equals `canvasNodeId`;
- * 3. no duplicate ACTIVE Edge sharing source + target + scope (A→B is distinct
- *    from B→A — the ordered pair IS the direction; the label never factors in;
- *    a soft-deleted Edge never blocks re-creation). Fast-path `findFirst`
- *    throws the readable conflict; the partial unique index catches the
- *    concurrent racer that slips past, both translated to the same error.
+ * 3. no duplicate ACTIVE Edge sharing scope + the UNORDERED endpoint pair (A→B
+ *    and B→A are the SAME Connection — direction is derived from routed Flows,
+ *    not the column order; ADR-0023; the label never factors in; a soft-deleted
+ *    Edge never blocks re-creation). Fast-path `findFirst` throws the readable
+ *    conflict; the `idx_edge_dedup` expression index (over LEAST/GREATEST of the
+ *    endpoints) catches the concurrent racer that slips past, both translated to
+ *    the same error.
  *
  * Owner-only: the Project is addressed by `projectId` (an internal handle,
  * never the capability slug — writes are never slug-granted, ADR-0002) and the
@@ -95,7 +97,15 @@ export async function connectNodes(
   }
 
   const duplicate = await db.edge.findFirst({
-    where: { canvasNodeId, sourceId, targetId, deletedAt: null },
+    where: {
+      canvasNodeId,
+      deletedAt: null,
+      // Unordered: A→B and B→A are the same Connection (ADR-0023).
+      OR: [
+        { sourceId, targetId },
+        { sourceId: targetId, targetId: sourceId },
+      ],
+    },
     select: { id: true, label: true },
   });
   if (duplicate) {
@@ -118,9 +128,17 @@ export async function connectNodes(
     if (!isEdgeDedupCollision(error)) throw error;
     // The fast-path `findFirst` missed a concurrent racer that committed
     // first; the partial unique index caught it (ADR-0010). Load the racer
-    // so the catch path produces the same error shape as the fast path.
+    // (unordered — it may have been drawn the other way) so the catch path
+    // produces the same error shape as the fast path.
     const racer = await db.edge.findFirst({
-      where: { canvasNodeId, sourceId, targetId, deletedAt: null },
+      where: {
+        canvasNodeId,
+        deletedAt: null,
+        OR: [
+          { sourceId, targetId },
+          { sourceId: targetId, targetId: sourceId },
+        ],
+      },
       select: { id: true, label: true },
     });
     throw new ConflictError(duplicateConnectionMessage(racer?.label ?? null), {
@@ -143,10 +161,10 @@ function duplicateConnectionMessage(label: string | null): string {
  * for an existing row, and how a future MCP tool arrives: the service loads the
  * Edge, resolves its Project, and authorizes owner-only through
  * `access.assertCanWrite` (ADR-0001). Only `label` changes — `label: null`
- * clears it, `label: undefined` leaves it. There is no direction to edit: the
- * arrow is structural (output→input), derived from the endpoints (ADR-0009).
- * `label` is UNTRUSTED user content, stored verbatim (prompt-injection standing
- * note, CONTEXT.md).
+ * clears it, `label: undefined` leaves it. There is no direction to edit — a
+ * Connection is undirected; its arrowheads are derived from the Flows routed on
+ * it, never stored (ADR-0023). `label` is UNTRUSTED user content, stored verbatim
+ * (prompt-injection standing note, CONTEXT.md).
  */
 export async function updateEdge(
   db: Db,
@@ -373,19 +391,19 @@ export async function restoreEdge(
   });
 
   // Pre-check the `idx_edge_dedup` invariant (ADR-0010): any active row whose
-  // triple matches one we're about to revive would block the updateMany.
-  // Done BEFORE the updates because Postgres aborts the transaction on
-  // P2002 and we couldn't query for diagnostics from inside the catch.
-  // Mirrors `restoreNode`'s pre-check shape verbatim.
+  // UNORDERED pair + scope matches one we're about to revive would block the
+  // updateMany (ADR-0023 — A→B and B→A collide). Each revived Edge contributes
+  // both orderings. Done BEFORE the updates because Postgres aborts the
+  // transaction on P2002 and we couldn't query for diagnostics from inside the
+  // catch. Mirrors `restoreNode`'s pre-check shape.
   if (edges.length > 0) {
     const conflicts = await db.edge.findMany({
       where: {
         deletedAt: null,
-        OR: edges.map(({ canvasNodeId, sourceId, targetId }) => ({
-          canvasNodeId,
-          sourceId,
-          targetId,
-        })),
+        OR: edges.flatMap(({ canvasNodeId, sourceId, targetId }) => [
+          { canvasNodeId, sourceId, targetId },
+          { canvasNodeId, sourceId: targetId, targetId: sourceId },
+        ]),
       },
       select: { id: true },
     });

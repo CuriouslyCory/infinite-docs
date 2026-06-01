@@ -1,7 +1,7 @@
 /**
  * Pure topology rules for drawing a Connection — the no-database half of the
  * Connection invariants (CONTEXT.md "Connection"/"Edge"/"Port"; ADR-0005,
- * ADR-0009).
+ * ADR-0023).
  *
  * Lives in `~/lib` and imports nothing (no `~/server`, no `@xyflow/react`, no
  * generated Prisma client), so the Canvas island can consume it for instant
@@ -17,19 +17,17 @@
  * rules that ARE pure topology — no self-link and no duplicate against the
  * current Connection set — live here, in one tested place.
  *
- * Output→input is deliberately NOT re-checked here: a Connection can only run
- * output Port → input Port, but that is enforced structurally by React Flow's
- * strict `connectionMode` (a drag can only go from a `source` handle to a
- * `target` handle). This helper sees only endpoint ids, not which Port a drag
- * started from, so the rule would be unverifiable theater. The de-dupe key is
- * the ORDERED pair, so A→B and B→A are distinct — that ordering IS the
- * direction (ADR-0009).
+ * A Connection is undirected: the de-dupe key is the UNORDERED endpoint pair,
+ * so A→B and B→A are the SAME Connection (ADR-0023). Which way it was dragged
+ * carries no meaning — direction is derived from the Flows routed on it, not
+ * from the endpoint order. This helper sees only endpoint ids and mirrors that
+ * unordered rule for instant drag feedback.
  */
 
 /** A Connection a user is proposing to draw, by endpoint Node id. */
 export type ProposedConnection = { source: string; target: string };
 
-/** An existing Connection on the same Canvas, by endpoint Node id. */
+/** An existing Connection on the same Canvas, by endpoint Node id (unordered). */
 export type ExistingConnection = { source: string; target: string };
 
 export type ConnectionRejection = "self-link" | "duplicate";
@@ -41,9 +39,10 @@ export type ConnectionCheck =
 /**
  * Decides whether `proposed` may be drawn given the Canvas's current
  * Connections. Rejects a self-link (an endpoint to itself) and a duplicate (an
- * active Connection with the same ordered source→target already present). The
- * caller maps its own edge shape into `ExistingConnection[]` and decides how to
- * surface a rejection (a toast, a snap-back, a thrown error).
+ * active Connection between the same UNORDERED pair already present — A→B and
+ * B→A are the same Connection; ADR-0023). The caller maps its own edge shape
+ * into `ExistingConnection[]` and decides how to surface a rejection (a toast,
+ * a snap-back, a thrown error).
  */
 export function canConnect(
   proposed: ProposedConnection,
@@ -54,7 +53,9 @@ export function canConnect(
   }
   if (
     existing.some(
-      (e) => e.source === proposed.source && e.target === proposed.target,
+      (e) =>
+        (e.source === proposed.source && e.target === proposed.target) ||
+        (e.source === proposed.target && e.target === proposed.source),
     )
   ) {
     return { ok: false, reason: "duplicate" };

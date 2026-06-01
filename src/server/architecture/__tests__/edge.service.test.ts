@@ -262,7 +262,7 @@ describe("connectNodes", () => {
     expect(first.id).toBeDefined();
   });
 
-  it("treats A→B and B→A as distinct Connections", async () => {
+  it("treats A→B and B→A as the SAME Connection (undirected; ADR-0023)", async () => {
     const { actor, project, a, b } = await seedTwoRootNodes();
 
     await connectNodes(testDb, actor, {
@@ -270,13 +270,17 @@ describe("connectNodes", () => {
       sourceId: a.id,
       targetId: b.id,
     });
-    await connectNodes(testDb, actor, {
-      projectId: project.id,
-      sourceId: b.id,
-      targetId: a.id,
-    });
+    // Drawing it the other way is a duplicate, not a second Connection — a
+    // Connection is undirected and direction is derived from routed Flows.
+    await expect(
+      connectNodes(testDb, actor, {
+        projectId: project.id,
+        sourceId: b.id,
+        targetId: a.id,
+      }),
+    ).rejects.toBeInstanceOf(ConflictError);
 
-    expect(await testDb.edge.count({ where: { deletedAt: null } })).toBe(2);
+    expect(await testDb.edge.count({ where: { deletedAt: null } })).toBe(1);
   });
 
   it("treats a re-draw with a different label as a duplicate (the label does not factor in)", async () => {
