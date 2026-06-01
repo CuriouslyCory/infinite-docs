@@ -20,6 +20,7 @@ import {
   createNodeInput,
   deleteNodeInput,
   getCanvasInput,
+  moveNodeInput,
   restoreNodeInput,
   updateNodeDocumentationInput,
   updateNodeInput,
@@ -28,6 +29,7 @@ import {
   type CreateNodeInput,
   type DeleteNodeInput,
   type GetCanvasInput,
+  type MoveNodeInput,
   type NodeKind,
   type RestoreNodeInput,
   type UpdateNodeDocumentationInput,
@@ -280,14 +282,16 @@ export interface FlowPalette {
 export const FLOW_PALETTE_PAGE_SIZE = 50;
 
 // Bound on the ancestry walk shared by the breadcrumb and boundary-derivation
-// CTEs. The graph is a tree today, so this is primarily cycle-defense for a
-// future move/reparent feature — but it ALSO bounds legitimate nesting. Rather
-// than silently truncate a trail (or a proxy set) past the cap, `getCanvas`
-// detects a walk that reached the ceiling and throws (see the truncation check
-// below) so the limit surfaces as a loud, typed error instead of missing data.
-// 256 is far past any real architecture nesting; hitting it means a cycle or
-// pathological depth, both of which a viewer should be told about, not handed a
-// quietly-incomplete Canvas.
+// CTEs. The graph is acyclic — `moveNode` owns cycle prevention (ADR-0024,
+// rejecting any reparent whose new parent sits in the moving subtree) — so the
+// cap is not the only defense against unbounded recursion; it ALSO bounds
+// legitimate nesting. Rather than silently truncate a trail (or a proxy set)
+// past the cap, `getCanvas` detects a walk that reached the ceiling and throws
+// (see the truncation check below) so the limit surfaces as a loud, typed error
+// instead of missing data. 256 is far past any real architecture nesting;
+// hitting it means a regression in cycle prevention or pathological depth, both
+// of which a viewer should be told about, not handed a quietly-incomplete
+// Canvas.
 const ANCESTRY_DEPTH_CAP = 256;
 
 // Raw shape of one row from the boundary-derivation query. `palette` is a
@@ -462,9 +466,10 @@ export async function getCanvas(
       // The breadcrumb trail walks `parentId` from the scope up to the root
       // in one recursive CTE (ADR-0006). At the root scope there are no
       // ancestors, so we skip the query entirely. The `ANCESTRY_DEPTH_CAP`
-      // bound is cycle defense for a future `move`/reparent feature (the graph
-      // is a tree today); a walk that reaches it is detected below and throws
-      // rather than returning a silently-truncated trail.
+      // bound is belt-and-suspenders against cycle-prevention regressions
+      // (`moveNode` owns prevention today, ADR-0024) and a real depth cap; a
+      // walk that reaches it is detected below and throws rather than
+      // returning a silently-truncated trail.
       canvasNodeId === null
         ? Promise.resolve<{ id: string; title: string; kind: NodeKind }[]>([])
         : db.$queryRaw<{ id: string; title: string; kind: NodeKind }[]>`
@@ -787,6 +792,173 @@ export async function updateNodeDocumentation(
 }
 
 /**
+ * Reparents a Component to a new Canvas scope. Same load-then-authorize shape
+ * as the other narrow Node mutations; the new scope is `parentId` (null = the
+ * Project root; a Node id = that Component's interior Canvas). Ownership comes
+ * from the actor, never `input` (ADR-0001). The MCP `move_component` tool is
+ * the canonical caller; there is no web/tRPC counterpart yet.
+ *
+ * Structural but deliberately NON-cascading (ADR-0024) — two rejects keep the
+ * graph honest:
+ *
+ * 1. CYCLE → {@link ValidationError}. The new parent must not be the Node
+ *    itself or any of its descendants. We compute the subtree of `node` (the
+ *    recursive `parentId` walk `deleteNode` uses) and reject when `parentId`
+ *    falls inside it — depth-0 self-parent and any deeper ancestor-onto-
+ *    descendant case in one shot. BAD_REQUEST, not CONFLICT: the request is
+ *    malformed for THIS node; no state change makes it valid.
+ *
+ * 2. ORPHANING incident Connections → {@link ConflictError} with
+ *    `details.conflictingEdgeIds`. The same-Canvas invariant (ADR-0005) held
+ *    BEFORE the move, so the Component's incident Edges all sit on the old
+ *    Canvas (`canvasNodeId = oldParentId`). Moving the Component leaves them
+ *    dangling. Rather than silently rescope or sever (philosophy #6 — never
+ *    "turn off the rule to pass"), reject and tell the agent to disconnect
+ *    first. The structured details are the AI-readable self-correction
+ *    channel (ADR-0010 named pattern, the same posture `connectNodes` /
+ *    `restoreEdge` use).
+ *
+ * Cross-scope FlowRoutes are SAFE under move today (ADR-0024 "Considered: a
+ * refinement FlowRoute"). `routeFlow` constrains the boundary endpoint to be
+ * an endpoint of the outer Edge, and `connectNodes` keeps outer Edges
+ * same-Canvas; together those force the boundary endpoint and the inner
+ * Edge's `canvasNodeId` scope to share a parent — so whenever the inner
+ * Edge's scope rides into the moving subtree, the boundary endpoint rides
+ * with it. The route stays self-consistent and no falsification check is
+ * needed at this layer. If a future writer loosens these constraints (e.g.
+ * deeper refinement nesting), this is where the additional reject lands.
+ *
+ * Idempotent: a move to the current parent is a no-op (returns the node
+ * unchanged). Atomicity: this function makes multiple reads plus one write,
+ * so the caller MUST wrap it in `db.$transaction` (the MCP tool handler
+ * does) — a concurrent `connectNodes` could otherwise commit an incident
+ * Edge between the orphan check and the parentId write.
+ *
+ * See ADR-0024 (the reject decision and the cross-scope analysis) and
+ * ADR-0005 (the same-Canvas invariant the rejects preserve).
+ */
+export async function moveNode(
+  db: Db,
+  actor: Actor,
+  input: MoveNodeInput,
+): Promise<Node> {
+  const { id, parentId } = moveNodeInput.parse(input);
+
+  const node = await db.node.findFirst({
+    where: { id, deletedAt: null },
+    select: { id: true, projectId: true, parentId: true },
+  });
+  if (!node) {
+    throw new NotFoundError();
+  }
+  const project = await db.project.findFirst({
+    where: { id: node.projectId, deletedAt: null },
+    select: { ownerId: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanWrite(actor, project);
+
+  // Idempotent: a move that doesn't change `parentId` is a no-op. Return the
+  // full Node row so the caller's optimistic UI / tool result still has it.
+  // Filter `deletedAt` here too — under READ COMMITTED, a concurrent
+  // soft-delete can become visible between the initial `findFirst` and this
+  // read, and the no-op path must not hand back a tombstoned row.
+  if (parentId === node.parentId) {
+    const current = await db.node.findFirst({
+      where: { id: node.id, deletedAt: null },
+    });
+    if (!current) {
+      throw new NotFoundError();
+    }
+    return current;
+  }
+
+  // The new parent must be a live Node in this same owned Project. Mirrors
+  // `createNode`'s child posture: a missing / soft-deleted / foreign-project
+  // parent surfaces as not-found.
+  if (parentId !== null) {
+    const parent = await db.node.findFirst({
+      where: { id: parentId, projectId: node.projectId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!parent) {
+      throw new NotFoundError();
+    }
+  }
+
+  // The moving subtree (root included), for the cycle check. Same recursive
+  // walk `deleteNode` uses; the graph is acyclic — this function owns
+  // prevention — so the recursion terminates. Bound params only;
+  // double-quoted PascalCase identifiers because Postgres folds unquoted
+  // names to lowercase (ADR-0006).
+  const subtreeSet = new Set(
+    (
+      await db.$queryRaw<{ id: string }[]>`
+        WITH RECURSIVE subtree AS (
+          SELECT n.id
+          FROM "Node" n
+          WHERE n.id = ${node.id}
+            AND n."projectId" = ${node.projectId}
+            AND n."deletedAt" IS NULL
+          UNION ALL
+          SELECT c.id
+          FROM "Node" c
+          JOIN subtree s ON c."parentId" = s.id
+          WHERE c."projectId" = ${node.projectId}
+            AND c."deletedAt" IS NULL
+        )
+        SELECT id FROM subtree`
+    ).map((r) => r.id),
+  );
+
+  // (1) CYCLE: the new parent in the moving subtree (including
+  // `parentId === node.id` at depth 0) would create a cycle. ValidationError
+  // because the request is malformed for THIS node — no state change makes
+  // it valid. Contrast step 2's ConflictError, which says "valid request,
+  // change the state and retry".
+  if (parentId !== null && subtreeSet.has(parentId)) {
+    throw new ValidationError(
+      "A Component cannot be moved under itself or one of its descendants.",
+    );
+  }
+
+  // (2) ORPHANING incident Connections: every active Edge with the moving
+  // node as an endpoint lives on the old Canvas (same-Canvas invariant held
+  // before the move; ADR-0005). Reject so the agent disconnects first;
+  // `conflictingEdgeIds` is the AI-readable channel.
+  const incidentEdges = await db.edge.findMany({
+    where: {
+      projectId: node.projectId,
+      deletedAt: null,
+      OR: [{ sourceId: node.id }, { targetId: node.id }],
+    },
+    select: { id: true },
+  });
+  if (incidentEdges.length > 0) {
+    const count = incidentEdges.length;
+    throw new ConflictError(
+      `Can't move this Component: ${count} active Connection${count === 1 ? "" : "s"} still attach${count === 1 ? "es" : ""} it to its current Canvas. Disconnect the Connection${count === 1 ? "" : "s"} first, then move.`,
+      { conflictingEdgeIds: incidentEdges.map((e) => e.id) },
+    );
+  }
+
+  // Subtree travels by identity — only the moved Node's `parentId` changes;
+  // descendants keep their `parentId`, interior Edges keep their
+  // `canvasNodeId`. Ordinary Edges respect same-Canvas (ADR-0005), so no
+  // descendant Edge crosses the subtree boundary. Cross-scope FlowRoutes are
+  // self-consistent under move (see the docstring): `routeFlow` already
+  // pins the boundary endpoint to a sibling of the inner-Edge scope, so
+  // whenever the inner scope rides into the subtree, the boundary endpoint
+  // does too.
+  return db.node.update({
+    where: { id: node.id },
+    data: { parentId },
+  });
+}
+
+/**
  * Commits a batch of Component positions in one call — the single mutation the
  * Canvas fires on drag-stop (the perf model commits exactly one write when a
  * drag ends, never one per frame; CONTEXT.md / PRD). Batch by design because a
@@ -937,11 +1109,11 @@ export async function deleteNode(
   assertCanWrite(actor, project);
 
   // Gather the subtree (root included) in one recursive descent of `parentId`.
-  // No depth cap — the graph is acyclic (no move/reparent yet; move will own
-  // cycle prevention per the glossary), so the recursion terminates naturally.
-  // Completeness beats a cap: a truncated cascade would silently orphan a
-  // descendant under a deleted ancestor, violating ADR-0008. If runaway recursion
-  // ever becomes a risk (move lands), the fail-loud guard below will catch any
+  // No depth cap — the graph is acyclic (`moveNode` rejects any reparent whose
+  // new parent sits in the moving subtree; ADR-0024), so the recursion
+  // terminates naturally. Completeness beats a cap: a truncated cascade would
+  // silently orphan a descendant under a deleted ancestor, violating ADR-0008.
+  // If cycle prevention ever regresses, the fail-loud guard below catches any
   // orphan that slips through. Bound params only; identifiers double-quoted
   // PascalCase because Postgres folds unquoted names to lowercase (ADR-0006).
   const subtree = await db.$queryRaw<{ id: string }[]>`

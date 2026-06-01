@@ -199,6 +199,28 @@ export type UpdateNodeDocumentationInput = z.infer<
 >;
 
 /**
+ * Input for reparenting a Component (`moveNode`). Addressed by the Node `id`
+ * — the natural key for an existing row, and how the MCP `move_component` tool
+ * arrives. The service loads the Node, resolves its Project, and enforces
+ * owner-only access (ADR-0001).
+ *
+ * `parentId` is the new Canvas scope: `null` moves the Component to the
+ * Project root; a Node id reparents it under that Component's interior Canvas.
+ * Required, not defaulted — a move call must state intent (memory: prefer
+ * narrow required inputs). The service rejects cycle-creating moves with
+ * `ValidationError` and rejects moves that would orphan an incident
+ * Connection with `ConflictError` (ADR-0024). The refinement-FlowRoute
+ * falsification case is currently unreachable under existing
+ * `routeFlow` / `connectNodes` constraints and is named in ADR-0024 as
+ * future follow-up logic.
+ */
+export const moveNodeInput = z.object({
+  id: z.string().min(1),
+  parentId: z.string().min(1).nullable(),
+});
+export type MoveNodeInput = z.infer<typeof moveNodeInput>;
+
+/**
  * Input for the batch position write committed on drag-stop. Addressed by
  * `projectId` (an internal handle, never the capability slug — writes are never
  * slug-granted, ADR-0002): the service authorizes the whole batch once against

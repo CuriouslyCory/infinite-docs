@@ -56,10 +56,13 @@ soft-delete column (`deletedAt`). Never surfaced to users by this name.
 a validated parent), `getCanvas` (with **breadcrumbs**), `updateNode` (title
 only), `updateNodeDocumentation` (the narrow owner-only autosave feeding the
 detail-panel markdown editor — ADR-0015), `updatePositions` (batched on
-drag-stop), and the cascading `deleteNode` / `restoreNode` pair (see **Deletion
-id**) — are realized now. **Connection**/**Edge** wiring is its own entry.
-Broader Component editing (`kind`) and reparenting (`move`) with cycle
-prevention land in later milestones.)*
+drag-stop), `moveNode` (reparent to a new Canvas scope; cycle-creating moves
+reject as `ValidationError`, moves that would orphan an incident Connection
+reject as `ConflictError` with `details.conflictingEdgeIds` — non-cascading by
+design, ADR-0024), and the cascading `deleteNode` / `restoreNode` pair (see
+**Deletion id**) — are realized now. `moveNode` ships via the MCP
+`move_component` **MCP tool** (#19); the web/tRPC reparent surface is later
+work. **Connection**/**Edge** wiring is its own entry.)*
 
 ### Component kind (`NodeKind`)
 A Component's category, stored on its **Node** as `kind: NodeKind`. The value
@@ -454,21 +457,23 @@ convenience philosophy.
 An AI client that speaks the **MCP path**, authenticating with an **API token** that grants it the
 minting user's access. The agent *consumes* the token; the token is **not** the agent's identity (so
 never "agent token" / "agent key" — see **API token**). It reads the architecture as deterministic
-**markdown** **MCP resources** and, in later milestones, maintains it via MCP tools. The word is
-**agent** — never "bot", "client", "consumer", or "AI" as the domain noun. *(The authenticated read
-surface an agent connects to is realized now via #18; write tools are #19/#20.)*
+**markdown** **MCP resources** and maintains it via **MCP tools**. The word is **agent** — never
+"bot", "client", "consumer", or "AI" as the domain noun. *(The authenticated read surface is
+realized now via #18; the single-op MCP write tools — create / connect / update-docs / move — are
+realized now via #19. The `apply_graph` batch tool is #20.)*
 
 ### MCP path
 The authenticated route — `/api/mcp`, a Next.js route handler speaking **Streamable HTTP** — through
-which an **agent** reads (and, in later milestones, maintains) the architecture. A **thin adapter**
-(ADR-0001): it resolves an **Actor** from a bearer **API token** (`resolveActorFromToken`, rejecting
-missing / revoked / expired tokens with one indistinguishable 401 — **no anonymous access**) and
-calls the service layer, holding no business logic or authorization of its own. The system's **second
-transport adapter** after the tRPC API; unlike that API, the MCP path does not pass through the tRPC
-guard, which is why authorization lives in the service layer (**access** module). The word is **MCP
-path** / **MCP endpoint** / **MCP server** — never "MCP API" (redundant; tRPC is "the API layer"),
-"the agent endpoint" (the agent consumes it; the endpoint is not the agent's), or "MCP route". *(The
-read surface is realized now via #18 — read-only; see ADR-0022. Write tools are #19/#20.)*
+which an **agent** reads and maintains the architecture. A **thin adapter** (ADR-0001): it resolves
+an **Actor** from a bearer **API token** (`resolveActorFromToken`, rejecting missing / revoked /
+expired tokens with one indistinguishable 401 — **no anonymous access**) and calls the service
+layer, holding no business logic or authorization of its own. The system's **second transport
+adapter** after the tRPC API; unlike that API, the MCP path does not pass through the tRPC guard,
+which is why authorization lives in the service layer (**access** module). The word is **MCP path**
+/ **MCP endpoint** / **MCP server** — never "MCP API" (redundant; tRPC is "the API layer"), "the
+agent endpoint" (the agent consumes it; the endpoint is not the agent's), or "MCP route". *(The
+read surface is realized now via #18 (see ADR-0022); the **MCP write tools** — create / connect /
+update-docs / move — are realized now via #19 (see ADR-0024). The `apply_graph` batch tool is #20.)*
 
 ### MCP resource
 A read-addressable unit an **agent** dereferences over the **MCP path**, returning a **Project**'s
@@ -478,9 +483,27 @@ map, addressed by URI). Addressed under the `architecture://` scheme by internal
 `nodeId` for `subtree`) — **never by a user id**; an Actor reads only its own projects, and
 `resources/list` enumerates only those (reusing the owner-scoped `listProjects`). The word is
 **resource** — the MCP-spec native term, so no Component/Node split applies (the overload that
-motivates the split is absent). Never "tool" (a **tool** invokes or mutates — #19 / #34 own those),
+motivates the split is absent). Never "tool" (a **tool** invokes or mutates — see **MCP tool**),
 "endpoint" (that names the route), or "query". *(Realized now via #18; #38's Flow resources
 (`flow/:id`, `flow-route/:id`) append additively. See ADR-0017, ADR-0022.)*
+
+### MCP tool
+A write-addressable unit an **agent** invokes over the **MCP path** to mutate the architecture. A
+**thin adapter** (ADR-0001): each tool wraps a single service-layer call inside a `db.$transaction`
+and surfaces the result as a short text confirmation that includes the affected row id, so the
+agent can chain calls without an intermediate read. Authorization, invariants, and de-dupe live in
+the service — the tool registers, parses, and translates errors only. The word is **tool** — the
+MCP-spec native term, so no split applies. Never "action", "command", "mutation" (collides with
+tRPC), or "verb". Today's surface (#19) is the **MCP write tools** — `create_component`,
+`connect_components`, `update_component_docs`, `move_component` — covering single-Component create
+(root or child via optional `parentId`), one Connection per call, narrow docs replace, and
+reparenting (cycle-creating moves reject as `ValidationError`; moves that would orphan an incident
+Connection reject as `ConflictError` with `details.conflictingEdgeIds`; non-cascading by design,
+ADR-0024). **No destructive tool is exposed at this version** (acceptance criterion). The catalog is
+plain data (`WRITE_TOOLS` in `~/server/mcp/tool-catalog.ts`), so the registration loop, `tools/list`,
+and `/llms.txt` all render from one source — additional tools (Flow / FlowRoute writers in
+issues #40 / #42, plus the `apply_graph` batch tool in #20) plug in without touching the adapter,
+the auth gate, or the route. *(Realized now via #19; see ADR-0001, ADR-0010, ADR-0022, ADR-0024.)*
 
 ### llms.txt
 The served discovery document at `/llms.txt` that tells an **agent** how to reach the **MCP path**,

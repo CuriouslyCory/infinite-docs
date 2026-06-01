@@ -4,13 +4,19 @@ import { nodeKind } from "~/lib/schemas";
 
 import { type Actor } from "../actor";
 import { connectNodes, deleteEdge } from "../edge.service";
-import { ConflictError, ForbiddenError, NotFoundError } from "../errors";
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from "../errors";
 import { addFlow, attachFlowSpec, deleteFlow } from "../flow.service";
 import {
   assertNoOrphanedChildren,
   createNode,
   deleteNode,
   getCanvas,
+  moveNode,
   restoreNode,
   updateNode,
   updateNodeDocumentation,
@@ -866,6 +872,316 @@ describe("updateNodeDocumentation", () => {
     expect(second.documentation).toBe(markdown);
     const persisted = await testDb.node.findUnique({ where: { id: node.id } });
     expect(persisted?.documentation).toBe(markdown);
+  });
+});
+
+describe("moveNode", () => {
+  it("reparents a root Component under a live parent", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const newParent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Child",
+    });
+
+    const moved = await moveNode(testDb, actor, {
+      id: child.id,
+      parentId: newParent.id,
+    });
+
+    expect(moved.parentId).toBe(newParent.id);
+    const persisted = await testDb.node.findUnique({ where: { id: child.id } });
+    expect(persisted?.parentId).toBe(newParent.id);
+  });
+
+  it("moves a nested Component back to the Project root", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+
+    const moved = await moveNode(testDb, actor, {
+      id: child.id,
+      parentId: null,
+    });
+
+    expect(moved.parentId).toBeNull();
+  });
+
+  it("is a no-op when parentId matches the current parent (idempotent)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+
+    const result = await moveNode(testDb, actor, {
+      id: child.id,
+      parentId: parent.id,
+    });
+
+    expect(result.id).toBe(child.id);
+    expect(result.parentId).toBe(parent.id);
+    expect(result.updatedAt).toEqual(child.updatedAt);
+  });
+
+  it("rejects moving a Component under itself (depth-0 cycle)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const node = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Self",
+    });
+
+    await expect(
+      moveNode(testDb, actor, { id: node.id, parentId: node.id }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("rejects moving a Component under one of its descendants (deeper cycle)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const grandparent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Grandparent",
+    });
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: grandparent.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+
+    // Move grandparent under child → cycle (child is a descendant of
+    // grandparent). Single CTE walk catches it.
+    await expect(
+      moveNode(testDb, actor, { id: grandparent.id, parentId: child.id }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("rejects a move whose new parent is a soft-deleted Node", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const newParent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Child",
+    });
+    await testDb.node.update({
+      where: { id: newParent.id },
+      data: { deletedAt: new Date() },
+    });
+
+    await expect(
+      moveNode(testDb, actor, { id: child.id, parentId: newParent.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("rejects a move whose new parent is from another Project (no cross-project nesting)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const projectA = await makeProject(user.id, "A");
+    const projectB = await makeProject(user.id, "B");
+    const foreignParent = await createNode(testDb, actor, {
+      projectId: projectB.id,
+      title: "Foreign",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: projectA.id,
+      title: "Child",
+    });
+
+    await expect(
+      moveNode(testDb, actor, { id: child.id, parentId: foreignParent.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("reports not-found for an unknown new parent", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Child",
+    });
+
+    await expect(
+      moveNode(testDb, actor, { id: child.id, parentId: "nope" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("reports not-found for an unknown moved Node", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+
+    await expect(
+      moveNode(testDb, actor, { id: "nope", parentId: null }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("rejects a non-owner attempting to move a Component", async () => {
+    const owner = await makeUser("Owner");
+    const ownerActor: Actor = { userId: owner.id, via: "session" };
+    const project = await makeProject(owner.id);
+    const node = await createNode(testDb, ownerActor, {
+      projectId: project.id,
+      title: "Owned",
+    });
+    const intruder: Actor = { userId: "intruder" };
+
+    await expect(
+      moveNode(testDb, intruder, { id: node.id, parentId: null }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("rejects a move when the Component still has incident Connections, naming them in details.conflictingEdgeIds", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "B",
+    });
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    });
+    const newParent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+
+    const error = await moveNode(testDb, actor, {
+      id: a.id,
+      parentId: newParent.id,
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(ConflictError);
+    // Structured details are the AI-readable channel — the agent reads the
+    // blocking Connection ids and disconnects (or unroutes) before retrying
+    // (ADR-0010 named pattern, ADR-0024).
+    expect((error as ConflictError).details).toEqual({
+      conflictingEdgeIds: [edge.id],
+    });
+
+    // The move was rejected: parentId stays put.
+    const persisted = await testDb.node.findUnique({ where: { id: a.id } });
+    expect(persisted?.parentId).toBeNull();
+  });
+
+  it("ignores soft-deleted incident Connections when deciding whether to reject", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "B",
+    });
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    });
+    await testDb.$transaction((tx) =>
+      deleteEdge(tx, actor, { id: edge.id }),
+    );
+    const newParent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+
+    // The only incident edge is soft-deleted — move proceeds.
+    const moved = await moveNode(testDb, actor, {
+      id: a.id,
+      parentId: newParent.id,
+    });
+    expect(moved.parentId).toBe(newParent.id);
+  });
+
+  it("descendants travel with the moved Component (parentId of descendants unchanged)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const subtreeRoot = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "SubtreeRoot",
+    });
+    const childA = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: subtreeRoot.id,
+      title: "ChildA",
+    });
+    const grandchild = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: childA.id,
+      title: "Grandchild",
+    });
+    const newParent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "NewParent",
+    });
+
+    await moveNode(testDb, actor, {
+      id: subtreeRoot.id,
+      parentId: newParent.id,
+    });
+
+    // Only the moved Node's parentId changes; descendants keep their
+    // parentId, so the subtree shape rides intact under the new Canvas.
+    const movedSubtreeRoot = await testDb.node.findUnique({
+      where: { id: subtreeRoot.id },
+    });
+    const persistedChild = await testDb.node.findUnique({
+      where: { id: childA.id },
+    });
+    const persistedGrandchild = await testDb.node.findUnique({
+      where: { id: grandchild.id },
+    });
+    expect(movedSubtreeRoot?.parentId).toBe(newParent.id);
+    expect(persistedChild?.parentId).toBe(subtreeRoot.id);
+    expect(persistedGrandchild?.parentId).toBe(childA.id);
   });
 });
 
