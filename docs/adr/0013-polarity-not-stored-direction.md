@@ -2,7 +2,17 @@
 
 ## Status
 
-Accepted (Slice 4 of flow-routed-connections). Reaffirms
+**Superseded by [ADR-0023](0023-connection-direction-derived-from-flows.md).**
+The polarity-vs-arrow gate this ADR added to `routeFlow`, the
+`POLARITY_MISMATCH` discriminator, the boundary-proxy orientation split, and the
+reverse-Connection reconciliation are all retired: a Connection is undirected, so
+any owner-endpoint Flow rides it and its interaction verb derives the arrow at
+read time — there is no mismatch state to reach (which closes the MCP hole this
+ADR worried about *by construction*, not by a guard). `FlowPolarity`
+(INBOUND/OUTBOUND) became `FlowInteraction` (REQUEST/PUSH/SUBSCRIBE/DUPLEX). The
+reasoning below is retained for history.
+
+Originally: Accepted (Slice 4 of flow-routed-connections). Reaffirms
 [ADR-0009](0009-connection-direction-is-structural.md) (a Connection's direction
 is structural — the arrow cannot lie) and tightens the deliberately
 direction-blind inner-Edge write of

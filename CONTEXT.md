@@ -121,13 +121,15 @@ canonical-command-palette ADR is deferred until a second palette adopter, per
 docs-travel-with-code-slices.)*
 
 ### Connection
-The user-facing link between two Components, drawn on a **Canvas** by dragging from one
-Component's output **Port** to another's input Port. Carries an optional **label** (untrusted
-user content — stored verbatim, never interpreted; see the prompt-injection standing note).
-Backed by an **Edge**. A Connection's direction is **structural**: the arrow always points at
-the input Port, derived from the output→input (`sourceId`→`targetId`) ordering — never a stored
-or user-set field, so it cannot lie (ADR-0009). A two-way relationship is **two Connections**
-(one each way), each independently labelable. *(Drawing, labeling, and removing a Connection are
+The user-facing link between two Components, drawn on a **Canvas** by dragging between their
+**Ports** (in either direction — Ports are non-directional). Carries an optional **label**
+(untrusted user content — stored verbatim, never interpreted; see the prompt-injection standing
+note). Backed by an **Edge**. A Connection is **undirected**: it has no stored direction, and
+its rendered arrowheads are **derived** from the **Flows** routed on it — none → a plain line,
+one direction → one arrowhead, both → arrowheads at both ends (a WebSocket is ONE Connection,
+not two). The derivation reads each routed Flow's **Interaction** verb (REQUEST/SUBSCRIBE point
+at the owner, PUSH away, DUPLEX both), so the arrow follows the traffic and cannot lie
+(ADR-0023, superseding ADR-0009). *(Drawing, labeling, and removing a Connection are
 realized now — see **Edge** for the same-Canvas, no-self-link, and no-duplicate-active rules.
 A Connection that carries one or more **FlowRoutes** wears a routed-count pill (**"N / M
 routed"**) and exposes a **"+ flow"** affordance when selected by the owner, listing the
@@ -168,26 +170,29 @@ rule landed via ADR-0010 — service-primary with a DB backstop that translates 
 refinement.)*
 
 ### Port
-A Component's connection point — the user-facing name for a React Flow **handle**. Every
-Component exposes exactly two: an **input Port** (the `target` handle, rendered on the left,
-where Connections arrive) and an **output Port** (the `source` handle, rendered on the right,
-where Connections originate). A **Connection** is drawn by dragging output Port → input Port,
-and that ordering is the Connection's structural direction — the arrow points at the input Port
-(ADR-0009). Both Ports are **unbounded**: an output Port can feed many input Ports (fan-out) and
-an input Port can receive from many output Ports (fan-in), with no connection-count cap; the
-only limit is the de-dupe rule (no two *active* Connections share the same source + target +
-scope; see **Edge** and ADR-0005). The word in prose and UI is **Port**; the React Flow code
-word is **handle** (the same user-vs-code split as Component/Node) — never "connector",
-"socket", "anchor", or "terminal". *(The two handles render on every Component now, and "Port"
-is the canonical user word as of this slice. Exactly two Ports per Component — typed, named, or
-per-protocol Ports are out of scope.)*
+A Component's connection point — the user-facing name for a React Flow **handle**.
+**Non-directional** (ADR-0023): a Component is not directional, so a Port carries no
+input/output role. Every Component exposes two (rendered left and right) purely for
+drag-discoverability; under React Flow's `ConnectionMode.Loose` either can start *or* end a
+**Connection**, in either direction. Which way a Connection is drawn carries no meaning — its
+arrowheads are derived from the **Flows** routed on it (see **Connection**, **Interaction**).
+Both Ports are **unbounded**: a Port can feed many Connections and receive from many (fan-out
+and fan-in), with no connection-count cap; the only limit is the de-dupe rule (no two *active*
+Connections between the same **unordered** Component pair on a scope; see **Edge** and ADR-0023).
+The word in prose and UI is **Port**; the React Flow code word is **handle** (the same
+user-vs-code split as Component/Node) — never "connector", "socket", "anchor", or "terminal".
+*(The two non-directional handles render on every Component now; the former input/output
+framing retired with ADR-0023. Typed, named, or per-protocol Ports remain out of scope.)*
 
-### Edge direction — retired
-Removed in the slice that made the Connection arrow **structural** (ADR-0009). Direction was
-once a cosmetic `EdgeDirection` field (`NONE` / `FORWARD` / `BIDIRECTIONAL`) the user cycled by
-hand; it is no longer stored. The arrow now always points at the target's **input Port**
-(output→input), derived from the `sourceId`→`targetId` ordering, and a two-way relationship is
-**two Connections**. See **Connection**, **Port**, and ADR-0009.
+### Edge direction — retired (twice)
+Direction has never been a stored field on the Edge. It was first a cosmetic `EdgeDirection`
+enum (`NONE` / `FORWARD` / `BIDIRECTIONAL`) the user cycled by hand (removed by ADR-0009, which
+made the arrow *structural* — derived from the `sourceId`→`targetId` ordering). ADR-0023 then
+removed even that structural meaning: `sourceId`/`targetId` are just the two endpoints in
+arbitrary draw order, the de-dupe pair is **unordered**, and a Connection's arrowheads are
+**derived from the Flows routed on it** (see **Connection**, **Interaction**). Re-introducing a
+stored `direction` (or a `polarity`-on-Edge) field regresses both ADRs. See **Connection**,
+**Port**, **Interaction**, and ADR-0023.
 
 ### Canvas
 A **derived view, not a stored entity.** The Canvas of a Component `N` is

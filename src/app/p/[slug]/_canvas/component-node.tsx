@@ -131,14 +131,17 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
         data.optimistic ? "opacity-60" : "opacity-100"
       }`}
     >
-      {/* Input Port — the left (target) handle: where Connections arrive.
-          "Port" is the user word; "handle" stays React Flow's code word
-          (CONTEXT.md "Port"). */}
+      {/* A neutral connection point — Components are not directional, so a Port
+          carries no input/output meaning; a Connection's direction is derived
+          from the Flows routed on it (ADR-0023). Two handles (left + right) keep
+          drag-to-connect discoverable; under `ConnectionMode.Loose` either can
+          start or end a Connection. "Port" is the user word; "handle" stays
+          React Flow's code word (CONTEXT.md "Port"). */}
       <Handle
         type="target"
         position={Position.Left}
-        aria-label="Input port"
-        title="Input port"
+        aria-label="Connection point"
+        title="Drag to connect"
         className="h-2! w-2! border-white/40! bg-white/60!"
       />
       <Icon
@@ -251,12 +254,13 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           <Trash2 size={14} aria-hidden />
         </button>
       )}
-      {/* Output Port — the right (source) handle: where Connections originate. */}
+      {/* The second neutral connection point (right). Non-directional like the
+          left one — see the note above (ADR-0023). */}
       <Handle
         type="source"
         position={Position.Right}
-        aria-label="Output port"
-        title="Output port"
+        aria-label="Connection point"
+        title="Drag to connect"
         className="h-2! w-2! border-white/40! bg-white/60!"
       />
     </div>
