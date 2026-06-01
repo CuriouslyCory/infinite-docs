@@ -502,8 +502,8 @@ Connection reject as `ConflictError` with `details.conflictingEdgeIds`; non-casc
 ADR-0024). **No destructive tool is exposed at this version** (acceptance criterion). The catalog is
 plain data (`WRITE_TOOLS` in `~/server/mcp/tool-catalog.ts`), so the registration loop, `tools/list`,
 and `/llms.txt` all render from one source — additional tools (Flow / FlowRoute writers in
-#40 / #42, the `apply_graph` batch tool in #20) plug in without touching the adapter, the auth
-gate, or the route. *(Realized now via #19; see ADR-0001, ADR-0010, ADR-0022, ADR-0024.)*
+issues #40 / #42, plus the `apply_graph` batch tool in #20) plug in without touching the adapter,
+the auth gate, or the route. *(Realized now via #19; see ADR-0001, ADR-0010, ADR-0022, ADR-0024.)*
 
 ### llms.txt
 The served discovery document at `/llms.txt` that tells an **agent** how to reach the **MCP path**,

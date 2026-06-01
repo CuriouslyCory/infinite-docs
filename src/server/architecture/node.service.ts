@@ -862,8 +862,13 @@ export async function moveNode(
 
   // Idempotent: a move that doesn't change `parentId` is a no-op. Return the
   // full Node row so the caller's optimistic UI / tool result still has it.
+  // Filter `deletedAt` here too — under READ COMMITTED, a concurrent
+  // soft-delete can become visible between the initial `findFirst` and this
+  // read, and the no-op path must not hand back a tombstoned row.
   if (parentId === node.parentId) {
-    const current = await db.node.findUnique({ where: { id: node.id } });
+    const current = await db.node.findFirst({
+      where: { id: node.id, deletedAt: null },
+    });
     if (!current) {
       throw new NotFoundError();
     }

@@ -208,9 +208,11 @@ export type UpdateNodeDocumentationInput = z.infer<
  * Project root; a Node id reparents it under that Component's interior Canvas.
  * Required, not defaulted — a move call must state intent (memory: prefer
  * narrow required inputs). The service rejects cycle-creating moves with
- * `ValidationError`, and rejects moves that would orphan an incident
- * Connection or falsify a refinement FlowRoute inside the moving subtree
- * with `ConflictError` (ADR-0024).
+ * `ValidationError` and rejects moves that would orphan an incident
+ * Connection with `ConflictError` (ADR-0024). The refinement-FlowRoute
+ * falsification case is currently unreachable under existing
+ * `routeFlow` / `connectNodes` constraints and is named in ADR-0024 as
+ * future follow-up logic.
  */
 export const moveNodeInput = z.object({
   id: z.string().min(1),
