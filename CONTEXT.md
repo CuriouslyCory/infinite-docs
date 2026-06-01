@@ -26,15 +26,16 @@ Rule of thumb: anything a human reads or an MCP agent calls says **Component** /
 **Port**; anything in the Prisma schema, React Flow code, or graph algorithms says **Node** /
 **Edge** / **handle**.
 
-**Exception — Flow has no user/code split.** Unlike Component/Node and Connection/Edge, the
-Flow vocabulary — **Flow** / `Flow`, **FlowSpec** / `FlowSpec`, **Interaction** / `FlowInteraction` —
-uses the same word in user-facing and code surfaces. The split exists because "Node" collides
-with Node.js and the canvas library's node primitive; "Flow" carries no such overload (React
-Flow names the *library*, not a graph primitive we model), and users genuinely say "flow" when
-they mean the same thing engineers do. The discipline is not weakened; the conditions that
-motivated it do not apply here. When a future term arrives, default to applying the split;
-deviate only when both conditions hold — the word is the natural user word AND it carries no
-overload pressure.
+**Exception — some terms have no user/code split.** Unlike Component/Node and Connection/Edge,
+a few terms — **Interaction** / `Interaction` (a **Connection** attribute), **Spec** / `Spec` —
+use the same word in user-facing and code surfaces. The split exists because "Node" collides
+with Node.js and the canvas library's node primitive; these words carry no such overload (React
+Flow names the *library*, not a graph primitive we model), and users genuinely say "interaction"
+/ "spec" when they mean the same thing engineers do. The discipline is not weakened; the
+conditions that motivated it do not apply here. When a future term arrives, default to applying
+the split; deviate only when both conditions hold — the word is the natural user word AND it
+carries no overload pressure. *(The retired **Flow** / **FlowSpec** / **FlowRoute** vocabulary
+formerly rode this exception — see those tombstones.)*
 
 ## Terms
 
@@ -50,16 +51,19 @@ the markdown formatted and toggles to an editable surface with debounced, optimi
 ### Node
 The data-model representation of a Component: the stored graph vertex with
 `parentId` (its containing Component, or null at the **Project** root), plus
-`kind` (see **Component kind**), position (`posX`, `posY`), `documentation`, and a
-soft-delete column (`deletedAt`). Never surfaced to users by this name.
+`kind` (see **Component kind**), position (`posX`, `posY`), `documentation`, the
+generated-component provenance columns `sourceSpecId` + `specKey` (set when a
+Component is derived from a **Spec** — the generation that populates them is #64;
+#62 lands only the columns and their cascade), and a soft-delete column
+(`deletedAt`). Never surfaced to users by this name.
 *(The `Node` model and the operations on it — `createNode` (root or child under
 a validated parent), `getCanvas` (with **breadcrumbs**), `updateNode` (title
 only), `updateNodeDocumentation` (the narrow owner-only autosave feeding the
 detail-panel markdown editor — ADR-0015), `updatePositions` (batched on
 drag-stop), `moveNode` (reparent to a new Canvas scope; cycle-creating moves
-reject as `ValidationError`, moves that would orphan an incident Connection
-reject as `ConflictError` with `details.conflictingEdgeIds` — non-cascading by
-design, ADR-0024), and the cascading `deleteNode` / `restoreNode` pair (see
+reject as `ValidationError` — the orphan-reject is retired now that Connections
+may span scopes, so a reparent never strands an incident Connection, ADR-0024 as
+amended by #62), and the cascading `deleteNode` / `restoreNode` pair (see
 **Deletion id**) — are realized now. `moveNode` ships via the MCP
 `move_component` **MCP tool** (#19); the web/tRPC reparent surface is later
 work. **Connection**/**Edge** wiring is its own entry.)*
@@ -116,8 +120,9 @@ and the remainder under "All kinds" below, preserving the invariant that every
 kind is always reachable (search spans both groups). It is the only
 kind-selection surface in the canvas: the "Add Component" control opens it, and —
 since Slice 2 — the **Component-detail panel** reopens the same palette to change
-a Component's kind. Applies the same prose/UI pattern **Flow palette** does —
-*palette* names the surface, not the library. Never "kind picker" (too generic —
+a Component's kind. Follows the *palette* convention — the word names the
+surface, not the library (cf. the **Command-palette** primitive it is built on).
+Never "kind picker" (too generic —
 it could name a `<select>`), "command palette" (collides with the library term),
 or "kind selector". *(Realized now; the `<select>` it replaces is retired. The
 canonical-command-palette ADR is deferred until a second palette adopter, per
@@ -127,124 +132,117 @@ docs-travel-with-code-slices.)*
 The user-facing link between two Components, drawn on a **Canvas** by dragging between their
 **Ports** (in either direction — Ports are non-directional). Carries an optional **label**
 (untrusted user content — stored verbatim, never interpreted; see the prompt-injection standing
-note). Backed by an **Edge**. A Connection is **undirected**: it has no stored direction, and
-its rendered arrowheads are **derived** from the **Flows** routed on it — none → a plain line,
-one direction → one arrowhead, both → arrowheads at both ends (a WebSocket is ONE Connection,
-not two). The derivation reads each routed Flow's **Interaction** verb (REQUEST/SUBSCRIBE point
-at the owner, PUSH away, DUPLEX both), so the arrow follows the traffic and cannot lie
-(ADR-0023, superseding ADR-0009). *(Drawing, labeling, and removing a Connection are
-realized now — see **Edge** for the same-Canvas, no-self-link, and no-duplicate-active rules.
-A Connection that carries one or more **FlowRoutes** wears a routed-count pill (**"N / M
-routed"**) and exposes a **"+ flow"** affordance when selected by the owner, listing the
-unrouted Flows from either endpoint. The **refinement Connection** — the inner Edge that
-resolves a **boundary proxy** to a real Component one scope deeper — is realized now via the
-gated cross-scope `routeFlow` writer (Slice 3 / ADR-0012); see **FlowRoute** and **Boundary
-proxy**. A refinement route leaves the *parent* Connection's routed-count pill stale until the
-viewer ascends (a fresh **getCanvas**) — a deliberate no-cross-scope-round-trip trade-off, see
-ADR-0012 Consequences. The "+ flow" affordance offers **every** unrouted Flow from either
-endpoint — a Connection is undirected, so any owner-endpoint Flow can ride it; the Flow's
-**Interaction** verb decides which way its arrow points, not whether the route is legal (the
-former polarity filter and reverse-Connection offer are retired — ADR-0023, superseding
-ADR-0013). The full undirected-arrow rendering — and the rewrite of the structural-arrow
-language just above — lands in a later slice of the same rollout.)*
+note). Backed by an **Edge**. A Connection is a **directed, typed edge** that may link **any two
+Components at any scope** — same-Canvas, cross-scope, or **lineal** (an ancestor and a
+descendant; a parent→child Connection expresses **ingress**). It carries its own **Interaction**
+(default `ASSOCIATION` — a plain undirected line with no arrowheads); the four directional
+interactions (`REQUEST`/`PUSH`/`SUBSCRIBE`/`DUPLEX`) live ON the Connection rather than being
+derived from routed traffic. Drawing order (`source`/`target`) is preserved, and arrowheads are
+derived from `(interaction, source, target)` — a WebSocket is ONE Connection (`DUPLEX`), not two
+(ADR-0027). The only endpoint the service rejects is the **true self-link** (A === B);
+cross-scope and lineal endpoints are accepted (ADR-0028, retiring the same-Canvas invariant of
+ADR-0005). *(Drawing, labeling, and removing a Connection are realized now — see **Edge** for the
+self-link, cross-scope/lineal, and no-duplicate-active rules. A Connection's `interaction` is set
+at creation (`connectNodes`) and defaults to `ASSOCIATION`. **Arrowhead rendering from
+`interaction` lands in a later slice (#65); cross-scope rendering — the redefined boundary proxy —
+lands in #63.** As of #62 every Connection still renders as a plain line regardless of
+`interaction`.)*
 
 ### Edge
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
-`targetId` (both **Nodes**), an optional `label`, and a soft-delete column (`deletedAt`).
-`sourceId`/`targetId` are just the two endpoints in arbitrary draw order — they carry **no
-direction** and there is no stored `direction` field; a Connection is undirected and its
-arrowheads are derived from the **Flows** routed on it (ADR-0023; the flow-derived rendering
-lands in a later slice of that rollout). Scoped to the Canvas it is drawn on
-by an **explicit `canvasNodeId`** (the Component whose interior Canvas owns the Edge; null = the
-**Project** root), rather than being inferred from its endpoints — endpoints can later span
-scope levels (the M5 refinement Connection), so scope is recorded, not derived (ADR-0005).
-Three invariants hold and are enforced **in the service, not the database** (ADR-0005): both
-endpoints sit on the **same Canvas** as the Edge, an Edge never links a Node to itself, and no
-two *active* (non-soft-deleted) Edges share the same scope and **unordered** endpoint pair
-(A→B and B→A are the same Connection; ADR-0023). The same-Canvas
-invariant has exactly **one gated exception**: the **inner Edge** of a cross-scope **FlowRoute**,
-whose **boundary endpoint** legitimately sits at a higher scope. Only `routeFlow` may write it,
-and only when that endpoint is the Flow's owner; `connectNodes` stays strict (Slice 3 /
-ADR-0012). Never surfaced to users by this name. *(The `Edge` model, `connectNodes`/`updateEdge`/`deleteEdge`, and the
-**getCanvas** `interiorEdges` read are realized now; Connection removal as part of a Component
-delete is undoable now (see **Deletion id**); partial-unique-index hardening of the de-dupe
-rule landed via ADR-0010 — service-primary with a DB backstop that translates to the same
-`ConflictError` — while undo of a standalone single-Connection `deleteEdge` remains a later
-refinement.)*
+`targetId` (both **Nodes**), an `interaction` (`Interaction`, default `ASSOCIATION`), an optional
+`label`, and a soft-delete column (`deletedAt`). **An Edge stores no scope** — there is no
+`canvasNodeId` column; an Edge's scope is *derived from its endpoints' ancestry* at read time
+(the derivation lands in #63), so an Edge may freely span scope levels. `sourceId`/`targetId`
+preserve **draw order**, and arrowheads are derived from `(interaction, source, target)` at
+render time (#65); the pair is not a stored `direction` field. Two invariants hold and are
+enforced **in the service, not the database** (ADR-0028, retiring ADR-0005's same-Canvas
+invariant): an Edge never links a Node to itself (the **true self-link**,
+`sourceId === targetId`), and no two *active* (non-soft-deleted) Edges duplicate per the de-dupe
+rule below. **Cross-scope and lineal** (ancestor↔descendant) endpoints are accepted;
+`connectNodes` is the writer and there is no longer a gated cross-scope exception (the `routeFlow`
+inner-Edge writer is deleted with the Flow model).
+
+**De-dupe is now two partial unique indexes** (ADR-0010 named pattern, re-keyed because scope is
+no longer stored): a **directional** index over the ordered tuple
+`(projectId, sourceId, targetId, interaction)` for the four directional interactions, and an
+**`ASSOCIATION`-only unordered** index over `(projectId, LEAST(sourceId, targetId),
+GREATEST(sourceId, targetId))` (`A↔B` and `B↔A` are one Association). Both are
+`WHERE "deletedAt" IS NULL`; `interaction` is in the directional key (so `A→B REQUEST` and
+`A→B PUSH` coexist) but **`label` is not** (re-labeling edits the existing Connection).
+Service-primary `findFirst` with the index as backstop, both translating to `ConflictError`.
+
+Never surfaced to users by this name. *(The `Edge` model with `interaction`, `connectNodes`
+(cross-scope + typed) / `updateEdge` / `deleteEdge`, and the **getCanvas** `interiorEdges` read
+are realized now; Connection removal as part of a Component delete is undoable now (see **Deletion
+id**). `deleteEdge` is a plain lone soft-delete (no cascade — the FlowRoute cascade is gone). The
+two partial unique indexes land via the #62 migration (ADR-0010 pattern). Full cross-scope
+rendering of an Edge whose endpoints span scopes lands in #63.)*
 
 ### Port
 A Component's connection point — the user-facing name for a React Flow **handle**.
 **Non-directional** (ADR-0023): a Component is not directional, so a Port carries no
 input/output role. Every Component exposes two (rendered left and right) purely for
 drag-discoverability; under React Flow's `ConnectionMode.Loose` either can start *or* end a
-**Connection**, in either direction. Which way a Connection is drawn carries no meaning — its
-arrowheads are derived from the **Flows** routed on it (see **Connection**, **Interaction**).
+**Connection**, in either direction. Which way a Connection is drawn is *preserved* as
+`source`/`target` and feeds the derived arrowheads together with the Connection's **Interaction**
+(see **Connection**, **Interaction**); the Port a drag starts from carries no input/output role.
 Both Ports are **unbounded**: a Port can feed many Connections and receive from many (fan-out
-and fan-in), with no connection-count cap; the only limit is the de-dupe rule (no two *active*
-Connections between the same **unordered** Component pair on a scope; see **Edge** and ADR-0023).
-The word in prose and UI is **Port**; the React Flow code word is **handle** (the same
-user-vs-code split as Component/Node) — never "connector", "socket", "anchor", or "terminal".
+and fan-in), with no connection-count cap; the only limit is the de-dupe rule (see **Edge** —
+directional rows de-dupe on `(projectId, source, target, interaction)`, `ASSOCIATION` rows on the
+unordered pair). The word in prose and UI is **Port**; the React Flow code word is **handle** (the
+same user-vs-code split as Component/Node) — never "connector", "socket", "anchor", or "terminal".
 *(The two non-directional handles render on every Component now; the former input/output
-framing retired with ADR-0023. Typed, named, or per-protocol Ports remain out of scope.)*
+framing retired with ADR-0023 and stays retired under ADR-0027. Typed, named, or per-protocol
+Ports remain out of scope.)*
 
-### Edge direction — retired (twice)
-Direction has never been a stored field on the Edge. It was first a cosmetic `EdgeDirection`
+### Edge direction — retired (thrice)
+A *stored* arrow direction has never lived on the Edge. It was first a cosmetic `EdgeDirection`
 enum (`NONE` / `FORWARD` / `BIDIRECTIONAL`) the user cycled by hand (removed by ADR-0009, which
-made the arrow *structural* — derived from the `sourceId`→`targetId` ordering). ADR-0023 then
-removed even that structural meaning: `sourceId`/`targetId` are just the two endpoints in
-arbitrary draw order, the de-dupe pair is **unordered**, and a Connection's arrowheads are
-**derived from the Flows routed on it** (see **Connection**, **Interaction**). Re-introducing a
-stored `direction` (or a `polarity`-on-Edge) field regresses both ADRs. See **Connection**,
-**Port**, **Interaction**, and ADR-0023.
+made the arrow *structural* — derived from the `sourceId`→`targetId` ordering). ADR-0023 removed
+even that structural meaning, deriving arrows from the **Flows** routed on a Connection. ADR-0027
+retires the Flow-derivation in turn: a Connection now carries its own **Interaction**, and
+arrowheads are derived from `(interaction, source, target)` — `source`/`target` preserve draw
+order but are not themselves a direction field, and `interaction` is a *type*, not a stored arrow.
+Re-introducing a stored `direction` (or a `polarity`-on-Edge) field regresses all three ADRs.
+Note draw order is now **preserved** (not arbitrary): it feeds the directional de-dupe key and the
+derived arrow. See **Connection**,
+**Port**, **Interaction**, and ADR-0027.
 
 ### Canvas
 A **derived view, not a stored entity.** The Canvas of a Component `N` is
-`{ Nodes where parentId = N } ∪ { Edges where canvasNodeId = N }`. The Project root has its own
-top-level Canvas (the Nodes with `parentId = null`). Because it is derived, a Canvas is never
-written directly — you mutate Nodes and Edges, and the Canvas falls out. *(The Node half of
-the derivation is realized now via **getCanvas**, and the Edge half is realized now too
-(`{ Edges where canvasNodeId = N }`); reading a non-root scope is realized now via
-**getCanvas**, and user-facing navigation into it is realized now via **Descent**.)*
+`{ Nodes where parentId = N } ∪ { Edges whose BOTH endpoints have parentId = N }` — an Edge no
+longer stores its scope (`canvasNodeId` is dropped; ADR-0028), so the same-Canvas Connections fall
+out of endpoint ancestry, not a stored column. The Project root has its own top-level Canvas (the
+Nodes with `parentId = null`). Because it is derived, a Canvas is never written directly — you
+mutate Nodes and Edges, and the Canvas falls out. *(The Node half of the derivation is realized now
+via **getCanvas**, and the same-Canvas Edge half is realized now too (both endpoints' `parentId =
+N`); reading a non-root scope is realized now via **getCanvas**, and user-facing navigation into it
+is realized now via **Descent**. Rendering an Edge whose endpoints span Canvases — cross-scope — is
+#63.)*
 
 ### getCanvas
 The single service read that materializes a **Canvas** for a given **Canvas
-scope** in one round trip. Its full result is
-`{ interiorNodes, interiorEdges, edgeFlows, boundaryProxies, flowPalettes, breadcrumbs }`,
+scope** in one round trip. Its result is
+`{ interiorNodes, interiorEdges, breadcrumbs }` (the cross-scope shape — re-derived
+boundary proxies and the rest — is redefined in #63),
 derived without a per-level query walk. Because a Canvas is a *derived view*,
 `getCanvas` returns the **Nodes** and **Edges** that fall out of the scope —
 it is the read half of the Component/Node split, so its result is named in
 **Node**/**Edge** terms in code and tests even though the feature is described
-to users as "the interior **Components**". The `edgeFlows` field is the
-per-Edge Flow aggregation that drives the routed-count pill AND the derived
-arrowheads on a Connection (see **FlowRoute**, **Interaction**): for each
-interior Edge, an entry
-`{ edgeId, total, routed, unrouted, orphan, byKind, arrowAtSource, arrowAtTarget }`
-where `total` is the active **Flows** owned by either endpoint (loose — any
-owner-endpoint Flow can ride the Connection; ADR-0023), `routed` is the active
-**FlowRoutes** whose `outerEdgeId` is this Edge with a still-live Flow, `orphan`
-covers FlowRoutes whose Flow was soft-deleted by a re-parse (the wiring hangs
-visibly rather than vanishing), `byKind` is the per-`FlowKind` count of the
-routed set, and `arrowAtSource` / `arrowAtTarget` count how many live routed
-Flows point their arrow at the Edge's stored `source` / `target` endpoint
-(derived per Flow from `(owner, interaction)` — the canonical rule lives in
-`~/lib/flow-direction`; the client renders a `markerStart`/`markerEnd` from
-them, both → a two-way Connection, neither → an undirected line; ADR-0023). The
-`boundaryProxies` field is the transitively-derived **boundary proxy** list for
-the scope (each `{ nodeId, title, kind, origin, outerEdgeId }`, where
-`outerEdgeId` is the single incident outer Connection a palette drag refines —
-a Connection is undirected, so any Flow rides it regardless of interaction
-(ADR-0023); see **Boundary proxy**), and
-`flowPalettes` maps each in-scope proxy's `nodeId` to the first page of its
-owner's **Flows** (`{ flows, hasMore }`) so the boundary-proxy **Flow palette**
-renders without a second round trip — the overflow pages in through
-`getFlowPalette`. *(Realized now — `getCanvas` returns all six keys for a
-scope; `boundaryProxies` + `flowPalettes` landed with Slice 3 (#36) via one
-recursive CTE folded into the existing `Promise.all`. A non-null scope that
-resolves to no live Node in the Project is a not-found. See ADR-0001 for the
-single-round-trip service contract, ADR-0004 for how the payload reaches the
-client island, ADR-0005 for the explicit `canvasNodeId` Edge scope, ADR-0006
-for the single recursive breadcrumb query, and ADR-0012 for the boundary
-derivation + cross-scope refinement.)*
+to users as "the interior **Components**". `getCanvas` no longer aggregates Flows
+(the `edgeFlows` / `boundaryProxies` / `flowPalettes` fields are gone with the
+Flow model). It returns the interior **Nodes** and the **Edges** whose BOTH
+endpoints sit on the scope (a single relation-filtered query — `source.parentId
+=== scope AND target.parentId === scope` — since an Edge stores no scope, ADR-0028);
+rendering Edges whose endpoints span scopes — the redefined **boundary proxy** and
+the per-Edge interaction-derived arrows — is #63. *(Realized now — `getCanvas`
+returns `interiorNodes`, `interiorEdges`, and `breadcrumbs` for a scope. A non-null
+scope that resolves to no live Node in the Project is a not-found. See ADR-0001 for
+the single-round-trip service contract, ADR-0004 for how the payload reaches the
+client island, ADR-0006 for the single recursive breadcrumb query. The cross-scope
+read shape — Edges spanning scopes, the redefined boundary proxy — is #63 /
+ADR-0031.)*
 
 ### Canvas scope
 Which **Canvas** an operation is acting on. A Canvas has **no id of its own** (it
@@ -297,50 +295,33 @@ UX — inherited proxies fold away into a single **boundary group** (see entry) 
 Canvases uncluttered — and gates refinement: only a direct proxy is **routable** here (it carries
 the outer Connection a palette drag refines), because the cross-scope `routeFlow` writer binds an
 outer Edge incident to the current scope.
-*(Realized now — derivation in **getCanvas** (`boundaryProxies`), read-only rendering as the
-`boundary-proxy` Canvas node with its **Flow palette**, and the refinement drag all landed with
-Slice 3 (#36 / ADR-0012, absorbing the M3 boundary work #13 + #14).)*
+*(The same-Canvas-era derivation and its refinement drag are retired with the Flow model (#62);
+the boundary proxy is **redefined** as the far-end stand-in for a cross-scope Connection in #63 /
+ADR-0031, where its #62-accurate definition and rendering are written. Until then no boundary
+proxy renders. The conceptual definition above is left for #63 to rewrite.)*
 
 ### Boundary endpoint
-The endpoint of a cross-scope refinement **inner Edge** that is the **boundary proxy** — i.e. the
-**Flow**'s owner, which lives at a higher **Canvas scope** than the inner Edge sits on. It is the
-*one* endpoint allowed to violate the same-Canvas rule, and only inside `routeFlow`: the service
-derives it from the Flow's owner and pins it against the supplied endpoints rather than trusting
-an input, so an arbitrary foreign Node can never be smuggled in as a cross-scope endpoint (the
-gated exception to ADR-0005; ADR-0012). The other endpoint — the interior Component on the
-current Canvas — is the *interior endpoint*.
+Retired (#62): with no cross-scope **FlowRoute** and no `routeFlow` writer, there is no "one
+endpoint allowed to violate same-Canvas" concept — *all* endpoints may now span scope (ADR-0028).
+The far-end stand-in that replaces it is the **boundary proxy**, redefined in #63 / ADR-0031.
 
 ### Boundary group
-The single read-only Canvas node a **Canvas** renders in place of its inherited **boundary
-proxies** — bundled so a deep Canvas with many ancestors is not buried under N stand-ins for
-externals routed at scopes the viewer cannot act on here. Collapsed by default; expanding reveals
-each inherited proxy by title and **Component kind** but no **Flow palette** (inherited proxies
-are context, not a work surface — only **direct** proxies are routable at this scope; see
-**Boundary proxy** and ADR-0012). Like the proxies it contains, a Boundary group is **derived,
-never persisted**: it has no **Node** row, no **Edge**, and no interior **Canvas scope** of its
-own — it is a render-layer regrouping of the `boundaryProxies` whose `origin = "inherited"` at
-the scope it appears on. Read-only in the same sense as a boundary proxy: not draggable,
-selectable, deletable, or descendable — i.e. a **passive node** (see entry). The code term is
-**`BoundaryGroupNode`** (React Flow node type `"boundary-group"`), mirroring the
-**Component**/**Node** split — and distinct from React Flow's own built-in `"group"` node type (a
-parent-of-children layout primitive this is not). Renders even for a single inherited proxy, so a
-refetch flipping the inherited count never reshuffles the Canvas surface (ADR-0016). *(Realized as
-the #14 grouping follow-up on top of Slice 3's per-proxy rendering — same derivation
-(`deriveBoundaryProxies`), no service change.)*
+Retired (#62): the client no longer renders an inherited-proxy group; cross-scope rendering is
+redesigned in #63 / ADR-0031. Historical: ADR-0016.
 
 ### Passive node
-A derived, read-only React Flow node on a **Canvas** — currently a **boundary proxy** or a
-**boundary group** — excluded from the three interactive surfaces a **Component** participates
-in: the **Component-detail panel** (no editable record exists), **Descent** (no interior
-**Canvas scope** to open into), and hover-prefetch (nothing to warm). Passive nodes carry no
-**Node** row, are never `draggable`, `selectable`, or `deletable`, and are partitioned out of
-every interactive pointer handler by a single discriminator (`isPassiveNode` in `canvas.tsx`)
-so a new passive kind composes by extension rather than by sprinkling fresh guards through the
-click / double-click / hover paths (ADR-0016). The term is **passive** — not "read-only" (which
-is overloaded with the capability-URL viewer surface, owner-edit vs viewer-read) and not
-"non-interactive" (which over-claims — passive nodes still expand and collapse their own
-internals; they are inert *with respect to the Canvas's interactive surfaces*, not globally
-inert).
+A derived, read-only React Flow node on a **Canvas** — the **boundary proxy** (redefined in #63) —
+excluded from the three interactive surfaces a **Component** participates in: the
+**Component-detail panel** (no editable record exists), **Descent** (no interior **Canvas scope**
+to open into), and hover-prefetch (nothing to warm). Passive nodes carry no **Node** row, are
+never `draggable`, `selectable`, or `deletable`, and are partitioned out of every interactive
+pointer handler by a single discriminator so a new passive kind composes by extension rather than
+by sprinkling fresh guards through the click / double-click / hover paths (ADR-0016). The term is
+**passive** — not "read-only" (which is overloaded with the capability-URL viewer surface,
+owner-edit vs viewer-read) and not "non-interactive" (which over-claims — passive nodes still
+expand and collapse their own internals; they are inert *with respect to the Canvas's interactive
+surfaces*, not globally inert). *(#62 removed the boundary-group passive kind; #63 re-populates the
+passive set when it rebuilds boundary-proxy rendering.)*
 
 ### Project
 The root container of one architecture graph. Owned by a single user (`ownerId`) and addressed
@@ -484,8 +465,7 @@ map, addressed by URI). Addressed under the `architecture://` scheme by internal
 `resources/list` enumerates only those (reusing the owner-scoped `listProjects`). The word is
 **resource** — the MCP-spec native term, so no Component/Node split applies (the overload that
 motivates the split is absent). Never "tool" (a **tool** invokes or mutates — see **MCP tool**),
-"endpoint" (that names the route), or "query". *(Realized now via #18; #38's Flow resources
-(`flow/:id`, `flow-route/:id`) append additively. See ADR-0017, ADR-0022.)*
+"endpoint" (that names the route), or "query". *(Realized now via #18. See ADR-0017, ADR-0022.)*
 
 ### MCP tool
 A write-addressable unit an **agent** invokes over the **MCP path** to mutate the architecture. A
@@ -494,7 +474,7 @@ and surfaces the result as a short text confirmation that includes the affected 
 agent can chain calls without an intermediate read. Authorization, invariants, and de-dupe live in
 the service — the tool registers, parses, and translates errors only. The word is **tool** — the
 MCP-spec native term, so no split applies. Never "action", "command", "mutation" (collides with
-tRPC), or "verb". Today's surface is the **MCP write tools** — the four single-op tools (`create_component`, `connect_components`, `update_component_docs`, `move_component` — #19) plus the **`apply_graph`** batch tool (#20) for constructing many Components and Connections in one transaction, chained by **client id** (the in-batch reference handle the agent picks). **No destructive tool is exposed at this version** (acceptance criterion). The catalog is plain data (`WRITE_TOOLS` in `~/server/mcp/tool-catalog.ts`), so the registration loop, `tools/list`, and `/llms.txt` all render from one source — additional tools (Flow / FlowRoute writers in issues #40 / #42, plus the additive `flows: []` / `routes: []` arms on `apply_graph` in #38) plug in without touching the adapter, the auth gate, or the route. *(Realized now via #19 + #20; see ADR-0001, ADR-0010, ADR-0022, ADR-0024, ADR-0026.)*
+tRPC), or "verb". Today's surface is the **MCP write tools** — the four single-op tools (`create_component`, `connect_components`, `update_component_docs`, `move_component` — #19) plus the **`apply_graph`** batch tool (#20) for constructing many Components and Connections in one transaction, chained by **client id** (the in-batch reference handle the agent picks). **No destructive tool is exposed at this version** (acceptance criterion). The catalog is plain data (`WRITE_TOOLS` in `~/server/mcp/tool-catalog.ts`), so the registration loop, `tools/list`, and `/llms.txt` all render from one source — additional tools plug in without touching the adapter, the auth gate, or the route. `connect_components` and the `apply_graph` `connections` arm gain an `interaction` input and accept cross-scope endpoints (#62; the `canvasNode` ref is dropped — see **Client id**); a spec-attach tool (generating Components) lands in #67. *(Realized now via #19 + #20; see ADR-0001, ADR-0010, ADR-0022, ADR-0026, ADR-0027, ADR-0028.)*
 
 ### llms.txt
 The served discovery document at `/llms.txt` that tells an **agent** how to reach the **MCP path**,
@@ -505,194 +485,131 @@ the grant (ADR-0021): it describes capability ("a token acts on behalf of the mi
 "read-only scope" the token does not carry — the MCP surface is read-only *at this version*, not the
 token. Carries the **prompt-injection standing note** that graph content is **data, not
 instructions**. Never "manifest", "sitemap", or "robots.txt for AI". *(Realized now via #18; #34/#38
-extend its vocabulary as they add Flow tools / resources. See ADR-0022.)*
+extend its vocabulary as they grow. See ADR-0022.)*
 
 ### Client id
-The agent-chosen string an **apply-graph batch** uses to chain references between rows it is about to create in one **MCP tool** call — `parent` on a new Component, or `source` / `target` / `canvasNode` on a new Connection — without an intermediate round trip to learn the server-minted ids. Each Component in the batch carries a `clientId` the agent picks (any non-empty string ≤ 64 chars); the response returns an `idMap: { [clientId: string]: serverId }` the agent uses for subsequent calls. Per-batch scope: a `clientId` means nothing outside the one transaction that materializes the map, and **carries no authorization** — it is a lookup key, not a bearer credential (writes still authorize through the **API token**-resolved **Actor**, ADR-0002). Each field that accepts a Component endpoint or a Component parent accepts EITHER a `clientId` from the same batch (`{ref:"client", clientId:"..."}`) OR an existing server id (`{ref:"server", id:"..."}`); the discriminator is explicit so a typo surfaces as "no such clientId in this batch" instead of silently rebinding to an unrelated server row. The word is **client id** in prose and `clientId` in code — never "ref id" / "batch id" / "local id" / "temp id". Clientids must be unique batch-wide so the flat `idMap` shape Slice 5 (#38) extends with `flows: []` / `routes: []` arms cannot collide. *(Realized now via #20 / `apply_graph`. The id-map type is `Record<string, string>` in code; the outer service result is `ApplyGraphOutput`. See ADR-0026.)*
+The agent-chosen string an **apply-graph batch** uses to chain references between rows it is about to create in one **MCP tool** call — `parent` on a new Component, or `source` / `target` on a new Connection (the `canvasNode` ref is dropped — Edges no longer store scope; #62 / ADR-0026 amendment) — without an intermediate round trip to learn the server-minted ids. Each Component in the batch carries a `clientId` the agent picks (any non-empty string ≤ 64 chars); the response returns an `idMap: { [clientId: string]: serverId }` the agent uses for subsequent calls. Per-batch scope: a `clientId` means nothing outside the one transaction that materializes the map, and **carries no authorization** — it is a lookup key, not a bearer credential (writes still authorize through the **API token**-resolved **Actor**, ADR-0002). Each field that accepts a Component endpoint or a Component parent accepts EITHER a `clientId` from the same batch (`{ref:"client", clientId:"..."}`) OR an existing server id (`{ref:"server", id:"..."}`); the discriminator is explicit so a typo surfaces as "no such clientId in this batch" instead of silently rebinding to an unrelated server row. The word is **client id** in prose and `clientId` in code — never "ref id" / "batch id" / "local id" / "temp id". Clientids must be unique batch-wide so the flat `idMap` shape stays collision-free across any future additive arm. *(Realized now via #20 / `apply_graph`. The id-map type is `Record<string, string>` in code; the outer service result is `ApplyGraphOutput`. See ADR-0026.)*
 
 ### Deletion id
 The handle that ties together one cascading soft-delete so it can be undone as a unit.
 A single `deleteNode` mints one id and stamps it (`deletionId`) on every row it transitions to
-deleted — the target **Node**, its subtree, every incident or interior **Edge**, every owned
-**Flow** + owned **FlowSpec**, and every incident **FlowRoute** — and `restoreNode` clears
-`deletedAt` for *exactly* the rows bearing that id, so an undo restores the operation's set and
-nothing outside it. A `deleteEdge` that sweeps one or more incident FlowRoutes also mints a
-`deletionId` and stamps both the Edge and the swept FlowRoutes, restored as one batch by
-`restoreEdge`; a `deleteEdge` on an Edge with no incident FlowRoutes still mints **no**
-`deletionId` (the "lone delete" carve-out preserved). A row removed by some other operation
-never carries this id and is never revived by undoing a later one — a lone `deleteFlow` /
-`unrouteFlow` / `deleteEdge`-without-routes sets `deletedAt` with no `deletionId`, and an
-earlier delete carries its own id. It is a *grouping of soft-deleted rows*, not a stored
-history: do not call it a "transaction" (the database mechanism that writes it), a "version"
-or "snapshot" (nothing is copied — rows are flagged in place), or an "audit log". Named in
-**Node**/**Edge**/**Flow**/**FlowRoute** terms in code; users see only "delete" and "undo".
+deleted — the target **Node**, its subtree (including any spec-derived child Components, which
+ride the ordinary subtree cascade), every incident or interior **Edge**, and the owned **Spec** —
+and `restoreNode` clears `deletedAt` for *exactly* the rows bearing that id, so an undo restores
+the operation's set and nothing outside it. A `deleteEdge` is a **plain lone soft-delete**: it
+sets `deletedAt` on the one Edge with **no** `deletionId` (there is no longer a FlowRoute cascade
+to group). `restoreEdge`'s batch role narrows to the cascade restore driven by `restoreNode`.
+A row removed by some other operation never carries this id and is never revived by undoing a
+later one — a lone `deleteEdge` sets `deletedAt` with no `deletionId`, and an earlier delete
+carries its own id. It is a *grouping of soft-deleted rows*, not a stored history: do not call it
+a "transaction" (the database mechanism that writes it), a "version" or "snapshot" (nothing is
+copied — rows are flagged in place), or an "audit log". Named in **Node**/**Edge**/**Spec** terms
+in code; users see only "delete" and "undo".
 *(Realized now via `deleteNode`/`restoreNode` and `deleteEdge`/`restoreEdge` for cascaded
-edges; see ADR-0008, ADR-0014 (the `deleteEdge`/`restoreEdge` cascade), and ADR-0011. The
-id is a bare stamped column today — a durable `Deletion` entity and an MCP undo tool are
-deferred, additive future work.)*
+edges; see ADR-0008, ADR-0030 (cascade/undo without FlowRoutes, superseding ADR-0014), and
+ADR-0011. The id is a bare stamped column today — a durable `Deletion` entity and an MCP undo
+tool are deferred, additive future work.)*
 
 ### Soft-delete + undo
 Deletes set a `deletedAt` timestamp rather than removing rows; reads filter out soft-deleted
 records; the operation is reversible. This matters specifically because AI agents mutate the
 graph, and a recoverable delete is the safety net for an automated change gone wrong. *(Realized
 now for a Component: `deleteNode` cascades a soft-delete across the Node, its subtree, every
-incident or interior **Edge**, and every owned **Flow** + owned **FlowSpec** as one
-**Deletion id**, and `restoreNode` reverses exactly that set (ADR-0008 + ADR-0011). Both are
+incident or interior **Edge**, and the owned **Spec** as one
+**Deletion id**, and `restoreNode` reverses exactly that set (ADR-0008 + ADR-0030). Both are
 **writes** — owner-only, never slug-granted (ADR-0002). The `Project` model also carries
 `deletedAt` and all reads filter it; Project-level cascade remains future.)*
 
 ### Flow
-A named, directional unit of data movement a **Component** exposes — an OpenAPI operation, a
-WebSocket channel, an SSE stream, a function call, an event. Owned by its Component
-(`ownerNodeId` on the data side) and exists on the owner whether or not anything is calling it:
-an API exposes `GET /pets` whether or not a client is wired up. A first-class row, individually
-addressable and individually soft-deletable, so every named capability is something an MCP
-agent can list, edit, or remove without touching the **Connection** that carries it. Carries a
-stable `key` (e.g. `"GET /pets"`), an UNTRUSTED `title` (display label), an optional
-`signature` (the parsed contract fragment as `Json?`), a **kind** (see **Flow kind**), and an
-**interaction** (see **Interaction**). A Flow's `key` is unique among active rows of the same owner
-— the de-dupe rule `(ownerNodeId, key)`, ADR-0005 style with the ADR-0010 partial-unique
-backstop (`idx_flow_dedup`). A Flow may be **derived** from a **FlowSpec** (`sourceSpecId != null`)
-or **user-authored** (`sourceSpecId = null`). *(Realized now via `attachFlowSpec` / `addFlow` /
-`updateFlow` / `deleteFlow`, listed in the Component's **Flow palette**, and surfaced as the
-"N flows" pill on the Component body. Same-Canvas baseline binding of a Flow to a **Connection**
-— the `FlowRoute` — is realized now via `routeFlow` / `unrouteFlow`, surfaced as the routed-count
-pill on the Connection and the "+ flow" affordance when a Connection is selected by the owner.
-Cross-scope refinement routing and palette rendering on **boundary proxies** land in subsequent
-slices. See ADR-0011.)*
+Retired with the Flow capability model (#62 / ADR-0030). A **Connection** is now a directed,
+typed edge carrying its own **Interaction**; the named data-movement units a Component exposed
+are no longer modeled. The 1:1 import row formerly `FlowSpec` became **Spec** (see entry).
+Historical: ADR-0011.
 
-### FlowSpec
-The imported contract — an OpenAPI document, an AsyncAPI document, a GraphQL schema, a SQL DDL
-script, a TypeScript signature, or hand-authored `CUSTOM` prose — that materializes a set of
-**Flows** on its owner **Component**. 1:1 with a Component (`ownerNodeId @unique`): exactly one current
-FlowSpec per Component. The spec is the source of truth; Flow rows are its parsed projection,
-regenerated by re-parse. `source` is **UNTRUSTED user-pasted content** — stored verbatim,
-parsed only by a bounded loader (size + depth caps so a hostile spec cannot OOM), and never
-interpolated (prompt-injection standing note, parse-time clause). A malformed spec stores
-`parseError`, creates zero Flows, and never throws to the caller. Re-pasting is
-**non-destructive**: matching keys preserved, dropped keys soft-deleted with a fresh
-**Deletion id** per re-parse batch (the same handle the cascade uses, minted by a different
-operation — `restoreNode` does not unwind a re-parse batch; orphan ids are harmless), so
-downstream wiring orphans visibly rather than vanishing silently. The parser is selected by
-**spec kind** through a registry (`src/server/architecture/flow-parser/`), each entry a pure,
-bounded loader; adding a format is a localized, type-checked change (a parser module + one
-registry line). *(Realized now for OPENAPI, ASYNCAPI, GRAPHQL, SQL_DDL, and TS_SIGNATURE;
-CUSTOM is hand-authored prose with no parser — source persists with a `parseError` note. Which
-spec kinds a Component is *offered* is a presentation-only affinity keyed by **Component kind**
-(`~/lib/spec-kinds`, ADR-0019 precedent), never a constraint — the service accepts any kind.
-See ADR-0011, ADR-0025.)*
+### Spec (`Spec`)
+The imported contract — an OpenAPI/AsyncAPI/GraphQL/SQL-DDL/TypeScript document or hand-authored
+`CUSTOM` prose — that materializes a set of derived child **Components** on its owner Component.
+1:1 with a Component (`ownerNodeId @unique`); renamed from the retired `FlowSpec`. Where the old
+FlowSpec projected **Flows**, a Spec now points at derived child **Components** via their
+`Node.sourceSpecId` + `Node.specKey` provenance columns. `source` is **UNTRUSTED user-pasted
+content** — stored verbatim, parsed only by a bounded loader (prompt-injection standing note,
+parse-time clause). No user/code split (it rides the exception — "Spec" / `Spec`). *(#62 lands the
+renamed row, the provenance columns, and the cascade (`deleteNode` sweeps the owned Spec —
+ADR-0030). The actual spec→Component **generation** — re-parse, `ParsedComponent`, non-destructive
+key matching — is #64. Its source format is a **spec kind** (`SpecKind`); the parser registry and
+per-Component affinity are revisited in #64. Historical: ADR-0011, ADR-0025.)*
 
-### Interaction (`FlowInteraction`)
-How a **Flow**'s **owner** **Component** participates in the interaction — the owner-relative
-verb from which a **Connection**'s arrowheads are *derived* (never a stored direction; ADR-0023):
+### Interaction (`Interaction`)
+A **Connection**'s type, stored on its **Edge** as `interaction: Interaction` (default
+`ASSOCIATION`). Five values: a default undirected `ASSOCIATION` plus four **directional**
+interactions that describe, from the perspective of the **`source`** endpoint, how it
+participates — the verb from which the Connection's arrowheads are *derived* together with draw
+order (#65; not a stored arrow):
 
-- `REQUEST` — the owner is *called* in request/response (REST, RPC, a GraphQL field it serves);
-  the caller depends on it, so the arrow points **at** the owner.
-- `PUSH` — the owner *emits* unprompted (SSE, a webhook it sends, an event it publishes); the
-  arrow points **away** from the owner.
-- `SUBSCRIBE` — the owner *consumes* an external stream/feed; the arrow points **at** the owner.
-- `DUPLEX` — the owner both sends and receives (a WebSocket); arrows at **both** ends.
+- `ASSOCIATION` — a plain undirected relationship; **no arrowheads** (the default a freshly drawn
+  Connection carries). De-dupes as an unordered pair.
+- `REQUEST` — `source` is *called* in request/response (REST, RPC, a served GraphQL field); the
+  dependent end points **at** `target`.
+- `PUSH` — `source` *emits* unprompted (SSE, a webhook it sends, an event it publishes); the arrow
+  points **away** from `source` (at `target`).
+- `SUBSCRIBE` — `source` *consumes* an external stream/feed; the arrow points **at** `source`.
+- `DUPLEX` — `source` both sends and receives (a WebSocket); arrows at **both** ends.
 
-It answers "from the owner's perspective, what is this interaction and which way does data
-move?". A Connection renders the union of its routed Flows' arrows: none → a plain undirected
-line, one direction → one arrowhead, both → arrowheads at both ends (a WebSocket is *one*
-Connection, not two). The derivation rule lives in one place, `~/lib/flow-direction.ts`. The
-word in prose and UI is **interaction**; the type name in code is `FlowInteraction` — the same
-prose/type-name pattern **Component kind** / `NodeKind` uses. Never "direction" (it is derived,
-not stored — re-introducing a stored direction or a `polarity`-on-edge field regresses ADR-0023).
-`REQUEST`/`SUBSCRIBE` and `PUSH` are the arrow-preserving successors of the retired `INBOUND` /
-`OUTBOUND` polarity; `SUBSCRIBE`/`DUPLEX` broaden a Flow from "a capability the owner exposes" to
-"an interaction the owner participates in". *(Realized now as a per-Flow field, editable via
-`addFlow`/`updateFlow`. `routeFlow` enforces only that the Flow's owner is an endpoint of the
-Connection — there is no interaction-vs-arrow gate, so any owner-endpoint Flow routes onto the
-single undirected Connection (ADR-0023, superseding ADR-0009/0013). The flow-derived arrowhead
-rendering lands in a later slice of the same rollout.)*
+It answers "what kind of relationship is this, and (for the four directional values) which way
+does data move relative to `source`?". `interaction` is in the directional de-dupe key — `A→B
+REQUEST` and `A→B PUSH` are distinct Connections — but `ASSOCIATION` de-dupes on the unordered
+pair (one Association per Component pair). The canonical `(interaction, source, target) → markers`
+mapping lives in one helper (the successor to `~/lib/flow-direction`): `REQUEST`/`PUSH` → arrow at
+`target`; `SUBSCRIBE` → arrow at `source`; `DUPLEX` → both; `ASSOCIATION` → neither. The word in
+prose and UI is **interaction**; the type name in code is `Interaction` (no user/code split — see
+the exception block) — the same prose/type-name pattern **Component kind** / `NodeKind` uses,
+minus the prefix. Never "direction" (the arrow is derived from `(interaction, source, target)`,
+not a stored field — re-introducing a stored `direction`/`polarity`-on-edge regresses ADR-0027)
+and never "edge type" / "kind" (there is no `EdgeKind`; `interaction` is the only typing axis).
+`REQUEST`/`PUSH`/`SUBSCRIBE`/`DUPLEX` are the four directional successors carried over from the
+retired Flow model (where they were owner-relative); `ASSOCIATION` is the new default for an
+untyped plain-line Connection. *(Realized now as a per-Connection field set at `connectNodes`
+(default `ASSOCIATION`). Arrowhead rendering from `interaction` lands in #65; until then every
+Connection renders as a plain line.)*
 
 ### Component-detail panel
 The slide-in surface that opens when a **Component** is selected on the **Canvas** — a sidebar,
 not a modal, so panning and zooming continue behind it (performance). It hosts the Component's
-**kind** row, its **FlowSpec** paste field, its **Flow palette**, and the markdown
-**documentation** editor (ADR-0015). **Dual-audience:** the owner sees the full edit surface; a
-**viewer** (a non-owner holding the capability slug) sees the *same panel read-only* — rendered
-documentation (Plate `readOnly`) and the read-only Flow palette, with no kind picker, no paste
-field, and no docs Edit toggle. The read-only affordances are *omitted, not disabled*, so the
-viewer panel never signals an edit it cannot perform; read-only mode is presentation only — writes
-remain owner-only at the service layer (ADR-0002). The word is **Component-detail panel** — never
-"inspector", "sidebar" (names the layout, not the surface), or "properties panel". *(Realized now;
-the read-only viewer variant landed with issue #16. See ADR-0002, ADR-0011, ADR-0015.)*
+**kind** row and the markdown **documentation** editor (ADR-0015). **Dual-audience:** the owner
+sees the full edit surface; a **viewer** (a non-owner holding the capability slug) sees the *same
+panel read-only* — rendered documentation (Plate `readOnly`), with no kind picker and no docs Edit
+toggle. The read-only affordances are *omitted, not disabled*, so the viewer panel never signals
+an edit it cannot perform; read-only mode is presentation only — writes remain owner-only at the
+service layer (ADR-0002). The word is **Component-detail panel** — never "inspector", "sidebar"
+(names the layout, not the surface), or "properties panel". *(Realized now; the read-only viewer
+variant landed with issue #16. The **Spec** paste field and the **Flow palette** it formerly
+hosted were removed with the Flow model (#62); the spec → Component generation surface returns in
+#64. See ADR-0002, ADR-0015.)*
 
 ### Flow palette
-The read-only UX surface listing a **Component**'s **Flows**. Surfaces on the
-**Component-detail panel** that opens when the owner selects a Component on the **Canvas** —
-alongside the paste field for its **FlowSpec** — and inside the **"+ flow"** popover that
-opens when the owner selects a **Connection** (so the unrouted Flows on either endpoint are
-pickable in place). Each item shows the Flow's `title`, `kind`, and `interaction`. When the
-Component owns at least one Flow, its node body wears a **"N flows" pill** to signal the
-palette is non-empty. *(Realized now on the Component-detail panel of a Component (editable for
-the owner, read-only for a **viewer** — issue #16), inside the per-Connection "+ flow" popover,
-and — since Slice 3 (#36) — on the **boundary
-proxy**: the same surface projected inward, where each item carries a refinement Port so a
-child Component can route the external Flow onto its interior pipe (ADR-0012). The first page
-ships in **getCanvas** `flowPalettes`; the overflow pages in via `getFlowPalette`.)*
+Retired with the Flow model (#62). The read-only list of a Component's **Flows** is gone with the
+Flows it listed; the **Component-detail panel** keeps only the **kind** row and the documentation
+editor. (The *palette* prose/UI convention — the word names the surface, not the library — lives
+on in the **Kind palette**.)
 
 ### FlowRoute
-The binding that says *"this **Connection** carries this **Flow**"* — a first-class row that
-attaches a **Flow** to an **Edge** at a **Canvas scope**. Names exactly one `outerEdgeId`
-(the Connection at this scope that carries the Flow) and zero-or-one `innerEdgeId` (the
-**refinement Connection** one scope deeper — the inner **Edge** that resolves a **boundary
-proxy** to the real Component, written by the gated cross-scope `routeFlow` since Slice 3 /
-ADR-0012). An inner Edge is a **shared pipe**: one inner Edge can carry **many FlowRoutes**
-(`innerEdgeId` has no uniqueness), so two Flows refined over the same interior pair converge
-on one Edge, and the soft-delete sweep is reference-counted — an inner Edge dies only with its
-last active FlowRoute. Same word user-facing and in code — applies the **Flow** no-split
-convention (the
-"Node" overload that motivated the Component/Node split does not apply). Carries `projectId`
-for authz and cascade-index friendliness, soft-delete columns (`deletedAt`, `deletionId`),
-and is owner-only writable via `routeFlow` / `unrouteFlow`. A FlowRoute's `flowId` must
-reference an active **Flow** whose `ownerNodeId` is one endpoint of the outer **Edge** —
-the *touches-endpoint* invariant, which is the WHOLE of `routeFlow`'s direction check: a
-Connection is undirected, so any owner-endpoint Flow routes onto it and its **Interaction**
-verb decides which way the derived arrow points (ADR-0023, retiring ADR-0013's
-polarity-vs-arrow rejection and the reverse-Connection offer). De-dupe is `(outerEdgeId, flowId)` among active rows
-— the **ADR-0010 named pattern**, third adopter (`idx_flow_route_dedup`, partial unique
-backstop; service-primary `findFirst` is the readable fast path; both translate to
-`ConflictError` with `details.conflictingFlowRouteIds`). The inner-Edge and FlowRoute writes
-use `createMany({ skipDuplicates })` (`ON CONFLICT DO NOTHING`) so a concurrent racer never
-aborts the route's transaction — convergence on a shared inner Edge, not a retry loop
-(ADR-0012). *(Realized now for same-Canvas baseline routing via `routeFlow` / `unrouteFlow`,
-surfaced as the `edgeFlows` aggregation in **getCanvas**, the routed-count pill on the
-Connection, and the "+ flow" popover on a selected Connection — and, since Slice 3 (#36),
-cross-scope refinement (the `innerEdgeId` writer) and palette rendering on **boundary
-proxies**, with the drag-from-palette gesture. As of ADR-0023 a Connection is undirected:
-`routeFlow` enforces only touches-endpoint, the per-Edge `arrowAtSource`/`arrowAtTarget`
-aggregation in **getCanvas** drives the derived arrowheads, and the polarity gate +
-reverse-Connection reconciliation (the old Slice 4 / ADR-0013) are retired. See ADR-0011
-(Flow foundation), ADR-0012 (cross-scope writer), ADR-0023 (undirected Connection, derived
-direction), and the master plan at `docs/plans/flow-routed-connections.md`.)*
+Retired with the Flow model (#62 / ADR-0030). Connections no longer carry routed Flows; a
+Connection's **Interaction** is intrinsic, not derived from routes. The cross-scope inner-Edge
+writer (`routeFlow`) is deleted. Historical: ADR-0011, ADR-0012, ADR-0023.
 
 ### Flow kind (`FlowKind`)
-A **Flow**'s category, stored on it as `kind: FlowKind`. One of nine values: `GENERIC` (the
-default — a hand-authored Flow with no formal contract), `OPENAPI_OPERATION`, `GRAPHQL_FIELD`,
-`ASYNCAPI_CHANNEL`, `SSE_STREAM`, `WEBSOCKET`, `FUNCTION_CALL`, `EVENT`, `DB_TABLE`. The word in
-prose and the enum name in code are **kind** / `FlowKind` — the same pattern as **Component
-kind** / `NodeKind`. **Kind is cosmetic**: it drives palette icons and how an inspector formats
-the `signature` payload; it does not change authorization, routing, or de-dupe. New kinds are an
-additive change. (A `DB_TABLE` Flow routes onto a Connection exactly like an `OPENAPI_OPERATION`
-— routing is kind-agnostic; only the icon and `signature` shape differ.)
+Retired with the Flow model (#62). It was the cosmetic categorization of Flows; no successor — a
+Connection's only typing axis is **Interaction**, and there is no `EdgeKind`.
 
-### Flow spec kind (`FlowSpecKind`)
-A **FlowSpec**'s source format, stored on it as `kind: FlowSpecKind`. One of six values:
-`OPENAPI`, `ASYNCAPI`, `TS_SIGNATURE`, `GRAPHQL`, `SQL_DDL`, `CUSTOM`. The value selects which
-parser in the registry (`src/server/architecture/flow-parser/`) materializes Flows from
-`source`; `CUSTOM` is hand-authored prose the canonical parsers do not cover (no parser). The
-word in prose and the enum name in code are **spec kind** / `FlowSpecKind`. Which spec kinds a
-Component is *offered* in the **Component-detail panel** is a presentation-only affinity keyed
-by **Component kind** (`~/lib/spec-kinds` — e.g. a `DATABASE` is offered `SQL_DDL`, a `TOPIC`
-`ASYNCAPI`, an `EXTERNAL_API` `OPENAPI`/`GRAPHQL`/`ASYNCAPI`); an empty affinity hides the paste
-field entirely. The affinity *ranks*, it never *constrains* — the service accepts any spec kind
-on any Component (ADR-0019 precedent; spec kind is orthogonal to the cosmetic Component kind).
-*(All five structured parsers are realized now; `CUSTOM` persists source with a `parseError`
-note. See ADR-0011, ADR-0025.)*
+### Spec kind (`SpecKind`)
+A **Spec**'s source format, stored on it as `kind: SpecKind`. One of six values: `OPENAPI`,
+`ASYNCAPI`, `TS_SIGNATURE`, `GRAPHQL`, `SQL_DDL`, `CUSTOM`. Renamed from `FlowSpecKind` with the
+Flow model's retirement (#62). The value selects which parser materializes derived child
+**Components** from `source` (#64); `CUSTOM` is hand-authored prose the canonical parsers do not
+cover. The word in prose and the enum name in code are **spec kind** / `SpecKind`. *(The enum +
+column land in #62; the parser registry and the per-Component affinity that ranks which spec kinds
+a Component is offered — presentation-only, ADR-0019 precedent — are (re)built with the
+spec→Component generator in #64. See ADR-0011, ADR-0025.)*
 
 ### Markdown export
 The byte-stable serialization of a **Project** — or one of its subtrees — to markdown for human
@@ -723,9 +640,11 @@ actor, input)` (slug-readable, web) and `exportMarkdownForActor(db, actor, input
 `projectId`, the MCP read path #18 / ADR-0022) — both depth-independent, honouring the
 single-round-trip posture (ADR-0001), and both delegating to the pure `serializeGraph` in
 `src/server/architecture/markdown.ts`. The "Copy as markdown" toolbar action and the breadcrumb-bar
-scope-anchored copy ship the client-side surface. **Flow** / **FlowRoute** sections are out of scope
-here — Slice 5 / #38 extends the format additively (`### Flows` Component subsection, `flows:`
-Connection subsection) without re-baselining the #15 golden file. See ADR-0017.)*
+scope-anchored copy ship the client-side surface. The export rewrite for the typed cross-scope
+model — the **Connections** section gaining the `interaction` glyph and a **Spec** subsection — is
+#67 (which amends ADR-0017). #62 only adjusts the serializer for the dropped `Edge.canvasNodeId`
+(Connections render `source → target` without a per-canvas scope suffix; subtree boundary
+derivation is endpoint-membership based) and re-baselines the golden once. See ADR-0017.)*
 
 ## Standing notes
 

@@ -25,9 +25,11 @@ import { type NodeKind as PrismaNodeKind } from "../../../generated/prisma/clien
  *    `remark-stringify` options are pinned explicitly below so a remark
  *    version bump cannot silently re-baseline the golden fixtures.
  *
- * Flows / FlowRoutes are intentionally absent — Slice 5 / #38 extends this
- * format additively (new subsections under existing Component / Connection
- * blocks), without re-baselining the #15 golden file.
+ * The typed cross-scope export rewrite — one line per real Connection with the
+ * interaction glyph, deterministically ordered — is #67. #62 only adjusts this
+ * serializer for the dropped `Edge.canvasNodeId` (scope is no longer stored;
+ * ADR-0028): Connections render `source → target` without a per-canvas scope
+ * suffix, and subtree boundary derivation is endpoint-membership based.
  */
 
 export interface SerializerProject {
@@ -44,7 +46,6 @@ export interface SerializerNode {
 
 export interface SerializerEdge {
   id: string;
-  canvasNodeId: string | null;
   sourceId: string;
   targetId: string;
   label: string | null;
@@ -310,12 +311,12 @@ function renderConnections(input: SerializerInput): string {
   if (input.edges.length === 0) return "";
   const byId = new Map(input.nodes.map((n) => [n.id, n]));
 
-  // Stable order: canvas scope (null sorts first as ""), source id, target id,
-  // edge id. id-based sort keeps the byte output stable even when two
-  // Connections happen to share endpoint titles.
+  // Stable order: source id, target id, edge id (codepoint). An Edge no longer
+  // stores a scope (ADR-0028), so the former canvas-scope sort key is gone; the
+  // id-based tiebreak keeps the byte output stable even when two Connections
+  // share endpoint titles.
   const ordered = [...input.edges].sort(
     (a, b) =>
-      cmp(a.canvasNodeId ?? "", b.canvasNodeId ?? "") ||
       cmp(a.sourceId, b.sourceId) ||
       cmp(a.targetId, b.targetId) ||
       cmp(a.id, b.id),
@@ -327,14 +328,8 @@ function renderConnections(input: SerializerInput): string {
     const target = byId.get(e.targetId);
     const sTitle = source?.title ?? e.sourceId;
     const tTitle = target?.title ?? e.targetId;
-    const scopeTitle =
-      e.canvasNodeId === null
-        ? "Project root"
-        : (byId.get(e.canvasNodeId)?.title ?? e.canvasNodeId);
     const labelPart = e.label ? ` — ${e.label}` : "";
-    lines.push(
-      `- ${sTitle} → ${tTitle}${labelPart} (canvas: ${scopeTitle})`,
-    );
+    lines.push(`- ${sTitle} → ${tTitle}${labelPart}`);
   }
   lines.push("");
   return lines.join("\n");

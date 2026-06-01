@@ -99,6 +99,32 @@ export const nodeKind = z.enum([
 export type NodeKind = z.infer<typeof nodeKind>;
 
 /**
+ * A Connection's type, carried on its Edge as `interaction` (ADR-0027). Five
+ * values: a default undirected `ASSOCIATION` plus four directional interactions
+ * describing, relative to the `source` endpoint, how it participates — the verb
+ * from which a Connection's arrowheads are DERIVED together with draw order
+ * (rendering lands in #65, never a stored arrow):
+ *
+ *   ASSOCIATION — a plain undirected relationship; no arrowheads (the default)
+ *   REQUEST     — source is called in request/response → arrow at target
+ *   PUSH        — source emits unprompted (SSE, webhook out) → arrow at target
+ *   SUBSCRIBE   — source consumes an external stream/feed → arrow at source
+ *   DUPLEX      — source both sends and receives (WebSocket) → arrows both ends
+ *
+ * Client-safe source of truth for the value set; the Prisma `Interaction` enum
+ * mirrors it. Renamed from `FlowInteraction` and gained `ASSOCIATION` with the
+ * Flow model's retirement (#62). See CONTEXT.md "Interaction".
+ */
+export const interaction = z.enum([
+  "ASSOCIATION",
+  "REQUEST",
+  "PUSH",
+  "SUBSCRIBE",
+  "DUPLEX",
+]);
+export type Interaction = z.infer<typeof interaction>;
+
+/**
  * Input for creating a Component. Addressed by `projectId` (an internal handle),
  * NOT by the capability slug: writes are never granted by the slug (ADR-0002),
  * so the write path does not even accept one — the service resolves the project
@@ -165,10 +191,9 @@ export type UpdateNodeKindInput = z.infer<typeof updateNodeKindInput>;
 
 // The bounded-payload cap on `Node.documentation` — pasted/typed markdown bytes.
 // Sized to be far past any practical Component doc (~100 KB is roughly 30k words)
-// while bounding the autosave payload. UTF-8 bytes, mirroring
-// `MAX_FLOW_SPEC_SOURCE_BYTES`'s precedent — a `string().max()` counts UTF-16
-// code units, which under-counts emoji and CJK by 2×; the byte refine below
-// gives a predictable wire-size budget regardless of script.
+// while bounding the autosave payload. UTF-8 bytes — a `string().max()` counts
+// UTF-16 code units, which under-counts emoji and CJK by 2×; the byte refine
+// below gives a predictable wire-size budget regardless of script.
 export const MAX_NODE_DOCUMENTATION_BYTES = 100_000;
 
 /**
@@ -185,8 +210,7 @@ export const MAX_NODE_DOCUMENTATION_BYTES = 100_000;
 export const updateNodeDocumentationInput = z.object({
   id: z.string().min(1),
   // `string().max()` counts UTF-16 code units; the cap is named `_BYTES` and
-  // measured in UTF-8 bytes, so refine to UTF-8 bytes here too — same pattern
-  // as `attachFlowSpecInput.source` below.
+  // measured in UTF-8 bytes, so refine to UTF-8 bytes here too.
   documentation: z
     .string()
     .refine(
@@ -208,11 +232,8 @@ export type UpdateNodeDocumentationInput = z.infer<
  * Project root; a Node id reparents it under that Component's interior Canvas.
  * Required, not defaulted — a move call must state intent (memory: prefer
  * narrow required inputs). The service rejects cycle-creating moves with
- * `ValidationError` and rejects moves that would orphan an incident
- * Connection with `ConflictError` (ADR-0024). The refinement-FlowRoute
- * falsification case is currently unreachable under existing
- * `routeFlow` / `connectNodes` constraints and is named in ADR-0024 as
- * future follow-up logic.
+ * `ValidationError`; there is no orphan-reject (incident Connections may span
+ * scopes — ADR-0028, retiring ADR-0024's orphan reject).
  */
 export const moveNodeInput = z.object({
   id: z.string().min(1),
@@ -274,19 +295,20 @@ export type RestoreNodeInput = z.infer<typeof restoreNodeInput>;
  * Input for drawing a Connection (creating an Edge). Addressed by `projectId`
  * (an internal handle), NOT the capability slug: writes are never slug-granted
  * (ADR-0002). `input` carries no ownerId; identity comes only from the actor
- * (ADR-0001). `canvasNodeId` is the Canvas the Connection is painted on (null =>
- * the Project root) and is supplied explicitly, never inferred from the
- * endpoints (ADR-0005); the service confirms both endpoints actually sit on it.
- * `sourceId`/`targetId` are the endpoint Nodes — their ordering (output Port →
- * input Port) IS the Connection's direction; the arrow is structural, never a
- * stored field (ADR-0009). `label` is UNTRUSTED user content, stored verbatim
- * (prompt-injection standing note, CONTEXT.md).
+ * (ADR-0001). A Connection may link any two Components at any scope —
+ * same-Canvas, cross-scope, or lineal (ADR-0028); the service rejects only the
+ * true self-link. There is no `canvasNodeId`: an Edge stores no scope (#63
+ * derives it from endpoint ancestry). `sourceId`/`targetId` are the endpoint
+ * Nodes in draw order; arrowheads are derived from `(interaction, source,
+ * target)` at render time (#65), never stored. `interaction` is the Connection's
+ * type (default `ASSOCIATION` — a plain undirected line; ADR-0027). `label` is
+ * UNTRUSTED user content, stored verbatim (prompt-injection standing note).
  */
 export const connectNodesInput = z.object({
   projectId: z.string().min(1),
-  canvasNodeId: z.string().nullable().default(null),
   sourceId: z.string().min(1),
   targetId: z.string().min(1),
+  interaction: interaction.default("ASSOCIATION"),
   label: z.string().max(200).optional(),
 });
 // `z.input` (not `z.infer`) so callers may omit the defaulted fields; the
@@ -298,9 +320,9 @@ export type ConnectNodesInput = z.input<typeof connectNodesInput>;
  * natural key for an existing row, and how a future MCP tool arrives. The
  * service loads the Edge, resolves its Project, and enforces owner-only access
  * (ADR-0001). `label` is nullable (null clears it) and optional (undefined
- * leaves it). There is no direction to edit — the arrow is structural,
- * output→input, derived from the endpoints (ADR-0009). `label` is UNTRUSTED
- * user content, stored verbatim (prompt-injection standing note, CONTEXT.md).
+ * leaves it). The Connection's `interaction` is set at creation and edited via
+ * its own surface (#65), not here. `label` is UNTRUSTED user content, stored
+ * verbatim (prompt-injection standing note, CONTEXT.md).
  */
 export const updateEdgeInput = z.object({
   id: z.string().min(1),
@@ -319,261 +341,16 @@ export const deleteEdgeInput = z.object({
 export type DeleteEdgeInput = z.infer<typeof deleteEdgeInput>;
 
 /**
- * The nine Flow kinds. Client-safe source of truth for the value set; the
- * Prisma `FlowKind` enum mirrors it, and a compile-time parity guard in the
- * service layer fails the build if the two ever drift. Kind is cosmetic — it
- * drives palette icons and renderer format, never authorization or routing
- * (see CONTEXT.md "Flow kind"; ADR-0011). Never import the Prisma enum into
- * client code; import this.
- */
-export const flowKind = z.enum([
-  "GENERIC",
-  "OPENAPI_OPERATION",
-  "GRAPHQL_FIELD",
-  "ASYNCAPI_CHANNEL",
-  "SSE_STREAM",
-  "WEBSOCKET",
-  "FUNCTION_CALL",
-  "EVENT",
-  "DB_TABLE",
-]);
-export type FlowKind = z.infer<typeof flowKind>;
-
-/**
- * The six FlowSpec source formats. OPENAPI / ASYNCAPI / GRAPHQL / SQL_DDL /
- * TS_SIGNATURE each have a bounded parser (flow-parser/parsers); CUSTOM is
- * hand-authored prose with no parser (source persists with a `parseError`
- * note). The picker offers a NodeKind-relevant subset, presentation-only
- * (~/lib/spec-kinds; ADR-0019) — the service accepts any kind (see CONTEXT.md
- * "Flow spec kind"; ADR-0011).
- */
-export const flowSpecKind = z.enum([
-  "OPENAPI",
-  "ASYNCAPI",
-  "TS_SIGNATURE",
-  "GRAPHQL",
-  "SQL_DDL",
-  "CUSTOM",
-]);
-export type FlowSpecKind = z.infer<typeof flowSpecKind>;
-
-/**
- * How a Flow's owner Component participates in the interaction — the
- * owner-relative encoder from which a Connection's arrowheads are DERIVED
- * (never a stored direction on the Edge; ADR-0023, superseding ADR-0009/0013):
- *
- *   REQUEST   — owner is called in request/response (REST, RPC) → arrow at owner
- *   PUSH      — owner emits unprompted (SSE, webhook out, event) → arrow away
- *   SUBSCRIBE — owner consumes an external stream/feed → arrow at owner
- *   DUPLEX    — owner both sends and receives (WebSocket) → arrows both ends
- *
- * Client-safe source of truth for the value set; the Prisma `FlowInteraction`
- * enum mirrors it, kept in lockstep by a compile-time parity guard. The arrow
- * rule itself lives in `~/lib/flow-direction`. See CONTEXT.md "Interaction".
- */
-export const flowInteraction = z.enum([
-  "REQUEST",
-  "PUSH",
-  "SUBSCRIBE",
-  "DUPLEX",
-]);
-export type FlowInteraction = z.infer<typeof flowInteraction>;
-
-// The bounded-loader hard cap on `FlowSpec.source` size — pasted spec bytes.
-// Enforced at the Zod boundary AND re-enforced inside the parser (belt +
-// suspenders); a hostile spec can OOM the parser before reaching the output
-// boundary, so size is gated at parse time (CONTEXT.md prompt-injection
-// standing note, parse-time clause).
-export const MAX_FLOW_SPEC_SOURCE_BYTES = 1_000_000;
-
-/**
- * Input for attaching (or re-attaching) a FlowSpec to a Component. Addressed
- * by `ownerNodeId` (the Component whose contract this spec is); the service
- * loads it, resolves its Project, and enforces owner-only access (ADR-0001).
- * `source` is UNTRUSTED user-pasted content (prompt-injection standing note,
- * CONTEXT.md) — stored verbatim, parsed only by a bounded loader. Re-attach
- * is non-destructive: matching keys preserved, dropped keys soft-deleted with
- * a fresh `deletionId` per re-parse batch (ADR-0011).
- */
-export const attachFlowSpecInput = z.object({
-  ownerNodeId: z.string().min(1),
-  kind: flowSpecKind,
-  // `string().max()` counts UTF-16 code units; the cap is named `_BYTES` and
-  // is also re-enforced inside the parser by UTF-8 byte count, so refine to
-  // UTF-8 bytes here too.
-  source: z
-    .string()
-    .min(1)
-    .refine(
-      (s) => new TextEncoder().encode(s).length <= MAX_FLOW_SPEC_SOURCE_BYTES,
-      { message: "Spec source exceeds the 1 MB cap." },
-    ),
-});
-export type AttachFlowSpecInput = z.infer<typeof attachFlowSpecInput>;
-
-/**
- * Input for adding a user-authored Flow (no FlowSpec). Addressed by
- * `ownerNodeId`; the service authorizes against the owner Component's
- * Project. The de-dupe rule `(ownerNodeId, key)` is enforced service-primary
- * with a partial unique index backstop (ADR-0010 named pattern; ADR-0011).
- * `title` is UNTRUSTED user content, stored verbatim.
- */
-export const addFlowInput = z.object({
-  ownerNodeId: z.string().min(1),
-  kind: flowKind.default("GENERIC"),
-  key: z.string().min(1).max(200),
-  title: z.string().min(1).max(200),
-  interaction: flowInteraction,
-});
-export type AddFlowInput = z.input<typeof addFlowInput>;
-
-/**
- * Input for editing a Flow's `title` (the displayable label), `interaction`
- * (the verb that drives its arrow direction), or `signature` (the structured
- * payload). Addressed by Flow `id`; the service authorizes against the Project
- * owner. Spec-derived Flows (`sourceSpecId != null`) REJECT edits — the spec is
- * the source of truth (re-paste the spec to change them). `interaction` is
- * editable so an owner can correct a parser default or refine a hand-authored
- * Flow (e.g. mark a channel DUPLEX); `key`/`kind` stay non-editable until a real
- * need surfaces (memory: "prefer narrow required inputs"). `title` is UNTRUSTED.
- */
-export const updateFlowInput = z.object({
-  id: z.string().min(1),
-  title: z.string().min(1).max(200).optional(),
-  interaction: flowInteraction.optional(),
-  signature: z.unknown().optional(),
-});
-export type UpdateFlowInput = z.infer<typeof updateFlowInput>;
-
-/**
- * Input for removing a Flow. Addressed by Flow `id`; the service authorizes
- * against the Project owner. Removal is a soft-delete (sets `deletedAt`) so
- * the action stays recoverable. A lone `deleteFlow` does NOT mint a
- * `deletionId` — that handle ties cascading-batch deletes only (ADR-0008).
- */
-export const deleteFlowInput = z.object({
-  id: z.string().min(1),
-});
-export type DeleteFlowInput = z.infer<typeof deleteFlowInput>;
-
-/**
- * Input for reading a Component's Flow palette. Addressed by `ownerNodeId`;
- * read access is owner OR valid capability slug (ADR-0002), so the panel
- * works in shared-view mode too. Returns active Flows ordered by createdAt;
- * bounded to the first 200 rows (cursor pagination is additive future work).
- */
-export const getFlowsForNodeInput = z.object({
-  ownerNodeId: z.string().min(1),
-  slug: z.string().min(1),
-});
-export type GetFlowsForNodeInput = z.infer<typeof getFlowsForNodeInput>;
-
-/**
- * Input for paging a boundary proxy's Flow palette (Slice 3 / #36). `getCanvas`
- * bundles the first page of each in-scope proxy's palette; the inspector pages
- * the remainder through this procedure when an owner exposes more Flows than
- * the bundle carries. Addressed by `ownerNodeId` + `slug` (slug-readable per
- * ADR-0002, like `getFlowsForNode`); `cursor` is the last Flow id from the
- * previous page (omit for the first page).
- */
-export const getFlowPaletteInput = z.object({
-  ownerNodeId: z.string().min(1),
-  slug: z.string().min(1),
-  cursor: z.string().min(1).optional(),
-});
-export type GetFlowPaletteInput = z.infer<typeof getFlowPaletteInput>;
-
-/**
- * Input for routing a Flow onto a Connection (creating a FlowRoute). Addressed
- * by `flowId` and `outerEdgeId`; the service loads both, asserts they share a
- * Project, authorizes owner-only against that Project (ADR-0001), and rejects
- * unless the Flow's owner is one endpoint of the outer Edge. The polarity-
- * vs-arrow refinement of that rule is Slice 4's invariant — not enforced
- * here. The de-dupe rule `(outerEdgeId, flowId)` follows the ADR-0010 named
- * pattern with the `idx_flow_route_dedup` partial unique index as the TOCTOU
- * backstop.
- *
- * Two shapes, discriminated by whether `sourceNodeId` / `targetNodeId` are
- * present:
- *
- * - **Same-Canvas baseline** (both absent): "this pipe carries this Flow."
- *   Creates a FlowRoute with `innerEdgeId = null`. The Slice-2 path, unchanged.
- * - **Cross-scope refinement** (both present): "this Flow, one scope deeper,
- *   continues as the interior Connection between the interior Component and
- *   the boundary proxy." `sourceNodeId` / `targetNodeId` are the inner Edge's
- *   endpoints exactly as the UI synthesizes them (direction-blind here —
- *   polarity is Slice 4). Exactly one of them must be the **boundary
- *   endpoint** (the Flow's owner, which is an endpoint of the outer Edge); the
- *   other is the **interior endpoint** that must sit on the interior Canvas of
- *   the outer Edge's other endpoint. The service find-or-creates the inner
- *   Edge — the sole gated exception to ADR-0005's same-Canvas rule (ADR-0012).
- *
- * Both-or-neither: supplying just one endpoint is rejected — the inner Edge
- * needs both, and a half-specified route would be ambiguous (memory: "prefer
- * narrow required inputs"). `innerEdgeId` is never an input — the service
- * derives it, so a client can never name a cross-scope Edge directly.
- */
-export const routeFlowInput = z
-  .object({
-    flowId: z.string().min(1),
-    outerEdgeId: z.string().min(1),
-    sourceNodeId: z.string().min(1).optional(),
-    targetNodeId: z.string().min(1).optional(),
-  })
-  .refine(
-    (v) => (v.sourceNodeId === undefined) === (v.targetNodeId === undefined),
-    {
-      message:
-        "Cross-scope refinement routing needs both the interior Component and the boundary endpoint (sourceNodeId + targetNodeId), or neither for same-Canvas routing.",
-      // Cross-field rule, not a single-field error: attach at the object root.
-      path: [],
-    },
-  );
-export type RouteFlowInput = z.infer<typeof routeFlowInput>;
-
-/**
- * Input for removing a FlowRoute. Addressed by FlowRoute `id`; the service
- * authorizes against the Project owner. Removal is a soft-delete (sets
- * `deletedAt`) so re-routing the same (flowId, outerEdgeId) pair later still
- * works — the `idx_flow_route_dedup` partial index excludes deletedAt rows
- * (ADR-0010 precondition c). A lone `unrouteFlow` does NOT mint a
- * `deletionId` — that handle ties cascading-batch deletes only (ADR-0008).
- */
-export const unrouteFlowInput = z.object({
-  flowRouteId: z.string().min(1),
-});
-export type UnrouteFlowInput = z.infer<typeof unrouteFlowInput>;
-
-/**
- * Input for undoing a cascading `deleteEdge`. Addressed by the `deletionId`
- * minted by `deleteEdge` when it swept at least one incident FlowRoute (the
- * lone-Edge case still mints no id; see ADR-0014, the cascade decision).
- * The service restores EXACTLY the rows bearing that id — the Edge and its
- * swept FlowRoutes — and pre-checks the `idx_edge_dedup` and
- * `idx_flow_route_dedup` invariants so a conflicting active row surfaces a
- * readable error rather than a P2002. Owner-only; never slug-granted
- * (ADR-0002).
+ * Input for undoing a cascading `deleteNode` Edge sweep. Addressed by the
+ * `deletionId` minted by `deleteNode` (a lone `deleteEdge` mints none — ADR-0030).
+ * The service restores EXACTLY the Edges bearing that id and pre-checks the two
+ * Edge de-dupe indexes so a conflicting active row surfaces a readable error
+ * rather than a P2002. Owner-only; never slug-granted (ADR-0002).
  */
 export const restoreEdgeInput = z.object({
   deletionId: z.string().min(1),
 });
 export type RestoreEdgeInput = z.infer<typeof restoreEdgeInput>;
-
-/**
- * Input for reading the active FlowRoute flowIds on a Connection — drives the
- * "+ flow" popover's unrouted filter (Slice 2). Read access is via the
- * capability slug (ADR-0002), so the panel works in shared-view mode too.
- * Returns just `flowId`s — the popover already has the endpoint Flow lists
- * via `getFlowsForNode`; this query only answers "which of those are
- * already routed?" Smallest helper that fits.
- */
-export const getRoutedFlowIdsForEdgeInput = z.object({
-  outerEdgeId: z.string().min(1),
-  slug: z.string().min(1),
-});
-export type GetRoutedFlowIdsForEdgeInput = z.infer<
-  typeof getRoutedFlowIdsForEdgeInput
->;
 
 /**
  * Input for deterministic markdown export (M2 / #15). Addressed by the
@@ -656,18 +433,17 @@ export type ApplyGraphComponentInput = z.input<typeof applyGraphComponentInput>;
 /**
  * One Connection arm of an `apply_graph` batch. Mirrors
  * {@link connectNodesInput} minus `projectId` (lifted to the top), with
- * `canvasNodeId` / `sourceId` / `targetId` all replaced by
- * {@link applyGraphNodeRef} so endpoints and the Canvas scope can each be
- * either a server id or a sibling `clientId`. No `clientId` on Connections in
- * this slice — nothing inside #20's surface references a Connection by client
- * id (memory: prefer narrow required inputs). Slice 5 / #38 adds an optional
- * `clientId?` here additively when FlowRoutes need to reference Connections.
+ * `source` / `target` replaced by {@link applyGraphNodeRef} so each endpoint can
+ * be a server id or a sibling `clientId`. A Connection may span scopes
+ * (ADR-0028), so there is no `canvasNode` ref. `interaction` is the Connection's
+ * type (default `ASSOCIATION`; ADR-0027). No `clientId` on Connections — nothing
+ * references a Connection by client id (memory: prefer narrow required inputs).
  * `label` is UNTRUSTED user content, stored verbatim. See ADR-0026.
  */
 export const applyGraphConnectionInput = z.object({
-  canvasNode: applyGraphNodeRef.nullable().default(null),
   source: applyGraphNodeRef,
   target: applyGraphNodeRef,
+  interaction: interaction.default("ASSOCIATION"),
   label: z.string().max(200).optional(),
 });
 // `z.input` (not `z.infer`) so callers may omit the defaulted fields.

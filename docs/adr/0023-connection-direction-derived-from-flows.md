@@ -4,6 +4,16 @@
 
 Accepted (rollout across four slices on `feat/flow-derived-direction`).
 
+**Superseded by [ADR-0027](0027-connection-carries-its-own-interaction.md)
+(#62):** the Flow model this ADR derived direction from is retired. A Connection
+now carries its own **Interaction** (an intrinsic Edge column, default
+`ASSOCIATION`) and arrowheads derive from `(interaction, source, target)`, not
+from routed Flows. The core insight — direction has a single un-lying source of
+truth — is preserved; ADR-0027 relocates it from routed Flows to the Connection's
+own `interaction`. The unordered de-dupe survives only for `ASSOCIATION`; the four
+directional interactions de-dupe on the *ordered* key with `interaction` included
+([ADR-0010](0010-edge-dedup-partial-unique-index.md) amendment).
+
 **Supersedes** [ADR-0009](0009-connection-direction-is-structural.md) (a
 Connection's arrow is the structural `sourceId→targetId` ordering) and
 [ADR-0013](0013-polarity-not-stored-direction.md) (a Flow's polarity selects

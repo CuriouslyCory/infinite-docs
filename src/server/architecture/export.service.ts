@@ -32,14 +32,14 @@ import { type NodeKind as PrismaNodeKind } from "../../../generated/prisma/clien
  *  - Whole project (`canvasNodeId === null`): two flat reads in parallel.
  *    Boundary is empty (the root has no ancestors).
  *  - Subtree (`canvasNodeId === R`): three reads in parallel. Two share the
- *    same descent CTE shape (one returns nodes, one returns edges scoped to
- *    any Canvas inside the subtree) — running them in parallel keeps the
- *    round trip flat at the cost of one extra recursive walk on the server,
- *    which is far cheaper than a second client → server round trip. The
- *    third is a leaner ancestry-walk CTE for the **boundary context**
- *    (same shape as `deriveBoundaryProxies` in `node.service.ts` /
- *    ADR-0012, without the Flow palette aggregation — Flows are #38's
- *    surface and would only inflate the payload).
+ *    same descent CTE shape (one returns the subtree nodes, one returns the
+ *    INTERNAL Connections — both endpoints inside the subtree) — running them
+ *    in parallel keeps the round trip flat at the cost of one extra recursive
+ *    walk on the server, far cheaper than a second client → server round trip.
+ *    The third derives the **boundary context** by endpoint membership: the far
+ *    endpoint of any Connection crossing the subtree boundary. An Edge no longer
+ *    stores a scope (ADR-0028), so all three derive from endpoint ancestry; the
+ *    full typed cross-scope export rewrite is #67.
  *
  * Serialization is delegated to the pure `serializeGraph` (no `db`, no authz) —
  * the unit both front doors reuse without re-implementing the format.
@@ -65,7 +65,6 @@ interface SubtreeNodeRow {
 
 interface SubtreeEdgeRow {
   id: string;
-  canvasNodeId: string | null;
   sourceId: string;
   targetId: string;
   label: string | null;
@@ -122,7 +121,6 @@ async function serializeProjectScope(
         where: { projectId: projectId, deletedAt: null },
         select: {
           id: true,
-          canvasNodeId: true,
           sourceId: true,
           targetId: true,
           label: true,
@@ -132,7 +130,6 @@ async function serializeProjectScope(
     nodes = nodeRows;
     edges = edgeRows.map((e) => ({
       id: e.id,
-      canvasNodeId: e.canvasNodeId,
       sourceId: e.sourceId,
       targetId: e.targetId,
       label: e.label,
@@ -156,58 +153,67 @@ async function serializeProjectScope(
             AND s.depth < ${SUBTREE_DEPTH_CAP}
         )
         SELECT id, "parentId", title, kind, documentation FROM subtree`,
+      // Internal Connections: both endpoints inside the subtree. An Edge no
+      // longer stores a scope (ADR-0028), so membership of both endpoints is
+      // the whole predicate; boundary-crossing Connections surface in the
+      // Boundary section below instead.
       db.$queryRaw<SubtreeEdgeRow[]>`
         WITH RECURSIVE subtree AS (
-          SELECT n.id, n."parentId", 0 AS depth
+          SELECT n.id, 0 AS depth
           FROM "Node" n
           WHERE n.id = ${canvasNodeId}
             AND n."projectId" = ${projectId}
             AND n."deletedAt" IS NULL
           UNION ALL
-          SELECT c.id, c."parentId", s.depth + 1
+          SELECT c.id, s.depth + 1
           FROM "Node" c
           JOIN subtree s ON c."parentId" = s.id
           WHERE c."projectId" = ${projectId}
             AND c."deletedAt" IS NULL
             AND s.depth < ${SUBTREE_DEPTH_CAP}
         )
-        SELECT e.id, e."canvasNodeId", e."sourceId", e."targetId", e.label
+        SELECT e.id, e."sourceId", e."targetId", e.label
         FROM "Edge" e
-        JOIN subtree s ON e."canvasNodeId" = s.id
         WHERE e."projectId" = ${projectId}
-          AND e."deletedAt" IS NULL`,
+          AND e."deletedAt" IS NULL
+          AND e."sourceId" IN (SELECT id FROM subtree)
+          AND e."targetId" IN (SELECT id FROM subtree)`,
+      // Boundary context: the far endpoint of any active Connection that
+      // crosses the subtree boundary (exactly one endpoint inside). Derived
+      // from endpoint membership, not the old transitive ancestor walk (#67
+      // owns the full cross-scope rewrite). `is_direct` marks a Connection
+      // incident to the subtree root R itself, vs a deeper descendant.
       db.$queryRaw<BoundaryRow[]>`
-        WITH RECURSIVE ancestry AS (
-          SELECT n.id, n."parentId", 0 AS depth
+        WITH RECURSIVE subtree AS (
+          SELECT n.id
           FROM "Node" n
           WHERE n.id = ${canvasNodeId}
             AND n."projectId" = ${projectId}
             AND n."deletedAt" IS NULL
           UNION ALL
-          SELECT p.id, p."parentId", a.depth + 1
-          FROM "Node" p
-          JOIN ancestry a ON p.id = a."parentId"
-          WHERE p."projectId" = ${projectId}
-            AND p."deletedAt" IS NULL
-            AND a.depth < ${SUBTREE_DEPTH_CAP}
+          SELECT c.id
+          FROM "Node" c
+          JOIN subtree s ON c."parentId" = s.id
+          WHERE c."projectId" = ${projectId}
+            AND c."deletedAt" IS NULL
         )
         SELECT
           proxy.id AS node_id,
           proxy.title AS title,
           proxy.kind AS kind,
-          BOOL_OR(a.depth = 0) AS is_direct
-        FROM ancestry a
-        JOIN "Edge" e
-          ON e."canvasNodeId" IS NOT DISTINCT FROM a."parentId"
-          AND e."deletedAt" IS NULL
-          AND (e."sourceId" = a.id OR e."targetId" = a.id)
+          BOOL_OR(inside.id = ${canvasNodeId}) AS is_direct
+        FROM "Edge" e
+        JOIN subtree inside
+          ON inside.id = e."sourceId" OR inside.id = e."targetId"
         JOIN "Node" proxy
           ON proxy.id = CASE
-            WHEN e."sourceId" = a.id THEN e."targetId"
+            WHEN e."sourceId" = inside.id THEN e."targetId"
             ELSE e."sourceId"
           END
           AND proxy."deletedAt" IS NULL
-        WHERE proxy.id NOT IN (SELECT id FROM ancestry)
+        WHERE e."projectId" = ${projectId}
+          AND e."deletedAt" IS NULL
+          AND proxy.id NOT IN (SELECT id FROM subtree)
         GROUP BY proxy.id, proxy.title, proxy.kind`,
     ]);
 
@@ -229,7 +235,6 @@ async function serializeProjectScope(
     }));
     edges = subtreeEdgeRows.map((e) => ({
       id: e.id,
-      canvasNodeId: e.canvasNodeId,
       sourceId: e.sourceId,
       targetId: e.targetId,
       label: e.label,

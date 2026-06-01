@@ -32,4 +32,4 @@ Tokens are JWT-based.
 
 ## Connections
 
-- Auth Module → Users Module (canvas: API Gateway)
+- Auth Module → Users Module

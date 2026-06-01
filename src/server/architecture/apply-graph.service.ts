@@ -35,14 +35,15 @@ import {
  * Cross-entity validation runs BEFORE any DB write so an agent's corrected
  * retry hits a clean DB:
  *
- * 1. dangling client refs — every `parent` / `source` / `target` / `canvasNode`
- *    that names a `clientId` must point at a Component in this same batch;
+ * 1. dangling client refs — every `parent` / `source` / `target` that names a
+ *    `clientId` must point at a Component in this same batch;
  * 2. parent cycles — `parent` chains must form a DAG (Kahn's topological sort
  *    detects cycles, naming the participating clientIds).
  *
- * Per-row invariants (same-Canvas, no self-Connection, no duplicate Edge,
- * parent-existence) are NOT re-implemented — `createNode` and `connectNodes`
- * own them. Reusing them is correctness-by-construction (philosophy #6).
+ * Per-row invariants (no self-Connection, no duplicate Edge, parent-existence)
+ * are NOT re-implemented — `createNode` and `connectNodes` own them. Reusing
+ * them is correctness-by-construction (philosophy #6). A Connection may span
+ * scopes (ADR-0028) and carries its own `interaction` (default `ASSOCIATION`).
  *
  * ATOMICITY: this function writes multiple rows. The caller MUST wrap it in
  * `db.$transaction` so a per-row reject rolls back every earlier write in the
@@ -89,7 +90,6 @@ export async function applyGraph(
   }
 
   for (const [index, connectionDraft] of connections.entries()) {
-    const canvasNodeId = resolveNodeRef(connectionDraft.canvasNode, idMap);
     const sourceId = resolveNodeRef(connectionDraft.source, idMap);
     const targetId = resolveNodeRef(connectionDraft.target, idMap);
 
@@ -102,9 +102,9 @@ export async function applyGraph(
     try {
       await connectNodes(db, actor, {
         projectId: project.id,
-        canvasNodeId,
         sourceId,
         targetId,
+        interaction: connectionDraft.interaction,
         label: connectionDraft.label,
       });
     } catch (error) {
@@ -138,7 +138,7 @@ function validateNoDanglingClientRefs(
     }
   }
   for (const [index, connection] of connections.entries()) {
-    for (const slot of ["canvasNode", "source", "target"] as const) {
+    for (const slot of ["source", "target"] as const) {
       const ref = connection[slot];
       if (ref?.ref === "client") {
         if (!clientIds.has(ref.clientId)) {
@@ -226,7 +226,7 @@ function enrichConnectionError(
   if (!(error instanceof ArchitectureError)) return error;
 
   const conflictingClientIds: string[] = [];
-  for (const slot of ["source", "target", "canvasNode"] as const) {
+  for (const slot of ["source", "target"] as const) {
     const ref = connectionDraft[slot];
     if (ref?.ref === "client") {
       conflictingClientIds.push(ref.clientId);

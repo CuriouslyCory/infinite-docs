@@ -25,41 +25,19 @@ import {
   restoreEdge,
   updateEdge,
 } from "~/server/architecture/edge.service";
-import {
-  addFlow,
-  attachFlowSpec,
-  deleteFlow,
-  getFlowPalette,
-  getFlowsForNode,
-  updateFlow,
-} from "~/server/architecture/flow.service";
-import {
-  getRoutedFlowIdsForEdge,
-  routeFlow,
-  unrouteFlow,
-} from "~/server/architecture/flow-route.service";
 import { exportMarkdown } from "~/server/architecture/export.service";
 import {
-  addFlowInput,
-  attachFlowSpecInput,
   connectNodesInput,
   createNodeInput,
   createProjectInput,
   deleteEdgeInput,
-  deleteFlowInput,
   deleteNodeInput,
   exportMarkdownInput,
   getCanvasInput,
-  getFlowPaletteInput,
-  getFlowsForNodeInput,
   getProjectBySlugInput,
-  getRoutedFlowIdsForEdgeInput,
   restoreEdgeInput,
   restoreNodeInput,
-  routeFlowInput,
-  unrouteFlowInput,
   updateEdgeInput,
-  updateFlowInput,
   updateNodeDocumentationInput,
   updateNodeInput,
   updateNodeKindInput,
@@ -233,29 +211,23 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: remove a Connection (soft-delete). When the Edge
-  // carries incident FlowRoutes, the service stamps both with a fresh
-  // deletionId for batch restore (Slice 2 / ADR-0014; extends ADR-0008's
-  // lone-delete rule for the cascade case) — wrapped in $transaction so the
-  // multi-write commits atomically.
+  // Owner-only mutation: remove a Connection via a plain lone soft-delete
+  // (no cascade — the FlowRoute cascade is gone; ADR-0030).
   deleteEdge: protectedProcedure
     .input(deleteEdgeInput)
     .mutation(async ({ ctx, input }) => {
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
-        return await ctx.db.$transaction((tx) => deleteEdge(tx, actor, input));
+        return await deleteEdge(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }
     }),
 
-  // Owner-only mutation: undo a `deleteEdge` cascade — restores the Edge
-  // and every FlowRoute swept alongside it. Lone-delete `deleteEdge` calls
-  // (no incident FlowRoutes) mint no deletionId and so have no
-  // `restoreEdge` handle; the Edge's `deletedAt` will be cleared by
-  // `restoreNode` if a parent component delete swept it instead. Wrapped
-  // in $transaction so the pre-checks and the two updateMany sweeps commit
-  // atomically.
+  // Owner-only mutation: undo a `deleteNode` Edge sweep — restores the Edges
+  // stamped with the given deletionId. A lone `deleteEdge` mints no deletionId
+  // and so has no `restoreEdge` handle. Wrapped in $transaction so the
+  // pre-check and the updateMany sweep commit atomically.
   restoreEdge: protectedProcedure
     .input(restoreEdgeInput)
     .mutation(async ({ ctx, input }) => {
@@ -294,142 +266,6 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await ctx.db.$transaction((tx) => restoreNode(tx, actor, input));
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
-
-  // Owner-only mutation: parse-on-write attach (or re-attach) of a FlowSpec
-  // on a Component, reconciling derived Flow rows. Wrapped in a transaction
-  // so the upsert + reconciliation commit atomically (ADR-0011).
-  attachFlowSpec: protectedProcedure
-    .input(attachFlowSpecInput)
-    .mutation(async ({ ctx, input }) => {
-      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
-      try {
-        return await ctx.db.$transaction((tx) =>
-          attachFlowSpec(tx, actor, input),
-        );
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
-
-  // Owner-only mutation: add a user-authored Flow (no FlowSpec). Owner
-  // access is enforced in the service (ADR-0001 + ADR-0011).
-  addFlow: protectedProcedure
-    .input(addFlowInput)
-    .mutation(async ({ ctx, input }) => {
-      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
-      try {
-        return await addFlow(ctx.db, actor, input);
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
-
-  // Owner-only mutation: edit a Flow's title/signature. Spec-derived Flows
-  // reject (ADR-0011). Owner access is enforced in the service.
-  updateFlow: protectedProcedure
-    .input(updateFlowInput)
-    .mutation(async ({ ctx, input }) => {
-      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
-      try {
-        return await updateFlow(ctx.db, actor, input);
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
-
-  // Owner-only mutation: soft-delete a Flow (no deletionId minted; that
-  // handle ties cascading-batch deletes only — ADR-0008 + ADR-0011).
-  deleteFlow: protectedProcedure
-    .input(deleteFlowInput)
-    .mutation(async ({ ctx, input }) => {
-      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
-      try {
-        return await deleteFlow(ctx.db, actor, input);
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
-
-  // Public: a Component's Flow palette is readable via the capability slug
-  // (ADR-0002), so the detail panel works for shared-view sessions too. The
-  // service confirms the ownerNodeId belongs to the slugged Project.
-  getFlowsForNode: publicProcedure
-    .input(getFlowsForNodeInput)
-    .query(async ({ ctx, input }) => {
-      const actor: Actor | null = ctx.session?.user
-        ? { userId: ctx.session.user.id, via: "session" }
-        : null;
-      try {
-        return await getFlowsForNode(ctx.db, actor, input);
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
-
-  // Public: pages a boundary proxy's Flow palette when it overflows the bundle
-  // `getCanvas` ships (Slice 3 / #36). Slug-readable per ADR-0002, like
-  // `getFlowsForNode`.
-  getFlowPalette: publicProcedure
-    .input(getFlowPaletteInput)
-    .query(async ({ ctx, input }) => {
-      const actor: Actor | null = ctx.session?.user
-        ? { userId: ctx.session.user.id, via: "session" }
-        : null;
-      try {
-        return await getFlowPalette(ctx.db, actor, input);
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
-
-  // Owner-only mutation: bind a Flow to a Connection — same-Canvas (Slice 2)
-  // or cross-scope refinement that find-or-creates the inner Edge (Slice 3 /
-  // ADR-0012). Wrapped in $transaction so the inner-Edge write and the
-  // FlowRoute write commit atomically; the service's ON CONFLICT DO NOTHING
-  // writes never abort the transaction, so no retry is needed. Owner access is
-  // enforced in the service (ADR-0001).
-  routeFlow: protectedProcedure
-    .input(routeFlowInput)
-    .mutation(async ({ ctx, input }) => {
-      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
-      try {
-        return await ctx.db.$transaction((tx) => routeFlow(tx, actor, input));
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
-
-  // Owner-only mutation: remove a FlowRoute via soft-delete. A cross-scope
-  // route also sweeps its inner Edge when no other active FlowRoute shares it
-  // (Slice 3 / ADR-0012), minting a deletionId for batch restore; the lone
-  // case mints none (ADR-0008). Wrapped in $transaction so the FlowRoute and
-  // inner-Edge sweeps commit atomically. Owner access is enforced in the
-  // service.
-  unrouteFlow: protectedProcedure
-    .input(unrouteFlowInput)
-    .mutation(async ({ ctx, input }) => {
-      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
-      try {
-        return await ctx.db.$transaction((tx) => unrouteFlow(tx, actor, input));
-      } catch (error) {
-        throw toTRPCError(error);
-      }
-    }),
-
-  // Public: the "+ flow" popover's unrouted filter — slug-readable per
-  // ADR-0002 so the shared-view session sees consistent state.
-  getRoutedFlowIdsForEdge: publicProcedure
-    .input(getRoutedFlowIdsForEdgeInput)
-    .query(async ({ ctx, input }) => {
-      const actor: Actor | null = ctx.session?.user
-        ? { userId: ctx.session.user.id, via: "session" }
-        : null;
-      try {
-        return await getRoutedFlowIdsForEdge(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

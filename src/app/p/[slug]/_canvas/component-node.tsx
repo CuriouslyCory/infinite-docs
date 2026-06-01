@@ -12,12 +12,6 @@ export type ComponentNodeData = {
   kind: NodeKind;
   /** True while a freshly-added Component awaits its server id (a `temp_…` id). */
   optimistic?: boolean;
-  /**
-   * Count of active Flows owned by this Component, sourced from the `_count`
-   * aggregate folded into `getCanvas`. Drives the "N flows" pill on the
-   * Component body. Zero (or undefined) hides the pill (ADR-0011).
-   */
-  flowCount?: number;
 };
 
 export type ComponentNode = Node<ComponentNodeData, "component">;
@@ -173,24 +167,6 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
       ) : (
         <span className="max-w-[12rem] truncate">{data.title}</span>
       )}
-      {/* "N flows" pill — small, non-interactive count of the Flows this
-          Component owns (Slice 1 of the flow-routed plan; ADR-0011).
-          Sourced from `getCanvas`'s `_count.flows` aggregate so it costs no
-          extra round trip. Lowercase "flows" matches the master plan's
-          example copy. Hidden at zero; hidden while optimistic (a temp_
-          Component has no server-side Flows yet). */}
-      {!editing &&
-        !data.optimistic &&
-        data.flowCount !== undefined &&
-        data.flowCount > 0 && (
-          <span
-            aria-label={`${data.flowCount} ${data.flowCount === 1 ? "flow" : "flows"}`}
-            title={`${data.flowCount} ${data.flowCount === 1 ? "flow" : "flows"}`}
-            className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-white/70"
-          >
-            {data.flowCount} {data.flowCount === 1 ? "flow" : "flows"}
-          </span>
-        )}
       {/* Descent affordance: a keyboard-reachable equivalent of double-click,
           revealed on hover or keyboard focus. Tab lands here and Enter/Space
           activates it; mouse users still double-click. `nodrag` stops a drag from

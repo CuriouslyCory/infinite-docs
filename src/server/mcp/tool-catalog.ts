@@ -26,18 +26,17 @@ import {
  * Five tools today: the four single-op writers from #19 (`create_component`,
  * `connect_components`, `update_component_docs`, `move_component`) plus the
  * `apply_graph` batch tool from #20 that composes Components and Connections
- * in one transaction with `clientId`-chained references. Flow / FlowRoute write
- * tools (`attach_flow_spec`, `add_flow`, `update_flow`, `delete_flow`,
- * `list_flows`, `route_flow`, `unroute_flow`) are owned by #40 / #42 and land
- * additively — each new descriptor plugs in here without touching the
- * registration loop, the auth gate, the route, or `llms.txt`. No delete tool
- * is exposed (#19's acceptance criterion).
+ * in one transaction with `clientId`-chained references. A spec-attach tool
+ * (generating Components) is owned by #67 and lands additively — a new
+ * descriptor plugs in here without touching the registration loop, the auth
+ * gate, the route, or `llms.txt`. No delete tool is exposed (#19's acceptance
+ * criterion).
  *
  * Each invoker calls into the service layer with the actor; the registry
  * handles per-request actor resolution and transactional wrapping. Service
  * errors flow through `toMcpWriteError` so structured details
- * (`conflictingEdgeIds`, `conflictingFlowRouteIds`, `conflictingClientIds`,
- * …) reach the agent (ADR-0010 named pattern, ADR-0022 + ADR-0024 + ADR-0026).
+ * (`conflictingEdgeIds`, `conflictingClientIds`, …) reach the agent (ADR-0010
+ * named pattern, ADR-0022 + ADR-0026 + ADR-0027 + ADR-0028).
  */
 
 /** A short, human-readable confirmation; includes the affected id so the
@@ -119,7 +118,7 @@ ${PROMPT_INJECTION_NOTE}`,
   defineTool({
     name: "connect_components",
     title: "Connect two Components",
-    description: `Draw a Connection (Edge) between two Components on the same Canvas. A Connection is UNDIRECTED — the \`sourceId\`/\`targetId\` order is just the draw order; arrowheads are derived from any Flows routed on the Connection. \`canvasNodeId\` must match where both Components sit (omit or null for the Project root Canvas). The optional \`label\` is shown on the Connection. Returns the new Connection's id.
+    description: `Draw a Connection (Edge) between two Components — at ANY scope (same Canvas, cross-scope, or a parent and a child). The only rejected case is linking a Component to itself. \`interaction\` is the Connection's type (default \`ASSOCIATION\` — a plain undirected line; or \`REQUEST\`/\`PUSH\`/\`SUBSCRIBE\`/\`DUPLEX\` for a directional connection whose arrowhead follows the \`sourceId\`→\`targetId\` draw order). The optional \`label\` is shown on the Connection. Returns the new Connection's id.
 
 ${PROMPT_INJECTION_NOTE}`,
     inputSchema: connectNodesInput,
@@ -148,7 +147,7 @@ ${PROMPT_INJECTION_NOTE}`,
   defineTool({
     name: "move_component",
     title: "Move a Component to a different Canvas",
-    description: `Reparent a Component. \`parentId: null\` moves it to the Project root Canvas; pass an existing Component id to nest it inside that Component's interior Canvas. Move REJECTS in two cases: (1) cycle — moving the Component onto itself or one of its descendants; (2) the Component still has active Connections — disconnect them first. Conflict errors carry \`archDetails.conflictingEdgeIds\` with the blocking Connection ids so you can decide what to mutate before retrying.
+    description: `Reparent a Component. \`parentId: null\` moves it to the Project root Canvas; pass an existing Component id to nest it inside that Component's interior Canvas. Move REJECTS only a cycle — moving the Component onto itself or one of its descendants. Incident Connections are fine: they simply become cross-scope (a Connection may span scopes).
 
 ${PROMPT_INJECTION_NOTE}`,
     inputSchema: moveNodeInput,
@@ -167,9 +166,9 @@ ${PROMPT_INJECTION_NOTE}`,
     title: "Create many Components and Connections atomically",
     description: `Build a batch of Components and Connections in one transaction — the whole batch succeeds or rolls back together. Use this when you have multiple architecture rows to add at once (e.g. translating a description into 7 Components and 12 Connections); use the single-op tools (\`create_component\`, \`connect_components\`) when you have just one.
 
-Each \`components[]\` entry carries a \`clientId\` you choose (any non-empty string; unique across this whole call). A Component's \`parent\` and a Connection's \`source\` / \`target\` / \`canvasNode\` accept EITHER an existing server id (\`{ref:"server", id:"..."}\`) OR a sibling \`clientId\` from this same batch (\`{ref:"client", clientId:"..."}\`) — so you can chain "Component A holds Component B holds Component C" without intermediate reads. The response returns an \`idMap\` keyed by your clientIds; pass those server ids to subsequent tool calls.
+Each \`components[]\` entry carries a \`clientId\` you choose (any non-empty string; unique across this whole call). A Component's \`parent\` and a Connection's \`source\` / \`target\` accept EITHER an existing server id (\`{ref:"server", id:"..."}\`) OR a sibling \`clientId\` from this same batch (\`{ref:"client", clientId:"..."}\`) — so you can chain "Component A holds Component B holds Component C" without intermediate reads. Each Connection also carries an \`interaction\` (default \`ASSOCIATION\`) and may span scopes. The response returns an \`idMap\` keyed by your clientIds; pass those server ids to subsequent tool calls.
 
-This tool is NOT idempotent. If your transport call fails or times out, READ the architecture (via the Canvas resource) before retrying — a successful but lost response means the batch DID apply. On a domain rejection, the response names which entry failed and (where applicable) which clientId blocked the write; fix the entry and retry the whole call. (Flows and FlowRoutes ride additively in a future slice; do not include them yet.)
+This tool is NOT idempotent. If your transport call fails or times out, READ the architecture (via the Canvas resource) before retrying — a successful but lost response means the batch DID apply. On a domain rejection, the response names which entry failed and (where applicable) which clientId blocked the write; fix the entry and retry the whole call.
 
 ${PROMPT_INJECTION_NOTE}`,
     inputSchema: applyGraphInput,

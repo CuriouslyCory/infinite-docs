@@ -79,9 +79,7 @@ model Project {
     deletedAt  DateTime?
     nodes      Node[]
     edges      Edge[]
-    flowSpecs  FlowSpec[]
-    flows      Flow[]
-    flowRoutes FlowRoute[]
+    specs      Spec[]
 
     @@index([ownerId])
 }
@@ -155,31 +153,14 @@ enum NodeKind {
     PRODUCER
 }
 
-// A Flow's category — drives palette icons and how a renderer formats the
-// `signature` payload, never authorization or routing. Mirrored by the Zod enum
-// `flowKind` in ~/lib/schemas (the client-safe source of truth); a compile-time
-// parity guard in the service layer keeps the two in lockstep (CONTEXT.md
-// "Flow kind"; ADR-0011).
-enum FlowKind {
-    GENERIC
-    OPENAPI_OPERATION
-    GRAPHQL_FIELD
-    ASYNCAPI_CHANNEL
-    SSE_STREAM
-    WEBSOCKET
-    FUNCTION_CALL
-    EVENT
-    DB_TABLE
-}
-
-// A FlowSpec's source format — selects which parser materializes Flows from
-// `source`. OPENAPI / ASYNCAPI / GRAPHQL / SQL_DDL / TS_SIGNATURE each have a
-// bounded parser in flow-parser/parsers; CUSTOM is hand-authored prose (no
-// parser — source persists with a `parseError` note). Which kinds a Component
-// is OFFERED is presentation-only, keyed by NodeKind in ~/lib/spec-kinds
-// (ADR-0019 precedent: affinity ranks, never constrains) (CONTEXT.md
-// "Flow spec kind"; ADR-0011).
-enum FlowSpecKind {
+// A Spec's source format — selects which parser materializes derived child
+// Components from `source` (#64). OPENAPI / ASYNCAPI / GRAPHQL / SQL_DDL /
+// TS_SIGNATURE each have a bounded parser; CUSTOM is hand-authored prose (no
+// parser). Which kinds a Component is OFFERED is presentation-only, keyed by
+// NodeKind (ADR-0019 precedent: affinity ranks, never constrains) (CONTEXT.md
+// "Spec"; ADR-0011, ADR-0025). Renamed from `FlowSpecKind` with the Flow
+// model's retirement (#62 / ADR-0030).
+enum SpecKind {
     OPENAPI
     ASYNCAPI
     TS_SIGNATURE
@@ -188,16 +169,20 @@ enum FlowSpecKind {
     CUSTOM
 }
 
-// How a Flow's owner Component participates in the interaction (CONTEXT.md
-// "Interaction"; ADR-0023). The owner-relative encoder from which a Connection's
-// arrowheads are DERIVED — never a stored direction on the Edge:
-//   REQUEST   — owner is called in request/response (REST, RPC) → arrow at owner
-//   PUSH      — owner emits unprompted (SSE, webhook out, event) → arrow away
-//   SUBSCRIBE — owner consumes an external stream/feed → arrow at owner
-//   DUPLEX    — owner both sends and receives (WebSocket) → arrows both ends
-// Replaces the former binary FlowPolarity (INBOUND→REQUEST, OUTBOUND→PUSH);
-// see ADR-0023, which supersedes ADR-0009/0013.
-enum FlowInteraction {
+// A Connection's type, stored on its Edge as `interaction` (CONTEXT.md
+// "Interaction"; ADR-0027). Five values: a default undirected ASSOCIATION plus
+// four directional interactions describing, relative to the Edge's `source`
+// endpoint, how it participates — the verb from which a Connection's arrowheads
+// are DERIVED together with draw order (rendering lands in #65):
+//   ASSOCIATION — a plain undirected relationship; no arrowheads (the default)
+//   REQUEST     — source is called in request/response → arrow at target
+//   PUSH        — source emits unprompted (SSE, webhook out) → arrow at target
+//   SUBSCRIBE   — source consumes an external stream/feed → arrow at source
+//   DUPLEX      — source both sends and receives (WebSocket) → arrows both ends
+// Renamed from `FlowInteraction` and gained ASSOCIATION with the Flow model's
+// retirement (#62 / ADR-0027, superseding ADR-0023).
+enum Interaction {
+    ASSOCIATION
     REQUEST
     PUSH
     SUBSCRIBE
@@ -233,201 +218,111 @@ model Node {
     // sets `deletedAt` with NO `deletionId`.
     deletionId    String?
 
-    // Edges are scoped to a Canvas by an explicit `canvasNodeId` and reference
-    // their endpoints by `sourceId`/`targetId`; three relations to one model
-    // force Prisma's named-relation disambiguation (see ADR-0005).
-    edgesOnCanvas Edge[]    @relation("EdgesOnCanvas")
+    // Generated-component provenance (CONTEXT.md "Spec"; #64). A Component
+    // derived from a Spec carries `sourceSpecId` (the Spec it came from) and a
+    // stable `specKey` (the per-format identity the parser anchors on). #62
+    // lands the columns + cascade; the generation that populates them is #64.
+    sourceSpecId  String?
+    spec          Spec?     @relation("SpecDerivedComponents", fields: [sourceSpecId], references: [id], onDelete: SetNull)
+    specKey       String?
+
+    // An Edge references its endpoints by `sourceId`/`targetId`; two relations
+    // to one model force Prisma's named-relation disambiguation (ADR-0005). An
+    // Edge no longer stores a Canvas scope — scope is derived from endpoint
+    // ancestry (#63 / ADR-0028).
     outgoingEdges Edge[]    @relation("EdgesFromNode")
     incomingEdges Edge[]    @relation("EdgesToNode")
 
-    flowSpec FlowSpec? @relation("FlowSpecOnNode")
-    flows    Flow[]    @relation("FlowOnNode")
+    // The imported contract owned by this Component (1:1). Renamed from
+    // `flowSpec` with the Flow model's retirement (#62).
+    ownedSpec Spec? @relation("SpecOnNode")
 
     @@index([projectId, parentId])
     @@index([parentId])
+    @@index([sourceSpecId])
     @@index([deletionId])
 }
 
 // The data-model representation of a Connection (see CONTEXT.md "Connection /
-// Edge split"); never surfaced to users by this name. Its Canvas is the
-// EXPLICIT `canvasNodeId` (the Component whose interior Canvas owns it; null =
-// the Project root) — recorded, NOT inferred from the endpoints, so a future
-// refinement Connection can legitimately span scope levels (ADR-0005). The
-// three invariants — same-Canvas, no self-link, no duplicate ACTIVE Edge for
-// the UNORDERED endpoint pair within a scope — are primarily enforced in
-// `connectNodes`. The de-dupe invariant additionally has the partial unique
-// index `idx_edge_dedup` (in prisma/migrations; ADR-0010) as a TOCTOU backstop
-// — the service emits the readable `ConflictError`, the index catches the
-// concurrent racer the service can't. As of ADR-0023 the index is an EXPRESSION
-// index over `(canvasNodeId, LEAST(sourceId, targetId), GREATEST(sourceId,
-// targetId))` so A→B and B→A collide as ONE Connection regardless of which way
-// it was drawn. It uses `NULLS NOT DISTINCT` so two root-Canvas edges
-// (canvasNodeId = NULL) on the same pair are correctly rejected (Postgres'
-// default would let them both pass). Do NOT add a plain `@@unique` here — it
-// would wrongly forbid re-creating a Connection after soft-delete, and could
-// not express the unordered pair anyway; the partial expression index lives in
-// raw SQL. The FK cascades are the hard-delete backstop only — the normal
-// removal path is soft-delete via `deletedAt`. `label` is untrusted user
-// content. `sourceId`/`targetId` are just the two endpoints in arbitrary draw
-// order — they carry NO direction; a Connection is undirected and its
-// arrowheads are derived from the Flows routed on it (CONTEXT.md "Interaction";
-// ADR-0023).
+// Edge split"); never surfaced to users by this name. A directed, typed edge
+// that may link any two Components at any scope — same-Canvas, cross-scope, or
+// lineal (ancestor↔descendant; ADR-0028). It stores NO Canvas scope: scope is
+// derived from endpoint ancestry at read time (#63), so an Edge may freely span
+// scope levels. It carries its own `interaction` (default ASSOCIATION); the
+// arrowheads are DERIVED from `(interaction, source, target)` at render time
+// (#65), never a stored direction. `sourceId`/`targetId` preserve draw order.
+// The two invariants — no self-link, no duplicate ACTIVE Edge per the de-dupe
+// rule — are primarily enforced in `connectNodes` (ADR-0028, retiring the
+// same-Canvas invariant of ADR-0005).
+//
+// De-dupe is TWO partial unique indexes (in prisma/migrations; ADR-0010 named
+// pattern, re-keyed on `projectId` now that scope is not stored), service-
+// primary with the index as a TOCTOU backstop:
+//   - `idx_edge_dedup` — directional, over `(projectId, sourceId, targetId,
+//     interaction)` WHERE deletedAt IS NULL AND interaction <> 'ASSOCIATION'.
+//     `interaction` is in the key, so A→B REQUEST and A→B PUSH coexist.
+//   - `idx_edge_assoc_dedup` — ASSOCIATION-only, over `(projectId,
+//     LEAST(sourceId,targetId), GREATEST(sourceId,targetId))` WHERE deletedAt
+//     IS NULL AND interaction = 'ASSOCIATION', so A↔B and B↔A are one
+//     Association. `NULLS NOT DISTINCT` is no longer needed (projectId is NOT
+//     NULL, unlike the retired nullable `canvasNodeId`).
+// Do NOT add a plain `@@unique` here — it would forbid re-creating a Connection
+// after soft-delete and cannot express the unordered/partial predicates; the
+// raw SQL lives in the migration. `label` is untrusted user content.
 model Edge {
     id           String    @id @default(cuid())
     projectId    String
     project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-    canvasNodeId String?
-    canvasNode   Node?     @relation("EdgesOnCanvas", fields: [canvasNodeId], references: [id], onDelete: Cascade)
     sourceId     String
     source       Node      @relation("EdgesFromNode", fields: [sourceId], references: [id], onDelete: Cascade)
     targetId     String
     target       Node      @relation("EdgesToNode", fields: [targetId], references: [id], onDelete: Cascade)
+    interaction  Interaction @default(ASSOCIATION)
     label        String?
     createdAt    DateTime  @default(now())
     updatedAt    DateTime  @updatedAt
     deletedAt    DateTime?
     // Batch id of the cascading soft-delete that swept this Edge (see
     // Node.deletionId / ADR-0008). Set by `deleteNode`'s cascade across the
-    // subtree, and by `deleteEdge` when at least one incident FlowRoute is
-    // swept alongside the Edge (Slice 2). A lone `deleteEdge` on an Edge that
-    // carries no FlowRoutes still mints no `deletionId` — the "lone delete"
-    // carve-out ADR-0008 codified for the dominant case.
+    // subtree. A `deleteEdge` is always a lone soft-delete — it sets
+    // `deletedAt` with NO `deletionId` (the FlowRoute cascade is gone;
+    // ADR-0030).
     deletionId   String?
 
-    // FlowRoutes that ride this Edge. Two relation arms because a FlowRoute
-    // references an Edge twice — as the `outer` pipe at this scope and as the
-    // `inner` refinement one scope deeper (Slice 3). Slice 2 only ever writes
-    // `outer`; the `inner` arm is kept ahead of its writer so Slice 3 needs no
-    // schema change. Forces named-relation disambiguation, the same shape Node
-    // uses for its three Edge relations (see ADR-0005).
-    flowRoutesAsOuter FlowRoute[] @relation("FlowRoutesAsOuter")
-    flowRoutesAsInner FlowRoute[] @relation("FlowRoutesAsInner")
-
-    @@index([projectId, canvasNodeId])
     @@index([sourceId])
     @@index([targetId])
     @@index([deletionId])
 }
 
-// The imported contract on a Component (CONTEXT.md "FlowSpec"; ADR-0011) — an
-// OpenAPI / AsyncAPI / TS-signature / GraphQL document, or hand-authored CUSTOM
-// prose. 1:1 with a Component (`ownerNodeId @unique`): exactly one current
-// FlowSpec per Component. Parsing is server-side, parse-on-write into Flow
-// rows (never on read), with a bounded loader (size + depth caps) so a hostile
-// spec cannot OOM. `source` is UNTRUSTED user-pasted content — stored
-// verbatim, never interpolated (prompt-injection standing note). A malformed
-// spec stores `parseError`, creates zero Flows, and never throws to the
-// caller. Re-pasting is non-destructive: matching keys preserved, dropped keys
-// soft-deleted with a fresh `deletionId` per re-parse batch (ADR-0008 pattern
-// extended additively).
-model FlowSpec {
-    id          String       @id @default(cuid())
+// The imported contract on a Component (CONTEXT.md "Spec"; ADR-0011, ADR-0025)
+// — an OpenAPI / AsyncAPI / TS-signature / GraphQL / SQL-DDL document, or
+// hand-authored CUSTOM prose. 1:1 with a Component (`ownerNodeId @unique`):
+// exactly one current Spec per Component. Renamed from `FlowSpec` with the Flow
+// model's retirement (#62); where the old FlowSpec projected Flows, a Spec now
+// points at derived child Components (via their `Node.sourceSpecId` +
+// `Node.specKey`). `source` is UNTRUSTED user-pasted content — stored verbatim,
+// never interpolated (prompt-injection standing note). #62 lands the renamed
+// row + the cascade (`deleteNode` sweeps the owned Spec — ADR-0030); the
+// spec→Component generation (parse, diff, merge) is #64.
+model Spec {
+    id          String     @id @default(cuid())
     projectId   String
-    project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-    ownerNodeId String       @unique
-    ownerNode   Node         @relation("FlowSpecOnNode", fields: [ownerNodeId], references: [id], onDelete: Cascade)
-    kind        FlowSpecKind
+    project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    ownerNodeId String     @unique
+    ownerNode   Node       @relation("SpecOnNode", fields: [ownerNodeId], references: [id], onDelete: Cascade)
+    kind        SpecKind
     source      String
     parsedAt    DateTime?
     parseError  String?
-    createdAt   DateTime     @default(now())
-    updatedAt   DateTime     @updatedAt
+    createdAt   DateTime   @default(now())
+    updatedAt   DateTime   @updatedAt
     deletedAt   DateTime?
     deletionId  String?
-    flows       Flow[]       @relation("FlowDerivedFromSpec")
+    // Child Components derived from this Spec (#64). The back-relation to
+    // `Node.sourceSpecId`.
+    derivedComponents Node[] @relation("SpecDerivedComponents")
 
     @@index([projectId])
-    @@index([deletionId])
-}
-
-// A named capability a Component exposes (CONTEXT.md "Flow"; ADR-0011) — an
-// OpenAPI operation, a WS channel, an SSE stream, a function call, an event.
-// Owned by a Component (`ownerNodeId`) and exists on the owner whether or not
-// anything calls it. May be derived from a FlowSpec (`sourceSpecId != null`)
-// or user-authored (`sourceSpecId = null`). `title` is UNTRUSTED display
-// content; `signature` is UNTRUSTED structured content (prompt-injection
-// standing note applies). The de-dupe rule `(ownerNodeId, key)` among active
-// rows follows the ADR-0010 named pattern: service-primary `findFirst` fast
-// path with a partial unique index `idx_flow_dedup` (in prisma/migrations) as
-// a TOCTOU backstop — both translate to the same `ConflictError` shape with
-// `details.conflictingFlowIds`. The partial index expresses
-// `WHERE "deletedAt" IS NULL`, which Prisma schema cannot today; the raw SQL
-// lives in the migration. `NULLS NOT DISTINCT` is intentionally omitted —
-// both columns are NOT NULL, unlike `idx_edge_dedup` where `canvasNodeId` is
-// nullable.
-model Flow {
-    id           String       @id @default(cuid())
-    projectId    String
-    project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-    ownerNodeId  String
-    ownerNode    Node         @relation("FlowOnNode", fields: [ownerNodeId], references: [id], onDelete: Cascade)
-    sourceSpecId String?
-    sourceSpec   FlowSpec?    @relation("FlowDerivedFromSpec", fields: [sourceSpecId], references: [id], onDelete: SetNull)
-    kind         FlowKind     @default(GENERIC)
-    key          String
-    title        String
-    interaction  FlowInteraction
-    signature    Json?
-    createdAt    DateTime     @default(now())
-    updatedAt    DateTime     @updatedAt
-    deletedAt    DateTime?
-    deletionId   String?
-
-    flowRoutes FlowRoute[] @relation("FlowRoutesForFlow")
-
-    @@index([projectId, ownerNodeId])
-    @@index([ownerNodeId])
-    @@index([sourceSpecId])
-    @@index([deletionId])
-}
-
-// The binding that says "this Connection at this scope carries this Flow"
-// (see CONTEXT.md "FlowRoute"; master plan
-// docs/plans/flow-routed-connections.md). A first-class row, individually
-// addressable and individually soft-deletable, so wiring is removable without
-// touching either the Flow or the Connection.
-//
-// Slice 2 covers the same-Canvas baseline: `outerEdgeId` names the Connection
-// that carries the Flow at this scope; `innerEdgeId` is nullable but ALWAYS
-// null in Slice 2 — Slice 3 introduces the gated cross-scope inner-Edge
-// writer (`routeFlow` extended; ADR-0012). Keeping `innerEdgeId` in the
-// schema ahead of its writer is forward-compat: Slice 3 adds nothing to the
-// model.
-//
-// Owner-only via the owning Project (the same projectId-redundancy pattern
-// Edge / Flow / FlowSpec carry — authz needs `project.ownerId` without an
-// extra join, and the cascade sweeps filter by projectId for index
-// friendliness).
-//
-// The de-dupe rule `(outerEdgeId, flowId)` among active rows follows the
-// ADR-0010 named pattern (third adopter after `idx_edge_dedup` and
-// `idx_flow_dedup`): service-primary `findFirst` fast path with a partial
-// unique index `idx_flow_route_dedup` (in prisma/migrations) as a TOCTOU
-// backstop — both translate to the same `ConflictError` shape with
-// `details.conflictingFlowRouteIds`. The partial index expresses
-// `WHERE "deletedAt" IS NULL`, which Prisma schema cannot today; the raw
-// SQL lives in the migration. `NULLS NOT DISTINCT` is intentionally omitted
-// — both columns are NOT NULL, unlike `idx_edge_dedup` where `canvasNodeId`
-// is nullable.
-model FlowRoute {
-    id          String    @id @default(cuid())
-    projectId   String
-    project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-    flowId      String
-    flow        Flow      @relation("FlowRoutesForFlow", fields: [flowId], references: [id], onDelete: Cascade)
-    outerEdgeId String
-    outerEdge   Edge      @relation("FlowRoutesAsOuter", fields: [outerEdgeId], references: [id], onDelete: Cascade)
-    innerEdgeId String?
-    innerEdge   Edge?     @relation("FlowRoutesAsInner", fields: [innerEdgeId], references: [id], onDelete: Cascade)
-    createdAt   DateTime  @default(now())
-    updatedAt   DateTime  @updatedAt
-    deletedAt   DateTime?
-    deletionId  String?
-
-    @@index([projectId])
-    @@index([flowId])
-    @@index([outerEdgeId])
-    @@index([innerEdgeId])
     @@index([deletionId])
 }
 

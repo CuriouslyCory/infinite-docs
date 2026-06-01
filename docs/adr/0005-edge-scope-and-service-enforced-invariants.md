@@ -14,7 +14,15 @@ Amended further by [ADR-0023](0023-connection-direction-derived-from-flows.md) �
 de-dupe key changes from the **ordered** triple to the **unordered** pair
 `(canvasNodeId, {sourceId, targetId})`: a Connection is undirected, so A→B and B→A are
 the same Connection. The explicit-scope and service-enforced-invariant decisions are
-untouched; only the ordered-pair distinctness flips.)*
+untouched; only the ordered-pair distinctness flips.
+Amended further by [ADR-0028](0028-cross-scope-connections-lineal-ingress.md)
+(#62) — the **same-Canvas endpoint invariant is RETIRED** and the explicit
+`canvasNodeId` scope is **dropped**: scope is now derived from endpoint ancestry
+(#63), `connectNodes` accepts cross-scope + **lineal** endpoints and rejects only
+the self-link, and the "scope is explicit" reviewable invariant is **inverted**
+(a future stored `canvasNodeId` is the regression). The service-enforced-invariant
+*posture* survives; the Edge gains an `interaction` column
+([ADR-0027](0027-connection-carries-its-own-interaction.md)).)*
 
 ## Context
 

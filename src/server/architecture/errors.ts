@@ -46,30 +46,18 @@ export class NotFoundError extends ArchitectureError {
  * the AI-readable channel the human message cannot carry. Reaches the tRPC
  * client via the `errorFormatter` in `~/server/api/trpc.ts` (as
  * `error.data.archDetails`); the MCP adapter reads `cause.details` directly.
- * Additive: future Flow / FlowRoute / Node conflicts add their own keys here
- * without changing existing callers.
+ * Additive: future conflicts add their own keys here without changing existing
+ * callers.
  */
 export interface ConflictErrorDetails {
   // The active Edge(s) that block the write — e.g. the existing Connection a
-  // duplicate `connectNodes` targets, or the rows holding triples a
-  // `restoreNode` cannot revive (ADR-0010).
+  // duplicate `connectNodes` targets, or the rows holding a slot a
+  // `restoreNode` cannot revive (ADR-0010, ADR-0027/0028).
   conflictingEdgeIds?: string[];
-  // The active Flow(s) that block the write — duplicate `(ownerNodeId, key)`
-  // on `addFlow` / `attachFlowSpec`, or rows a `restoreNode` cannot revive
-  // because the same owner/key slot is occupied (ADR-0010 named pattern,
-  // ADR-0011).
-  conflictingFlowIds?: string[];
-  // The active FlowSpec(s) that block the write — a `restoreNode` whose
-  // soft-deleted FlowSpec(s) cannot be revived because the same Component
-  // (`ownerNodeId @unique`) now carries a fresh FlowSpec. Separate from
-  // `conflictingFlowIds` because the collision is on different rows.
-  conflictingFlowSpecIds?: string[];
-  // The active FlowRoute(s) that block the write — duplicate
-  // `(outerEdgeId, flowId)` on `routeFlow`, or rows a `restoreEdge` /
-  // `restoreNode` cannot revive because the same outer-edge/flow slot is
-  // occupied (ADR-0010 named pattern, third adopter; see the master plan at
-  // docs/plans/flow-routed-connections.md).
-  conflictingFlowRouteIds?: string[];
+  // The active Spec(s) that block the write — a `restoreNode` whose
+  // soft-deleted Spec(s) cannot be revived because the same Component
+  // (`ownerNodeId @unique`) now carries a fresh Spec (ADR-0030).
+  conflictingSpecIds?: string[];
   // Set by the apply_graph batch tool to point at the input slot (or slots)
   // inside one batch that collided — either with itself, with a sibling entry,
   // or with an existing live row. Distinct from the server-id keys above:

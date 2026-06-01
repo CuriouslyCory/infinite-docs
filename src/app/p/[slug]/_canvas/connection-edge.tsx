@@ -9,60 +9,13 @@ import {
 } from "@xyflow/react";
 import { createContext, useContext, useRef, useState } from "react";
 
-import { type FlowKind } from "~/lib/schemas";
-
 import { CanEditContext } from "./component-node";
-import { RouteFlowPopover } from "./route-flow-popover";
-
-/**
- * Per-Edge Flow aggregation surfaced through `edge.data` for the
- * "N / M routed" pill and the "+ flow" affordance. Mirrors the server's
- * `EdgeFlowsEntry` (node.service.ts); kept as a structural type so the
- * Connection edge stays client-only (no server imports — ADR-0004).
- */
-export type ConnectionEdgeFlows = {
-  edgeId: string;
-  total: number;
-  routed: number;
-  unrouted: number;
-  orphan: number;
-  byKind: Partial<Record<FlowKind, number>>;
-  // How many live routed Flows point their arrow at the Edge's stored source /
-  // target endpoint (ADR-0023). The island derives `markerStart` from
-  // `arrowAtSource > 0` and `markerEnd` from `arrowAtTarget > 0`; both → a
-  // two-way Connection, neither → an undirected line.
-  arrowAtSource: number;
-  arrowAtTarget: number;
-};
-
-/**
- * Per-endpoint metadata the "+ flow" popover needs — the source/target Node
- * ids (to fetch each endpoint's Flow palette) and the slug (to read via the
- * capability — ADR-0002). Surfaced through `edge.data` so the edge view stays
- * pure presentational and React Flow does not re-render every edge when the
- * island re-renders.
- */
-export type ConnectionEdgeEndpoints = {
-  slug: string;
-  sourceId: string;
-  sourceTitle: string;
-  targetId: string;
-  targetTitle: string;
-};
 
 export type ConnectionEdgeData = {
   /** Untrusted user content — rendered as plain text, never markup. */
   label: string | null;
   /** True while a freshly-drawn Connection awaits its server id (a `temp_…` id). */
   optimistic?: boolean;
-  /**
-   * Aggregated Flow counts for this Edge (Slice 2). Undefined on cold-cache
-   * frames before `getCanvas` has resolved once — the pill and affordance
-   * render only when this is populated and the relevant count > 0.
-   */
-  edgeFlows?: ConnectionEdgeFlows;
-  /** Endpoint metadata for the "+ flow" popover (Slice 2). */
-  endpoints?: ConnectionEdgeEndpoints;
 };
 
 export type ConnectionEdge = Edge<ConnectionEdgeData, "connection">;
@@ -79,52 +32,12 @@ export const EditEdgeContext = createContext<
 >(() => undefined);
 
 /**
- * Polymorphic "route / unroute" dispatch the Canvas island supplies. One
- * context, two ops — the consumer is one surface ("+ flow" affordance and
- * the routed-list inspector), with the same authz gate (`CanEditContext`).
- * Mirrors `EditEdgeContext`'s single-callback shape rather than splitting
- * into RouteFlow / UnrouteFlow contexts (Slice 2 architectural decision —
- * see the plan file).
- */
-export type RouteFlowAction =
-  | {
-      kind: "route";
-      flowId: string;
-      outerEdgeId: string;
-      flowKind: FlowKind;
-      // +1/0 per endpoint for the optimistic arrowhead delta — derived from the
-      // Flow's (owner, interaction) by the dispatcher via flowArrowEndpoints
-      // (ADR-0023). Unroute applies the inverse.
-      arrowAtSourceDelta: number;
-      arrowAtTargetDelta: number;
-    }
-  | {
-      kind: "unroute";
-      flowRouteId: string;
-      outerEdgeId: string;
-      flowKind: FlowKind;
-      arrowAtSourceDelta: number;
-      arrowAtTargetDelta: number;
-    };
-
-export const RouteFlowContext = createContext<(action: RouteFlowAction) => void>(
-  () => undefined,
-);
-
-/**
- * The Connection edge type for the Canvas — renders the Edge path with
- * flow-derived arrowheads plus an editable label at the midpoint. Registered
- * under the `edgeTypes` key `connection`. A Connection is undirected: the island
- * sets `markerStart` and/or `markerEnd` on the edge object from the routed
- * Flows' interactions (none → a plain line, one → one arrowhead, both → a
- * two-way Connection; CONTEXT.md "Interaction"; ADR-0023), and React Flow
- * resolves them to the marker urls forwarded here.
- *
- * Slice 2 adds two midpoint adornments alongside the label:
- *   - The **"N / M routed"** pill when `edgeFlows.routed > 0`, signaling
- *     how many of the available endpoint Flows ride this Connection.
- *   - The **"+ flow"** button when selected & owner & `unrouted > 0`,
- *     opening a popover of unrouted Flows from either endpoint.
+ * The Connection edge type for the Canvas — renders the Edge path with an
+ * editable label at the midpoint. Registered under the `edgeTypes` key
+ * `connection`. As of #62 every Connection renders as a plain line regardless of
+ * its `interaction`; the interaction-derived arrowheads (`markerStart` /
+ * `markerEnd`) are wired in #65 (ADR-0027). React Flow forwards whatever markers
+ * the edge object carries, so the passthrough below is forward-compatible.
  *
  * Client-only: domain types come from `~/lib` (never `~/server` or the generated
  * Prisma client), so the server graph stays out of the browser bundle (ADR-0004).
@@ -158,7 +71,6 @@ export function ConnectionEdgeView({
   const onEdit = useContext(EditEdgeContext);
   const canEditCanvas = useContext(CanEditContext);
   const [editing, setEditing] = useState(false);
-  const [popoverOpen, setPopoverOpen] = useState(false);
   const [draft, setDraft] = useState(d.label ?? "");
   // Enter commits, then blurs the unmounting input — which would fire a second
   // commit; this latch makes commit/cancel idempotent for one edit session.
@@ -171,28 +83,6 @@ export function ConnectionEdgeView({
   const canEdit = !d.optimistic && canEditCanvas;
   const isSelected = selected ?? false;
   const hasLabel = d.label !== null && d.label.length > 0;
-
-  // Deselecting an edge dismisses an open "+ flow" popover. Done as a
-  // render-phase state adjustment (React's "you might not need an effect"
-  // guidance) rather than a useEffect that would cascade an extra render —
-  // without it the popover would reappear the next time the edge is selected
-  // (its `popoverOpen` would still be true).
-  const [wasSelected, setWasSelected] = useState(isSelected);
-  if (wasSelected !== isSelected) {
-    setWasSelected(isSelected);
-    if (!isSelected) setPopoverOpen(false);
-  }
-
-  // Slice 2 pill / "+ flow" gating. The pill is read-only and shows for
-  // viewers too (gated by `hasRouted` below); the "+ flow" button is
-  // owner-only AND selected-only — it must not linger on a deselected edge
-  // just because that edge already carries a route (the container also
-  // renders for `hasRouted`).
-  const flows = d.edgeFlows;
-  const hasRouted = (flows?.routed ?? 0) > 0;
-  const hasUnrouted = (flows?.unrouted ?? 0) > 0;
-  const showFlowButton =
-    isSelected && canEdit && hasUnrouted && d.endpoints !== undefined;
 
   function beginEditing() {
     if (!canEdit) return;
@@ -225,7 +115,7 @@ export function ConnectionEdgeView({
         markerStart={markerStart}
         markerEnd={markerEnd}
       />
-      {(hasLabel || editing || isSelected || hasRouted) && (
+      {(hasLabel || editing || isSelected) && (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -281,36 +171,7 @@ export function ConnectionEdgeView({
                   </button>
                 )
               )}
-              {hasRouted && flows && (
-                <span
-                  aria-label={`${flows.routed} of ${flows.total} flows routed`}
-                  title={`${flows.routed} of ${flows.total} flows routed`}
-                  className="shrink-0 rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300"
-                >
-                  {flows.routed} / {flows.total} routed
-                </span>
-              )}
-              {showFlowButton && !editing && (
-                <button
-                  type="button"
-                  aria-label="Route a flow on this connection"
-                  className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-white/70 transition hover:text-white"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPopoverOpen((open) => !open);
-                  }}
-                >
-                  + flow
-                </button>
-              )}
             </div>
-            {isSelected && popoverOpen && d.endpoints && (
-              <RouteFlowPopover
-                outerEdgeId={id}
-                endpoints={d.endpoints}
-                onClose={() => setPopoverOpen(false)}
-              />
-            )}
           </div>
         </EdgeLabelRenderer>
       )}

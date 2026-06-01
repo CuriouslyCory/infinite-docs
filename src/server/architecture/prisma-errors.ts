@@ -26,19 +26,20 @@ export function isSlugCollision(error: unknown): boolean {
   return isPrismaUniqueViolation(error);
 }
 
-const EDGE_DEDUP_INDEX_NAME = "idx_edge_dedup";
-const EDGE_DEDUP_COLUMNS = ["canvasNodeId", "sourceId", "targetId"] as const;
+// The two partial unique indexes that enforce Connection de-dupe (ADR-0010,
+// re-keyed for the typed cross-scope model — ADR-0027/0028): `idx_edge_dedup`
+// (directional) and `idx_edge_assoc_dedup` (association).
+const EDGE_DEDUP_INDEX_NAMES = ["idx_edge_dedup", "idx_edge_assoc_dedup"] as const;
 
-// Matches the `idx_edge_dedup` partial unique index (ADR-0010). Narrowed on
-// the constraint identifier so an unrelated future P2002 on Edge — e.g. a
-// Flow or FlowRoute index added by a later slice — is not silently swallowed
-// as "duplicate Connection". Covers both Prisma error shapes:
-//   - Legacy query engine: `meta.target` is the constraint name (string) or
-//     the column-name array.
+// Matches either Edge de-dupe partial unique index. Narrowed on the constraint
+// identifier so an unrelated future P2002 on Edge is not silently swallowed as
+// "duplicate Connection". Both indexes are EXPRESSION indexes (the association
+// one over LEAST/GREATEST), so the driver reports no usable column array — we
+// match on the index NAME only, carried on both Prisma error shapes:
+//   - Legacy query engine: `meta.target` is the constraint name.
 //   - `@prisma/adapter-pg` driver path (Prisma 7, what this repo uses today):
-//     `meta.driverAdapterError.cause` carries `originalMessage`
-//     (`unique constraint "idx_edge_dedup"`) and `constraint.fields` (the
-//     quoted column names).
+//     `meta.driverAdapterError.cause.originalMessage` carries
+//     `unique constraint "idx_edge_dedup"` (or the association index name).
 export function isEdgeDedupCollision(error: unknown): boolean {
   if (!isPrismaUniqueViolation(error)) return false;
   const meta = error.meta;
@@ -46,8 +47,12 @@ export function isEdgeDedupCollision(error: unknown): boolean {
 
   // Legacy shape.
   const target = (meta as { target?: unknown }).target;
-  if (target === EDGE_DEDUP_INDEX_NAME) return true;
-  if (Array.isArray(target) && matchesEdgeColumns(target)) return true;
+  if (
+    typeof target === "string" &&
+    EDGE_DEDUP_INDEX_NAMES.some((name) => target === name)
+  ) {
+    return true;
+  }
 
   // Driver-adapter shape.
   const driverCause = (
@@ -57,115 +62,8 @@ export function isEdgeDedupCollision(error: unknown): boolean {
 
   const originalMessage = (driverCause as { originalMessage?: unknown })
     .originalMessage;
-  if (
+  return (
     typeof originalMessage === "string" &&
-    originalMessage.includes(EDGE_DEDUP_INDEX_NAME)
-  ) {
-    return true;
-  }
-
-  const fields = (
-    driverCause as { constraint?: { fields?: unknown } }
-  ).constraint?.fields;
-  return Array.isArray(fields) && matchesEdgeColumns(fields);
-}
-
-// Postgres' driver-adapter quotes the column names (`"canvasNodeId"`); the
-// legacy shape passes them bare. Strip quotes before comparing so the same
-// helper accepts both.
-function matchesEdgeColumns(raw: readonly unknown[]): boolean {
-  if (raw.length !== EDGE_DEDUP_COLUMNS.length) return false;
-  const normalized = raw.map((f) =>
-    typeof f === "string" ? f.replace(/^"|"$/g, "") : f,
+    EDGE_DEDUP_INDEX_NAMES.some((name) => originalMessage.includes(name))
   );
-  return EDGE_DEDUP_COLUMNS.every((c) => normalized.includes(c));
-}
-
-const FLOW_DEDUP_INDEX_NAME = "idx_flow_dedup";
-const FLOW_DEDUP_COLUMNS = ["ownerNodeId", "key"] as const;
-
-// Matches the `idx_flow_dedup` partial unique index (ADR-0010 named pattern,
-// second adopter; ADR-0011). Same two-shape match logic as
-// `isEdgeDedupCollision` — narrowed on the constraint identifier so an
-// unrelated future P2002 on Flow is not silently swallowed.
-export function isFlowDedupCollision(error: unknown): boolean {
-  if (!isPrismaUniqueViolation(error)) return false;
-  const meta = error.meta;
-  if (!meta || typeof meta !== "object") return false;
-
-  const target = (meta as { target?: unknown }).target;
-  if (target === FLOW_DEDUP_INDEX_NAME) return true;
-  if (Array.isArray(target) && matchesFlowColumns(target)) return true;
-
-  const driverCause = (
-    meta as { driverAdapterError?: { cause?: unknown } }
-  ).driverAdapterError?.cause;
-  if (!driverCause || typeof driverCause !== "object") return false;
-
-  const originalMessage = (driverCause as { originalMessage?: unknown })
-    .originalMessage;
-  if (
-    typeof originalMessage === "string" &&
-    originalMessage.includes(FLOW_DEDUP_INDEX_NAME)
-  ) {
-    return true;
-  }
-
-  const fields = (
-    driverCause as { constraint?: { fields?: unknown } }
-  ).constraint?.fields;
-  return Array.isArray(fields) && matchesFlowColumns(fields);
-}
-
-function matchesFlowColumns(raw: readonly unknown[]): boolean {
-  if (raw.length !== FLOW_DEDUP_COLUMNS.length) return false;
-  const normalized = raw.map((f) =>
-    typeof f === "string" ? f.replace(/^"|"$/g, "") : f,
-  );
-  return FLOW_DEDUP_COLUMNS.every((c) => normalized.includes(c));
-}
-
-const FLOW_ROUTE_DEDUP_INDEX_NAME = "idx_flow_route_dedup";
-const FLOW_ROUTE_DEDUP_COLUMNS = ["outerEdgeId", "flowId"] as const;
-
-// Matches the `idx_flow_route_dedup` partial unique index (ADR-0010 named
-// pattern, third adopter after `idx_edge_dedup` and `idx_flow_dedup`). Same
-// two-shape match logic as `isFlowDedupCollision` — narrowed on the constraint
-// identifier so an unrelated future P2002 on FlowRoute is not silently
-// swallowed as "duplicate FlowRoute".
-export function isFlowRouteDedupCollision(error: unknown): boolean {
-  if (!isPrismaUniqueViolation(error)) return false;
-  const meta = error.meta;
-  if (!meta || typeof meta !== "object") return false;
-
-  const target = (meta as { target?: unknown }).target;
-  if (target === FLOW_ROUTE_DEDUP_INDEX_NAME) return true;
-  if (Array.isArray(target) && matchesFlowRouteColumns(target)) return true;
-
-  const driverCause = (
-    meta as { driverAdapterError?: { cause?: unknown } }
-  ).driverAdapterError?.cause;
-  if (!driverCause || typeof driverCause !== "object") return false;
-
-  const originalMessage = (driverCause as { originalMessage?: unknown })
-    .originalMessage;
-  if (
-    typeof originalMessage === "string" &&
-    originalMessage.includes(FLOW_ROUTE_DEDUP_INDEX_NAME)
-  ) {
-    return true;
-  }
-
-  const fields = (
-    driverCause as { constraint?: { fields?: unknown } }
-  ).constraint?.fields;
-  return Array.isArray(fields) && matchesFlowRouteColumns(fields);
-}
-
-function matchesFlowRouteColumns(raw: readonly unknown[]): boolean {
-  if (raw.length !== FLOW_ROUTE_DEDUP_COLUMNS.length) return false;
-  const normalized = raw.map((f) =>
-    typeof f === "string" ? f.replace(/^"|"$/g, "") : f,
-  );
-  return FLOW_ROUTE_DEDUP_COLUMNS.every((c) => normalized.includes(c));
 }

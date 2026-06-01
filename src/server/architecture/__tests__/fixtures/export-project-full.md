@@ -34,6 +34,6 @@ Tokens are JWT-based.
 
 ## Connections
 
-- API Gateway → Postgres — reads from (canvas: Project root)
-- API Gateway → Third Party API — calls (canvas: Project root)
-- Auth Module → Users Module (canvas: API Gateway)
+- API Gateway → Postgres — reads from
+- API Gateway → Third Party API — calls
+- Auth Module → Users Module

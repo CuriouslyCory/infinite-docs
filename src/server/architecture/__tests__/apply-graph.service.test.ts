@@ -191,37 +191,36 @@ describe("applyGraph", () => {
       expect(await testDb.edge.count()).toBe(0);
     });
 
-    it("rolls back the whole batch when a Connection violates same-Canvas", async () => {
+    it("creates a lineal (parent→child) Connection in a batch — ingress is allowed (ADR-0028)", async () => {
       const { actor, project } = await seedOwnerAndProject();
 
-      const error = await testDb
-        .$transaction((tx) =>
-          applyGraph(tx, actor, {
-            projectId: project.id,
-            components: [
-              { clientId: "parent", title: "Parent" },
-              {
-                clientId: "child",
-                parent: { ref: "client", clientId: "parent" },
-                title: "Child",
-              },
-            ],
-            connections: [
-              {
-                source: { ref: "client", clientId: "parent" },
-                target: { ref: "client", clientId: "child" },
-              },
-            ],
-          }),
-        )
-        .then(
-          () => null,
-          (e: unknown) => e,
-        );
+      const result = await testDb.$transaction((tx) =>
+        applyGraph(tx, actor, {
+          projectId: project.id,
+          components: [
+            { clientId: "parent", title: "Parent" },
+            {
+              clientId: "child",
+              parent: { ref: "client", clientId: "parent" },
+              title: "Child",
+            },
+          ],
+          connections: [
+            {
+              source: { ref: "client", clientId: "parent" },
+              target: { ref: "client", clientId: "child" },
+            },
+          ],
+        }),
+      );
 
-      expect(error).toBeInstanceOf(ValidationError);
-      expect(await testDb.node.count()).toBe(0);
-      expect(await testDb.edge.count()).toBe(0);
+      expect(result.componentCount).toBe(2);
+      expect(result.connectionCount).toBe(1);
+      expect(await testDb.node.count()).toBe(2);
+      const edge = await testDb.edge.findFirst();
+      expect(edge?.sourceId).toBe(result.idMap.parent);
+      expect(edge?.targetId).toBe(result.idMap.child);
+      expect(edge?.interaction).toBe("ASSOCIATION");
     });
   });
 
@@ -444,7 +443,6 @@ describe("applyGraph", () => {
     });
     await connectNodes(testDb, actor, {
       projectId: project.id,
-      canvasNodeId: null,
       sourceId: a.id,
       targetId: b.id,
     });
