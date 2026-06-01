@@ -12,6 +12,16 @@ partial unique index), [ADR-0011](0011-flows-as-first-class-component-owned.md)
 (the cascade whose forward-compat `innerEdgeId` arm this slice finally
 exercises). ADR-0005's Status block points here.
 
+Amended by [ADR-0023](0023-connection-direction-derived-from-flows.md): this
+ADR's "direction-blind inner-Edge write, Slice 4 will tighten" note is
+**discharged** — direction is permanently DERIVED from a Flow's interaction at
+read time, so there is nothing to tighten and `routeFlow` enforces only
+touches-endpoint. The `boundaryProxies` orientation split (which ADR-0013 added
+and this ADR's lexically-first min-id anticipated) collapses back to a single
+incident `outerEdgeId`: a Connection is undirected, so one Edge per pair carries
+any Flow. The cross-scope-writer, find-or-create convergence, and `FOR UPDATE`
+sweep-race lock are all untouched.
+
 ## Context
 
 Slice 3 is the refinement slice: descend into a Component, see the externals it

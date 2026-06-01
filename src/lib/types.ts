@@ -26,11 +26,10 @@ export type CanvasEdge =
 /**
  * A boundary proxy as the Canvas read returns it — a read-only stand-in for an
  * external Component this scope (or an ancestor) connects to, projected inward
- * (CONTEXT.md "Boundary proxy"; #13/#14). `ownerSourceEdgeId` /
- * `ownerTargetEdgeId` are the routable outer Connections split by the owner's
- * role, so the canvas picks the one matching a Flow's polarity before
- * dispatching (non-null only for `origin: "direct"`; Slice 3 / ADR-0012, Slice
- * 4 / ADR-0013).
+ * (CONTEXT.md "Boundary proxy"; #13/#14). `outerEdgeId` is the single incident
+ * outer Connection a palette drag refines (non-null only for `origin: "direct"`;
+ * Slice 3 / ADR-0012). A Connection is undirected, so any Flow routes onto it
+ * regardless of interaction (ADR-0023).
  */
 export type CanvasBoundaryProxy =
   RouterOutputs["architecture"]["getCanvas"]["boundaryProxies"][number];

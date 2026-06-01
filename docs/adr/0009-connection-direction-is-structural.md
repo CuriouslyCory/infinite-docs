@@ -2,7 +2,16 @@
 
 ## Status
 
-Accepted (amends ADR-0005)
+**Superseded by [ADR-0023](0023-connection-direction-derived-from-flows.md).** A
+Connection is now undirected: its arrowheads are *derived* from the Flows routed
+on it (none → a plain line, both directions → arrowheads at both ends on ONE
+Connection), and the de-dupe key is the *unordered* endpoint pair. This ADR's
+core insight — that direction must have a single, un-lying source of truth — is
+preserved; ADR-0023 relocates that source of truth from the Edge's column order
+to the Flows that actually carry direction (which did not exist as first-class
+rows when this ADR was written). The reasoning below is retained for history.
+
+Originally: Accepted (amends ADR-0005)
 
 ## Context
 

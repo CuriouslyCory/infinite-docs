@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { Suspense, useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { FLOW_INTERACTION_DISPLAY } from "~/lib/flow-interaction-display";
 import { KIND_ICON, KIND_LABEL } from "~/lib/node-kinds";
 import { flowSpecKind, type FlowSpecKind, type NodeKind } from "~/lib/schemas";
 import { api } from "~/trpc/react";
@@ -367,14 +368,10 @@ function FlowPalette({
           className="flex items-center gap-2 rounded bg-white/5 px-2 py-1"
         >
           <span
-            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${
-              flow.polarity === "INBOUND"
-                ? "bg-emerald-500/20 text-emerald-300"
-                : "bg-sky-500/20 text-sky-300"
-            }`}
-            title={`${flow.polarity} ${flow.kind}`}
+            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${FLOW_INTERACTION_DISPLAY[flow.interaction].tone}`}
+            title={`${FLOW_INTERACTION_DISPLAY[flow.interaction].label} ${flow.kind}`}
           >
-            {flow.polarity === "INBOUND" ? "IN" : "OUT"}
+            {FLOW_INTERACTION_DISPLAY[flow.interaction].short}
           </span>
           <div className="flex min-w-0 flex-col">
             <span className="truncate text-sm">{flow.title}</span>

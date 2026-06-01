@@ -57,9 +57,9 @@ describe("parseFlowSpec", () => {
       expect(result.flows).toHaveLength(3);
       const keys = result.flows.map((f) => f.key);
       expect(keys).toEqual(["GET /pets", "POST /pets", "GET /pets/{id}"]);
-      // All flows from an OpenAPI spec are INBOUND (the owner exposes them).
+      // All flows from an OpenAPI spec are REQUEST (request/response endpoints the owner serves).
       for (const flow of result.flows) {
-        expect(flow.polarity).toBe("INBOUND");
+        expect(flow.interaction).toBe("REQUEST");
         expect(flow.kind).toBe("OPENAPI_OPERATION");
       }
     });

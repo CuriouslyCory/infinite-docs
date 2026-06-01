@@ -3,7 +3,12 @@
 ## Status
 
 Accepted *(realizes the partial-unique-index hardening ADR-0005 named as
-deferred future work; amends ADR-0005's consequences §3 by name).*
+deferred future work; amends ADR-0005's consequences §3 by name. Amended by
+[ADR-0023](0023-connection-direction-derived-from-flows.md) — `idx_edge_dedup`
+becomes an EXPRESSION index over `(canvasNodeId, LEAST(sourceId, targetId),
+GREATEST(sourceId, targetId))` so it enforces the **unordered** pair; the name,
+the partial `WHERE deletedAt IS NULL` clause, `NULLS NOT DISTINCT`, and the
+service-primary / index-backstop doctrine are unchanged.)*
 
 ## Context
 

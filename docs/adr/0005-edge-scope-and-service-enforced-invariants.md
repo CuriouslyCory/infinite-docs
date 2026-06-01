@@ -9,7 +9,12 @@ Amended further by ADR-0010 — the named partial-unique-index hardening of the 
 rule landed; the service remains the primary enforcement, the index is the backstop.
 Amended further by [ADR-0012](0012-routeflow-sole-cross-scope-edge-writer.md) — the
 anticipated same-Canvas loosening for the refinement Connection landed: `routeFlow` is
-the sole bounded-loose cross-scope Edge writer, `connectNodes` stays strict).*
+the sole bounded-loose cross-scope Edge writer, `connectNodes` stays strict.
+Amended further by [ADR-0023](0023-connection-direction-derived-from-flows.md) — the
+de-dupe key changes from the **ordered** triple to the **unordered** pair
+`(canvasNodeId, {sourceId, targetId})`: a Connection is undirected, so A→B and B→A are
+the same Connection. The explicit-scope and service-enforced-invariant decisions are
+untouched; only the ordered-pair distinctness flips.)*
 
 ## Context
 

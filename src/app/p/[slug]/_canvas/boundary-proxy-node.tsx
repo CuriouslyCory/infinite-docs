@@ -4,6 +4,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useContext, useState } from "react";
 
+import { FLOW_INTERACTION_DISPLAY } from "~/lib/flow-interaction-display";
 import { type NodeKind } from "~/lib/schemas";
 import { type CanvasFlowPaletteItem } from "~/lib/types";
 
@@ -36,15 +37,10 @@ export type BoundaryProxyNodeData = {
   // Canvas — routable here. "inherited": projected down from an ancestor —
   // context-only, collapsed by default to keep deep Canvases uncluttered (#14).
   origin: "direct" | "inherited";
-  // The outer Connection(s) a palette drag refines, split by the proxy owner's
-  // role so the island picks the one matching a Flow's polarity (Slice 4 /
-  // ADR-0013): an OUTBOUND Flow rides `ownerSourceEdgeId` (owner is source), an
-  // INBOUND Flow rides `ownerTargetEdgeId` (owner is target). Each null for
-  // inherited proxies or when no Connection of that orientation exists — a null
-  // on the polarity-matching side is the mismatch that triggers the
-  // reverse-Connection offer.
-  ownerSourceEdgeId: string | null;
-  ownerTargetEdgeId: string | null;
+  // The single incident outer Connection a palette drag refines (ADR-0023). A
+  // Connection is undirected, so any Flow rides it regardless of interaction;
+  // null for inherited or unconnected proxies.
+  outerEdgeId: string | null;
   flows: CanvasFlowPaletteItem[];
   hasMore: boolean;
 };
@@ -61,12 +57,11 @@ export type BoundaryProxyNode = Node<BoundaryProxyNodeData, "boundary-proxy">;
  * For a DIRECT proxy an owner can refine its Flows: each palette item carries a
  * React Flow Handle whose id encodes the Flow (`flowHandleId`), so dragging
  * between a child Component's Port and a palette item synthesises a refinement
- * route through the island's `onConnect` (Slice 3 / ADR-0012). The Handle's
- * polarity orients the drag — an INBOUND Flow is consumed by the owner (drag a
- * child's output into it: the handle is a `target`), an OUTBOUND Flow is emitted
- * by the owner (drag it onto a child's input: the handle is a `source`). The
- * direction-blind service writes the endpoints as drawn; polarity *validation*
- * is Slice 4.
+ * route through the island's `onConnect` (Slice 3 / ADR-0012). The route is
+ * direction-agnostic — any Flow rides the single incident Connection regardless
+ * of its interaction, and the rendered arrowheads are derived from the routed
+ * Flows (ADR-0023). The handle's `type`/`position` are cosmetic-only (they stop
+ * mattering once the canvas runs in Loose mode).
  *
  * Client-only: domain types come from `~/lib` (never `~/server`), so the server
  * graph stays out of the browser bundle (ADR-0004). `title`/`key` are untrusted
@@ -75,13 +70,9 @@ export type BoundaryProxyNode = Node<BoundaryProxyNodeData, "boundary-proxy">;
 export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
   const Icon = KIND_ICON[data.kind];
   const canEdit = useContext(CanEditContext);
-  // A direct proxy with any incident outer Connection is routable: when the
-  // polarity-matching orientation is missing, the drag still fires — the island
-  // offers the reverse Connection rather than blocking the gesture (Slice 4 /
-  // ADR-0013).
-  const routable =
-    data.origin === "direct" &&
-    (data.ownerSourceEdgeId !== null || data.ownerTargetEdgeId !== null);
+  // A direct proxy with an incident outer Connection is routable. The
+  // Connection is undirected, so any Flow can ride it (ADR-0023).
+  const routable = data.origin === "direct" && data.outerEdgeId !== null;
   // Inherited proxies start collapsed (context, not a work surface); direct
   // proxies with a palette start open so the refinement gesture is discoverable.
   // The default is DERIVED from `data` so a proxy that first renders with no
@@ -138,21 +129,24 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
       {expanded && data.flows.length > 0 && (
         <ul className="flex flex-col gap-1 pt-1">
           {data.flows.map((flow) => {
-            const inbound = flow.polarity === "INBOUND";
+            // "Points at owner" (owner consumes) drags a child's output INTO
+            // the proxy (a target handle); PUSH (owner emits) drags onto a
+            // child's input (a source handle). DUPLEX points both ways — under
+            // the still-strict refinement handle it takes the consume side.
+            // (The handle type stops mattering once Slice 4 switches the canvas
+            // to Loose mode; ADR-0023.)
+            const ownerConsumes = flow.interaction !== "PUSH";
+            const display = FLOW_INTERACTION_DISPLAY[flow.interaction];
             return (
               <li
                 key={flow.id}
                 className="relative flex items-center gap-2 rounded bg-white/5 px-2 py-1"
               >
                 <span
-                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${
-                    inbound
-                      ? "bg-emerald-500/20 text-emerald-300"
-                      : "bg-amber-500/20 text-amber-300"
-                  }`}
-                  title={`${flow.polarity} ${flow.kind}`}
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${display.tone}`}
+                  title={`${display.label} ${flow.kind}`}
                 >
-                  {inbound ? "in" : "out"}
+                  {display.short}
                 </span>
                 <div className="flex min-w-0 flex-col">
                   <span className="truncate text-xs">{flow.title}</span>
@@ -167,11 +161,11 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
                     input (source). The id encodes the Flow for `onConnect`. */}
                 {routable && canEdit && (
                   <Handle
-                    type={inbound ? "target" : "source"}
-                    position={inbound ? Position.Right : Position.Left}
+                    type={ownerConsumes ? "target" : "source"}
+                    position={ownerConsumes ? Position.Right : Position.Left}
                     id={flowHandleId(flow.id)}
                     title={
-                      inbound
+                      ownerConsumes
                         ? "Drag a Component's output here to route this flow"
                         : "Drag onto a Component's input to route this flow"
                     }

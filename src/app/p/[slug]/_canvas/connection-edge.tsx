@@ -27,6 +27,12 @@ export type ConnectionEdgeFlows = {
   unrouted: number;
   orphan: number;
   byKind: Partial<Record<FlowKind, number>>;
+  // How many live routed Flows point their arrow at the Edge's stored source /
+  // target endpoint (ADR-0023). The island derives `markerStart` from
+  // `arrowAtSource > 0` and `markerEnd` from `arrowAtTarget > 0`; both → a
+  // two-way Connection, neither → an undirected line.
+  arrowAtSource: number;
+  arrowAtTarget: number;
 };
 
 /**
@@ -81,12 +87,24 @@ export const EditEdgeContext = createContext<
  * see the plan file).
  */
 export type RouteFlowAction =
-  | { kind: "route"; flowId: string; outerEdgeId: string; flowKind: FlowKind }
+  | {
+      kind: "route";
+      flowId: string;
+      outerEdgeId: string;
+      flowKind: FlowKind;
+      // +1/0 per endpoint for the optimistic arrowhead delta — derived from the
+      // Flow's (owner, interaction) by the dispatcher via flowArrowEndpoints
+      // (ADR-0023). Unroute applies the inverse.
+      arrowAtSourceDelta: number;
+      arrowAtTargetDelta: number;
+    }
   | {
       kind: "unroute";
       flowRouteId: string;
       outerEdgeId: string;
       flowKind: FlowKind;
+      arrowAtSourceDelta: number;
+      arrowAtTargetDelta: number;
     };
 
 export const RouteFlowContext = createContext<(action: RouteFlowAction) => void>(
@@ -94,12 +112,13 @@ export const RouteFlowContext = createContext<(action: RouteFlowAction) => void>
 );
 
 /**
- * The Connection edge type for the Canvas — renders the Edge path with a single
- * structural arrowhead at the target (input Port) plus an editable label at the
- * midpoint. Registered under the `edgeTypes` key `connection`. The arrowhead is
- * supplied as the `markerEnd` on the edge object (a Connection's direction is
- * structural — output Port → input Port; CONTEXT.md "Port"; ADR-0009), and
- * React Flow resolves it to the marker url forwarded here.
+ * The Connection edge type for the Canvas — renders the Edge path with
+ * flow-derived arrowheads plus an editable label at the midpoint. Registered
+ * under the `edgeTypes` key `connection`. A Connection is undirected: the island
+ * sets `markerStart` and/or `markerEnd` on the edge object from the routed
+ * Flows' interactions (none → a plain line, one → one arrowhead, both → a
+ * two-way Connection; CONTEXT.md "Interaction"; ADR-0023), and React Flow
+ * resolves them to the marker urls forwarded here.
  *
  * Slice 2 adds two midpoint adornments alongside the label:
  *   - The **"N / M routed"** pill when `edgeFlows.routed > 0`, signaling
@@ -120,6 +139,7 @@ export function ConnectionEdgeView({
   targetY,
   sourcePosition,
   targetPosition,
+  markerStart,
   markerEnd,
   data,
   selected,
@@ -199,7 +219,12 @@ export function ConnectionEdgeView({
 
   return (
     <>
-      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} />
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        markerStart={markerStart}
+        markerEnd={markerEnd}
+      />
       {(hasLabel || editing || isSelected || hasRouted) && (
         <EdgeLabelRenderer>
           <div

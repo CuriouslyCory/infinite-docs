@@ -27,7 +27,7 @@ Rule of thumb: anything a human reads or an MCP agent calls says **Component** /
 **Edge** / **handle**.
 
 **Exception — Flow has no user/code split.** Unlike Component/Node and Connection/Edge, the
-Flow vocabulary — **Flow** / `Flow`, **FlowSpec** / `FlowSpec`, **Polarity** / `FlowPolarity` —
+Flow vocabulary — **Flow** / `Flow`, **FlowSpec** / `FlowSpec`, **Interaction** / `FlowInteraction` —
 uses the same word in user-facing and code surfaces. The split exists because "Node" collides
 with Node.js and the canvas library's node primitive; "Flow" carries no such overload (React
 Flow names the *library*, not a graph primitive we model), and users genuinely say "flow" when
@@ -121,13 +121,15 @@ canonical-command-palette ADR is deferred until a second palette adopter, per
 docs-travel-with-code-slices.)*
 
 ### Connection
-The user-facing link between two Components, drawn on a **Canvas** by dragging from one
-Component's output **Port** to another's input Port. Carries an optional **label** (untrusted
-user content — stored verbatim, never interpreted; see the prompt-injection standing note).
-Backed by an **Edge**. A Connection's direction is **structural**: the arrow always points at
-the input Port, derived from the output→input (`sourceId`→`targetId`) ordering — never a stored
-or user-set field, so it cannot lie (ADR-0009). A two-way relationship is **two Connections**
-(one each way), each independently labelable. *(Drawing, labeling, and removing a Connection are
+The user-facing link between two Components, drawn on a **Canvas** by dragging between their
+**Ports** (in either direction — Ports are non-directional). Carries an optional **label**
+(untrusted user content — stored verbatim, never interpreted; see the prompt-injection standing
+note). Backed by an **Edge**. A Connection is **undirected**: it has no stored direction, and
+its rendered arrowheads are **derived** from the **Flows** routed on it — none → a plain line,
+one direction → one arrowhead, both → arrowheads at both ends (a WebSocket is ONE Connection,
+not two). The derivation reads each routed Flow's **Interaction** verb (REQUEST/SUBSCRIBE point
+at the owner, PUSH away, DUPLEX both), so the arrow follows the traffic and cannot lie
+(ADR-0023, superseding ADR-0009). *(Drawing, labeling, and removing a Connection are
 realized now — see **Edge** for the same-Canvas, no-self-link, and no-duplicate-active rules.
 A Connection that carries one or more **FlowRoutes** wears a routed-count pill (**"N / M
 routed"**) and exposes a **"+ flow"** affordance when selected by the owner, listing the
@@ -136,23 +138,27 @@ resolves a **boundary proxy** to a real Component one scope deeper — is realiz
 gated cross-scope `routeFlow` writer (Slice 3 / ADR-0012); see **FlowRoute** and **Boundary
 proxy**. A refinement route leaves the *parent* Connection's routed-count pill stale until the
 viewer ascends (a fresh **getCanvas**) — a deliberate no-cross-scope-round-trip trade-off, see
-ADR-0012 Consequences. Bidirectional traffic is the **reverse Connection**, not a second
-arrowhead: when a palette drag would route a **Flow** against a polarity-mismatched Connection,
-the canvas offers a one-click "Add the reverse Connection to carry this?" that creates the reverse
-Connection and its **FlowRoute** in one optimistic gesture — two Connections, two stories (Slice 4
-/ ADR-0013, reaffirming ADR-0009).)*
+ADR-0012 Consequences. The "+ flow" affordance offers **every** unrouted Flow from either
+endpoint — a Connection is undirected, so any owner-endpoint Flow can ride it; the Flow's
+**Interaction** verb decides which way its arrow points, not whether the route is legal (the
+former polarity filter and reverse-Connection offer are retired — ADR-0023, superseding
+ADR-0013). The full undirected-arrow rendering — and the rewrite of the structural-arrow
+language just above — lands in a later slice of the same rollout.)*
 
 ### Edge
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
-`targetId` (both **Nodes**), an optional `label`, and a soft-delete column (`deletedAt`). The
-`sourceId`→`targetId` ordering (output **Port** → input Port) IS the direction; the arrow is
-structural, with no stored `direction` field (ADR-0009). Scoped to the Canvas it is drawn on
+`targetId` (both **Nodes**), an optional `label`, and a soft-delete column (`deletedAt`).
+`sourceId`/`targetId` are just the two endpoints in arbitrary draw order — they carry **no
+direction** and there is no stored `direction` field; a Connection is undirected and its
+arrowheads are derived from the **Flows** routed on it (ADR-0023; the flow-derived rendering
+lands in a later slice of that rollout). Scoped to the Canvas it is drawn on
 by an **explicit `canvasNodeId`** (the Component whose interior Canvas owns the Edge; null = the
 **Project** root), rather than being inferred from its endpoints — endpoints can later span
 scope levels (the M5 refinement Connection), so scope is recorded, not derived (ADR-0005).
 Three invariants hold and are enforced **in the service, not the database** (ADR-0005): both
 endpoints sit on the **same Canvas** as the Edge, an Edge never links a Node to itself, and no
-two *active* (non-soft-deleted) Edges share the same source, target, and scope. The same-Canvas
+two *active* (non-soft-deleted) Edges share the same scope and **unordered** endpoint pair
+(A→B and B→A are the same Connection; ADR-0023). The same-Canvas
 invariant has exactly **one gated exception**: the **inner Edge** of a cross-scope **FlowRoute**,
 whose **boundary endpoint** legitimately sits at a higher scope. Only `routeFlow` may write it,
 and only when that endpoint is the Flow's owner; `connectNodes` stays strict (Slice 3 /
@@ -164,26 +170,29 @@ rule landed via ADR-0010 — service-primary with a DB backstop that translates 
 refinement.)*
 
 ### Port
-A Component's connection point — the user-facing name for a React Flow **handle**. Every
-Component exposes exactly two: an **input Port** (the `target` handle, rendered on the left,
-where Connections arrive) and an **output Port** (the `source` handle, rendered on the right,
-where Connections originate). A **Connection** is drawn by dragging output Port → input Port,
-and that ordering is the Connection's structural direction — the arrow points at the input Port
-(ADR-0009). Both Ports are **unbounded**: an output Port can feed many input Ports (fan-out) and
-an input Port can receive from many output Ports (fan-in), with no connection-count cap; the
-only limit is the de-dupe rule (no two *active* Connections share the same source + target +
-scope; see **Edge** and ADR-0005). The word in prose and UI is **Port**; the React Flow code
-word is **handle** (the same user-vs-code split as Component/Node) — never "connector",
-"socket", "anchor", or "terminal". *(The two handles render on every Component now, and "Port"
-is the canonical user word as of this slice. Exactly two Ports per Component — typed, named, or
-per-protocol Ports are out of scope.)*
+A Component's connection point — the user-facing name for a React Flow **handle**.
+**Non-directional** (ADR-0023): a Component is not directional, so a Port carries no
+input/output role. Every Component exposes two (rendered left and right) purely for
+drag-discoverability; under React Flow's `ConnectionMode.Loose` either can start *or* end a
+**Connection**, in either direction. Which way a Connection is drawn carries no meaning — its
+arrowheads are derived from the **Flows** routed on it (see **Connection**, **Interaction**).
+Both Ports are **unbounded**: a Port can feed many Connections and receive from many (fan-out
+and fan-in), with no connection-count cap; the only limit is the de-dupe rule (no two *active*
+Connections between the same **unordered** Component pair on a scope; see **Edge** and ADR-0023).
+The word in prose and UI is **Port**; the React Flow code word is **handle** (the same
+user-vs-code split as Component/Node) — never "connector", "socket", "anchor", or "terminal".
+*(The two non-directional handles render on every Component now; the former input/output
+framing retired with ADR-0023. Typed, named, or per-protocol Ports remain out of scope.)*
 
-### Edge direction — retired
-Removed in the slice that made the Connection arrow **structural** (ADR-0009). Direction was
-once a cosmetic `EdgeDirection` field (`NONE` / `FORWARD` / `BIDIRECTIONAL`) the user cycled by
-hand; it is no longer stored. The arrow now always points at the target's **input Port**
-(output→input), derived from the `sourceId`→`targetId` ordering, and a two-way relationship is
-**two Connections**. See **Connection**, **Port**, and ADR-0009.
+### Edge direction — retired (twice)
+Direction has never been a stored field on the Edge. It was first a cosmetic `EdgeDirection`
+enum (`NONE` / `FORWARD` / `BIDIRECTIONAL`) the user cycled by hand (removed by ADR-0009, which
+made the arrow *structural* — derived from the `sourceId`→`targetId` ordering). ADR-0023 then
+removed even that structural meaning: `sourceId`/`targetId` are just the two endpoints in
+arbitrary draw order, the de-dupe pair is **unordered**, and a Connection's arrowheads are
+**derived from the Flows routed on it** (see **Connection**, **Interaction**). Re-introducing a
+stored `direction` (or a `polarity`-on-Edge) field regresses both ADRs. See **Connection**,
+**Port**, **Interaction**, and ADR-0023.
 
 ### Canvas
 A **derived view, not a stored entity.** The Canvas of a Component `N` is
@@ -203,21 +212,25 @@ derived without a per-level query walk. Because a Canvas is a *derived view*,
 it is the read half of the Component/Node split, so its result is named in
 **Node**/**Edge** terms in code and tests even though the feature is described
 to users as "the interior **Components**". The `edgeFlows` field is the
-per-Edge Flow aggregation that drives the routed-count pill on a Connection
-(see **FlowRoute**): for each interior Edge, an entry
-`{ edgeId, total, routed, unrouted, orphan, byKind }` where `total` is the
-active **Flows** owned by either endpoint (loose — no polarity filter; a later
-slice tightens), `routed` is the active **FlowRoutes** whose `outerEdgeId` is
-this Edge with a still-live Flow, `orphan` covers FlowRoutes whose Flow was
-soft-deleted by a re-parse (the wiring hangs visibly rather than vanishing),
-and `byKind` is the per-`FlowKind` count of the routed set. The `boundaryProxies`
-field is the transitively-derived **boundary proxy** list for the scope (each
-`{ nodeId, title, kind, origin, ownerSourceEdgeId, ownerTargetEdgeId }`, where the
-two edge ids are the outer Connections split by the proxy owner's role — an
-OUTBOUND **Flow** rides `ownerSourceEdgeId`, an INBOUND Flow `ownerTargetEdgeId`
-— so the canvas can detect a **polarity** mismatch *before* dispatching
-`routeFlow` and offer the **reverse Connection** instead (Slice 4 / ADR-0013);
-see **Boundary proxy**), and
+per-Edge Flow aggregation that drives the routed-count pill AND the derived
+arrowheads on a Connection (see **FlowRoute**, **Interaction**): for each
+interior Edge, an entry
+`{ edgeId, total, routed, unrouted, orphan, byKind, arrowAtSource, arrowAtTarget }`
+where `total` is the active **Flows** owned by either endpoint (loose — any
+owner-endpoint Flow can ride the Connection; ADR-0023), `routed` is the active
+**FlowRoutes** whose `outerEdgeId` is this Edge with a still-live Flow, `orphan`
+covers FlowRoutes whose Flow was soft-deleted by a re-parse (the wiring hangs
+visibly rather than vanishing), `byKind` is the per-`FlowKind` count of the
+routed set, and `arrowAtSource` / `arrowAtTarget` count how many live routed
+Flows point their arrow at the Edge's stored `source` / `target` endpoint
+(derived per Flow from `(owner, interaction)` — the canonical rule lives in
+`~/lib/flow-direction`; the client renders a `markerStart`/`markerEnd` from
+them, both → a two-way Connection, neither → an undirected line; ADR-0023). The
+`boundaryProxies` field is the transitively-derived **boundary proxy** list for
+the scope (each `{ nodeId, title, kind, origin, outerEdgeId }`, where
+`outerEdgeId` is the single incident outer Connection a palette drag refines —
+a Connection is undirected, so any Flow rides it regardless of interaction
+(ADR-0023); see **Boundary proxy**), and
 `flowPalettes` maps each in-scope proxy's `nodeId` to the first page of its
 owner's **Flows** (`{ flows, hasMore }`) so the boundary-proxy **Flow palette**
 renders without a second round trip — the overflow pages in through
@@ -519,8 +532,8 @@ an API exposes `GET /pets` whether or not a client is wired up. A first-class ro
 addressable and individually soft-deletable, so every named capability is something an MCP
 agent can list, edit, or remove without touching the **Connection** that carries it. Carries a
 stable `key` (e.g. `"GET /pets"`), an UNTRUSTED `title` (display label), an optional
-`signature` (the parsed contract fragment as `Json?`), a **kind** (see **Flow kind**), and a
-**polarity** (see **Polarity**). A Flow's `key` is unique among active rows of the same owner
+`signature` (the parsed contract fragment as `Json?`), a **kind** (see **Flow kind**), and an
+**interaction** (see **Interaction**). A Flow's `key` is unique among active rows of the same owner
 — the de-dupe rule `(ownerNodeId, key)`, ADR-0005 style with the ADR-0010 partial-unique
 backstop (`idx_flow_dedup`). A Flow may be **derived** from a **FlowSpec** (`sourceSpecId != null`)
 or **user-authored** (`sourceSpecId = null`). *(Realized now via `attachFlowSpec` / `addFlow` /
@@ -547,23 +560,31 @@ downstream wiring orphans visibly rather than vanishing silently. *(Realized now
 ASYNCAPI / TS_SIGNATURE / GRAPHQL / CUSTOM persist source and record `parseError` until their
 parsers land additively. See ADR-0011.)*
 
-### Polarity (`FlowPolarity`)
-A **Flow**'s directional relationship to its **owner** **Component**: `INBOUND` (the owner
-*consumes* — e.g. `GET /pets` on an API) or `OUTBOUND` (the owner *emits* — SSE, events,
-server-pushed messages). Polarity is **owner-relative**: it answers "from the owner's
-perspective, does data come in or go out?", which is the only frame in which a bidirectional
-pipe resolves to **two Connections** under ADR-0009 without storing a `direction` field
-anywhere. When a Flow is later routed onto a Connection (subsequent slices), polarity must
-match the rendered arrow: an `OUTBOUND` Flow rides an **Edge** whose `sourceId` is the owner;
-an `INBOUND` Flow rides an Edge whose `targetId` is the owner. The word in prose and UI is
-**polarity**; the type name in code is `FlowPolarity` — the same prose/type-name pattern
-**Component kind** / `NodeKind` uses. Never "direction" (that's structural, taken, and
-ADR-0009 forbids re-introducing it). *(Realized now as a per-Flow field. The polarity-vs-arrow
-consistency check at route time is **service-enforced as of Slice 4** — an `INBOUND` Flow's owner
-must be the outer Edge's target, an `OUTBOUND` Flow's owner its source; a mismatch is rejected with
-a discriminable error and the canvas offers the **reverse Connection** instead (ADR-0013). ADR-0011
-records the original decision; ADR-0013 records the enforcement and the reverse-Connection
-reconciliation.)*
+### Interaction (`FlowInteraction`)
+How a **Flow**'s **owner** **Component** participates in the interaction — the owner-relative
+verb from which a **Connection**'s arrowheads are *derived* (never a stored direction; ADR-0023):
+
+- `REQUEST` — the owner is *called* in request/response (REST, RPC, a GraphQL field it serves);
+  the caller depends on it, so the arrow points **at** the owner.
+- `PUSH` — the owner *emits* unprompted (SSE, a webhook it sends, an event it publishes); the
+  arrow points **away** from the owner.
+- `SUBSCRIBE` — the owner *consumes* an external stream/feed; the arrow points **at** the owner.
+- `DUPLEX` — the owner both sends and receives (a WebSocket); arrows at **both** ends.
+
+It answers "from the owner's perspective, what is this interaction and which way does data
+move?". A Connection renders the union of its routed Flows' arrows: none → a plain undirected
+line, one direction → one arrowhead, both → arrowheads at both ends (a WebSocket is *one*
+Connection, not two). The derivation rule lives in one place, `~/lib/flow-direction.ts`. The
+word in prose and UI is **interaction**; the type name in code is `FlowInteraction` — the same
+prose/type-name pattern **Component kind** / `NodeKind` uses. Never "direction" (it is derived,
+not stored — re-introducing a stored direction or a `polarity`-on-edge field regresses ADR-0023).
+`REQUEST`/`SUBSCRIBE` and `PUSH` are the arrow-preserving successors of the retired `INBOUND` /
+`OUTBOUND` polarity; `SUBSCRIBE`/`DUPLEX` broaden a Flow from "a capability the owner exposes" to
+"an interaction the owner participates in". *(Realized now as a per-Flow field, editable via
+`addFlow`/`updateFlow`. `routeFlow` enforces only that the Flow's owner is an endpoint of the
+Connection — there is no interaction-vs-arrow gate, so any owner-endpoint Flow routes onto the
+single undirected Connection (ADR-0023, superseding ADR-0009/0013). The flow-derived arrowhead
+rendering lands in a later slice of the same rollout.)*
 
 ### Component-detail panel
 The slide-in surface that opens when a **Component** is selected on the **Canvas** — a sidebar,
@@ -583,7 +604,7 @@ The read-only UX surface listing a **Component**'s **Flows**. Surfaces on the
 **Component-detail panel** that opens when the owner selects a Component on the **Canvas** —
 alongside the paste field for its **FlowSpec** — and inside the **"+ flow"** popover that
 opens when the owner selects a **Connection** (so the unrouted Flows on either endpoint are
-pickable in place). Each item shows the Flow's `title`, `kind`, and `polarity`. When the
+pickable in place). Each item shows the Flow's `title`, `kind`, and `interaction`. When the
 Component owns at least one Flow, its node body wears a **"N flows" pill** to signal the
 palette is non-empty. *(Realized now on the Component-detail panel of a Component (editable for
 the owner, read-only for a **viewer** — issue #16), inside the per-Connection "+ flow" popover,
@@ -607,10 +628,10 @@ convention (the
 for authz and cascade-index friendliness, soft-delete columns (`deletedAt`, `deletionId`),
 and is owner-only writable via `routeFlow` / `unrouteFlow`. A FlowRoute's `flowId` must
 reference an active **Flow** whose `ownerNodeId` is one endpoint of the outer **Edge** —
-the *touches-endpoint* invariant. Its polarity-vs-arrow refinement (INBOUND ⇒ owner = target,
-OUTBOUND ⇒ owner = source) is **service-enforced as of Slice 4** (ADR-0013); a polarity mismatch
-is rejected with a discriminable error (`details.reason = "POLARITY_MISMATCH"`) the canvas maps
-to the **reverse-Connection** offer. De-dupe is `(outerEdgeId, flowId)` among active rows
+the *touches-endpoint* invariant, which is the WHOLE of `routeFlow`'s direction check: a
+Connection is undirected, so any owner-endpoint Flow routes onto it and its **Interaction**
+verb decides which way the derived arrow points (ADR-0023, retiring ADR-0013's
+polarity-vs-arrow rejection and the reverse-Connection offer). De-dupe is `(outerEdgeId, flowId)` among active rows
 — the **ADR-0010 named pattern**, third adopter (`idx_flow_route_dedup`, partial unique
 backstop; service-primary `findFirst` is the readable fast path; both translate to
 `ConflictError` with `details.conflictingFlowRouteIds`). The inner-Edge and FlowRoute writes
@@ -620,10 +641,12 @@ aborts the route's transaction — convergence on a shared inner Edge, not a ret
 surfaced as the `edgeFlows` aggregation in **getCanvas**, the routed-count pill on the
 Connection, and the "+ flow" popover on a selected Connection — and, since Slice 3 (#36),
 cross-scope refinement (the `innerEdgeId` writer) and palette rendering on **boundary
-proxies**, with the drag-from-palette gesture, and — since Slice 4 (#37) — service-enforced
-polarity validation with the canvas reverse-Connection reconciliation (ADR-0013). See ADR-0011
-(Flow foundation), ADR-0012 (cross-scope writer), ADR-0013 (polarity invariant + reverse-Connection
-offer), and the master plan at `docs/plans/flow-routed-connections.md`.)*
+proxies**, with the drag-from-palette gesture. As of ADR-0023 a Connection is undirected:
+`routeFlow` enforces only touches-endpoint, the per-Edge `arrowAtSource`/`arrowAtTarget`
+aggregation in **getCanvas** drives the derived arrowheads, and the polarity gate +
+reverse-Connection reconciliation (the old Slice 4 / ADR-0013) are retired. See ADR-0011
+(Flow foundation), ADR-0012 (cross-scope writer), ADR-0023 (undirected Connection, derived
+direction), and the master plan at `docs/plans/flow-routed-connections.md`.)*
 
 ### Flow kind (`FlowKind`)
 A **Flow**'s category, stored on it as `kind: FlowKind`. One of seven values: `GENERIC` (the

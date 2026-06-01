@@ -12,11 +12,11 @@ import { canConnect } from "./connection-rules";
  * style of `edge.service.test.ts` minus the Postgres harness.
  */
 describe("canConnect", () => {
-  it("accepts an output→input between two distinct Components", () => {
+  it("accepts a Connection between two distinct Components", () => {
     expect(canConnect({ source: "a", target: "b" }, [])).toEqual({ ok: true });
   });
 
-  it("accepts when no existing Connection shares the same ordered endpoints", () => {
+  it("accepts when no existing Connection shares the same endpoint pair", () => {
     const existing = [{ source: "c", target: "d" }];
     expect(canConnect({ source: "a", target: "b" }, existing)).toEqual({
       ok: true,
@@ -38,10 +38,11 @@ describe("canConnect", () => {
     });
   });
 
-  it("treats A→B and B→A as distinct (the ordered pair is the direction)", () => {
+  it("treats A→B and B→A as the same Connection (undirected; ADR-0023)", () => {
     const existing = [{ source: "b", target: "a" }];
     expect(canConnect({ source: "a", target: "b" }, existing)).toEqual({
-      ok: true,
+      ok: false,
+      reason: "duplicate",
     });
   });
 });

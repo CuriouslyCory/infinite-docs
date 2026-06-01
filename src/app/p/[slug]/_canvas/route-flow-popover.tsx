@@ -2,7 +2,9 @@
 
 import { Suspense, useContext, useEffect } from "react";
 
-import { type FlowKind, type FlowPolarity } from "~/lib/schemas";
+import { flowArrowEndpoints } from "~/lib/flow-direction";
+import { FLOW_INTERACTION_DISPLAY } from "~/lib/flow-interaction-display";
+import { type FlowInteraction, type FlowKind } from "~/lib/schemas";
 import { api } from "~/trpc/react";
 
 import {
@@ -95,20 +97,13 @@ function UnroutedFlowList({
       slug: endpoints.slug,
     });
 
-  // Polarity gates which endpoint's Flows this Connection can carry (Slice 4 /
-  // ADR-0013): the arrow is structural, so a source-endpoint Flow rides it only
-  // when OUTBOUND (owner emits, arrow points away), a target-endpoint Flow only
-  // when INBOUND (owner consumes, arrow points at it). Offering the others would
-  // dispatch a `routeFlow` the service rejects with POLARITY_MISMATCH — those
-  // Flows are routable on the reverse Connection instead, so we hide them here
-  // rather than surface a doomed pick.
+  // Every unrouted Flow from either endpoint is offered — a Connection is
+  // undirected and carries Flows in either direction; the Flow's interaction
+  // verb decides which way its arrow points, not whether it can ride here
+  // (ADR-0023, retiring the former polarity gate and reverse-Connection offer).
   const routedSet = new Set(routedFlowIds);
-  const sourceUnrouted = sourceFlows.filter(
-    (f) => !routedSet.has(f.id) && f.polarity === "OUTBOUND",
-  );
-  const targetUnrouted = targetFlows.filter(
-    (f) => !routedSet.has(f.id) && f.polarity === "INBOUND",
-  );
+  const sourceUnrouted = sourceFlows.filter((f) => !routedSet.has(f.id));
+  const targetUnrouted = targetFlows.filter((f) => !routedSet.has(f.id));
 
   if (sourceUnrouted.length === 0 && targetUnrouted.length === 0) {
     return (
@@ -118,31 +113,53 @@ function UnroutedFlowList({
     );
   }
 
+  // Dispatch a route, computing the optimistic arrowhead delta from the Flow's
+  // interaction and which endpoint owns it (`ownerIsSource`) via the shared
+  // flow-direction rule, so the arrow appears the instant the user picks
+  // (ADR-0023). The endpoint A in `flowArrowEndpoints` is the Edge's source.
+  const pickFlow = (flow: RouteFlowItem, ownerIsSource: boolean) => {
+    const { pointsAtA, pointsAtB } = flowArrowEndpoints(
+      ownerIsSource,
+      flow.interaction,
+    );
+    dispatch({
+      kind: "route",
+      flowId: flow.id,
+      outerEdgeId,
+      flowKind: flow.kind,
+      arrowAtSourceDelta: pointsAtA ? 1 : 0,
+      arrowAtTargetDelta: pointsAtB ? 1 : 0,
+    });
+    onClose();
+  };
+
   return (
     <div className="flex flex-col gap-2">
       {sourceUnrouted.length > 0 && (
         <FlowGroup
           title={endpoints.sourceTitle}
           flows={sourceUnrouted}
-          onPick={(flowId, flowKind) => {
-            dispatch({ kind: "route", flowId, outerEdgeId, flowKind });
-            onClose();
-          }}
+          onPick={(flow) => pickFlow(flow, true)}
         />
       )}
       {targetUnrouted.length > 0 && (
         <FlowGroup
           title={endpoints.targetTitle}
           flows={targetUnrouted}
-          onPick={(flowId, flowKind) => {
-            dispatch({ kind: "route", flowId, outerEdgeId, flowKind });
-            onClose();
-          }}
+          onPick={(flow) => pickFlow(flow, false)}
         />
       )}
     </div>
   );
 }
+
+type RouteFlowItem = {
+  id: string;
+  key: string;
+  title: string;
+  interaction: FlowInteraction;
+  kind: FlowKind;
+};
 
 function FlowGroup({
   title,
@@ -150,14 +167,8 @@ function FlowGroup({
   onPick,
 }: {
   title: string;
-  flows: {
-    id: string;
-    key: string;
-    title: string;
-    polarity: FlowPolarity;
-    kind: FlowKind;
-  }[];
-  onPick: (flowId: string, kind: FlowKind) => void;
+  flows: RouteFlowItem[];
+  onPick: (flow: RouteFlowItem) => void;
 }) {
   return (
     <section className="flex flex-col gap-1">
@@ -170,17 +181,13 @@ function FlowGroup({
             <button
               type="button"
               className="flex w-full items-center gap-2 rounded bg-white/5 px-2 py-1 text-left transition hover:bg-white/10"
-              onClick={() => onPick(flow.id, flow.kind)}
+              onClick={() => onPick(flow)}
             >
               <span
-                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${
-                  flow.polarity === "INBOUND"
-                    ? "bg-emerald-500/20 text-emerald-300"
-                    : "bg-sky-500/20 text-sky-300"
-                }`}
-                title={`${flow.polarity} ${flow.kind}`}
+                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${FLOW_INTERACTION_DISPLAY[flow.interaction].tone}`}
+                title={`${FLOW_INTERACTION_DISPLAY[flow.interaction].label} ${flow.kind}`}
               >
-                {flow.polarity === "INBOUND" ? "IN" : "OUT"}
+                {FLOW_INTERACTION_DISPLAY[flow.interaction].short}
               </span>
               <div className="flex min-w-0 flex-col">
                 <span className="truncate text-sm">{flow.title}</span>

@@ -44,7 +44,10 @@ export interface ParsedFlow {
   kind: "OPENAPI_OPERATION";
   key: string;
   title: string;
-  polarity: "INBOUND";
+  // An OpenAPI operation is a request/response endpoint the owner serves, so it
+  // is REQUEST — the caller depends on it, the arrow points at the owner
+  // (ADR-0023). SSE/WebSocket flagging into PUSH/DUPLEX lands with those parsers.
+  interaction: "REQUEST";
   signature: unknown;
 }
 
@@ -117,7 +120,7 @@ export function parseFlowSpec(
         kind: "OPENAPI_OPERATION",
         key,
         title: summary ?? operationId ?? key,
-        polarity: "INBOUND",
+        interaction: "REQUEST",
         signature: {
           method: method.toUpperCase(),
           path,

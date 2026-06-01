@@ -132,8 +132,7 @@ function toBoundaryRFNode(
       title: proxy.title,
       kind: proxy.kind,
       origin: proxy.origin,
-      ownerSourceEdgeId: proxy.ownerSourceEdgeId,
-      ownerTargetEdgeId: proxy.ownerTargetEdgeId,
+      outerEdgeId: proxy.outerEdgeId,
       flows: palette?.flows ?? [],
       hasMore: palette?.hasMore ?? false,
     },
@@ -169,11 +168,16 @@ function toBoundaryGroupRFNode(
   };
 }
 
-// A Connection's direction is structural — output Port → input Port — so every
-// Connection carries one arrowhead at its target (input) end. Set on the edge
-// object (never a stored field) so React Flow registers the marker once and the
-// edge view forwards the resolved url (CONTEXT.md "Port"; ADR-0009).
-const STRUCTURAL_MARKER_END: EdgeMarker = { type: MarkerType.ArrowClosed };
+// A Connection is undirected; its arrowheads are DERIVED from the Flows routed
+// on it (ADR-0023). `withEdgeFlows` sets `markerStart` (arrow at the source
+// endpoint) and/or `markerEnd` (arrow at the target endpoint) from each Edge's
+// `arrowAtSource`/`arrowAtTarget` counts. These are MODULE CONSTANTS (never
+// freshly built per render) so React Flow registers each marker once instead of
+// re-registering every frame (the same identity-stability guard the structural
+// marker carried). A freshly drawn Connection has no routed Flows, so it gets
+// neither marker — a plain undirected line until a Flow gives it direction.
+const MARKER_START: EdgeMarker = { type: MarkerType.ArrowClosed };
+const MARKER_END: EdgeMarker = { type: MarkerType.ArrowClosed };
 
 function toRFNode(n: CanvasNode): ComponentNode {
   return {
@@ -198,7 +202,8 @@ function toRFEdge(e: CanvasEdge): ConnectionEdge {
     type: "connection",
     source: e.sourceId,
     target: e.targetId,
-    markerEnd: STRUCTURAL_MARKER_END,
+    // No marker here — `withEdgeFlows` derives markerStart/markerEnd from the
+    // routed Flows (ADR-0023). A bare edge renders as an undirected line.
     data: {
       label: e.label,
       optimistic: e.id.startsWith("temp_"),
@@ -225,8 +230,14 @@ function withEdgeFlows(
   // values as the underlying `sourceId` / `targetId`.
   const sourceTitle = titleByNode.get(edge.source);
   const targetTitle = titleByNode.get(edge.target);
+  // Derived arrowheads: an arrow at the source endpoint is a `markerStart`, at
+  // the target endpoint a `markerEnd` (ADR-0023). Module-constant marker objects
+  // keep React Flow from re-registering markers every frame. Undefined (no
+  // routed Flows that way) renders no arrowhead on that end.
   return {
     ...edge,
+    markerStart: (flows?.arrowAtSource ?? 0) > 0 ? MARKER_START : undefined,
+    markerEnd: (flows?.arrowAtTarget ?? 0) > 0 ? MARKER_END : undefined,
     data: {
       ...edge.data,
       label: edge.data?.label ?? null,
@@ -806,7 +817,7 @@ function CanvasInner({
             type: "connection",
             source,
             target,
-            markerEnd: STRUCTURAL_MARKER_END,
+            // No marker — undirected until a Flow is routed (ADR-0023).
             data: { label: null, optimistic: true },
           },
           es,
@@ -867,16 +878,12 @@ function CanvasInner({
     [utils, projectId, canvasNodeId, setEdges, patchCanvas, slug],
   );
 
-  // Route a Flow from a boundary proxy's palette. Picks the outer Connection
-  // whose orientation matches the Flow's polarity (Slice 4 / ADR-0013): an
-  // INBOUND Flow rides the Edge pointing at its owner (`ownerTargetEdgeId`), an
-  // OUTBOUND Flow the Edge pointing away (`ownerSourceEdgeId`). When the
-  // matching orientation exists, route directly. When it does NOT — the
-  // polarity mismatch — the canvas does NOT dispatch `routeFlow`; it offers a
-  // one-click reverse Connection (the structural arrow cannot lie, so the other
-  // direction is a second Connection, never a reversed arrow — ADR-0009). On
-  // confirm, one batched gesture creates the reverse outer Edge (a strict
-  // same-Canvas write at the PARENT scope) then routes against it.
+  // Route a Flow from a boundary proxy's palette onto the Connection between
+  // this scope's Component and the proxy owner. A Connection is undirected, so
+  // ANY incident outer Edge carries the Flow regardless of its interaction verb
+  // — the verb decides which way the derived arrow points, not whether the route
+  // is legal (ADR-0023, retiring ADR-0013's polarity-matching + reverse-Connection
+  // offer). The service's touches-endpoint check is the backstop.
   const routeFromPalette = useCallback(
     async (params: {
       flowId: string;
@@ -895,93 +902,24 @@ function CanvasInner({
       }
       const data = utils.architecture.getCanvas.getData(canvasInput);
       const proxy = data?.boundaryProxies.find((p) => p.nodeId === proxyNodeId);
-      const polarity = data?.flowPalettes[proxyNodeId]?.flows.find(
-        (f) => f.id === flowId,
-      )?.polarity;
-      if (!proxy || !polarity) {
+      // The single incident outer Edge carries it — a Connection is undirected
+      // (ADR-0023).
+      const outerEdgeId = proxy?.outerEdgeId ?? null;
+      if (!outerEdgeId) {
         toast.error("That flow can’t be routed here.");
         return;
       }
 
-      const matchingEdgeId =
-        polarity === "INBOUND" ? proxy.ownerTargetEdgeId : proxy.ownerSourceEdgeId;
-      if (matchingEdgeId) {
-        await runOptimisticInnerRoute(source, target, () =>
-          routeFlow({
-            flowId,
-            outerEdgeId: matchingEdgeId,
-            sourceNodeId: source,
-            targetNodeId: target,
-          }),
-        );
-        return;
-      }
-
-      // Polarity mismatch: no Connection oriented for this Flow exists. The
-      // reverse outer Edge lives on the PARENT Canvas (one scope up), between
-      // this scope's Component and the proxy owner — a strict same-Canvas write
-      // for `connectNodes` (both endpoints sit on the parent Canvas because the
-      // proxy is direct). The parent scope is the breadcrumb before the current.
-      const breadcrumbs = data?.breadcrumbs ?? [];
-      const parentScopeId = breadcrumbs[breadcrumbs.length - 2]?.id ?? null;
-      const scopeTitle =
-        breadcrumbs[breadcrumbs.length - 1]?.title ?? "this component";
-      const ownerTitle = proxy.title;
-      const reverse =
-        polarity === "OUTBOUND"
-          ? { sourceId: proxyNodeId, targetId: canvasNodeId, label: `${ownerTitle} → ${scopeTitle}` }
-          : { sourceId: canvasNodeId, targetId: proxyNodeId, label: `${scopeTitle} → ${ownerTitle}` };
-
-      toast(`Add the ${reverse.label} Connection?`, {
-        description: `This ${
-          polarity === "OUTBOUND" ? "outbound" : "inbound"
-        } flow can only ride a Connection that carries it that way.`,
-        action: {
-          label: "Add it",
-          onClick: () =>
-            void runOptimisticInnerRoute(source, target, async () => {
-              const created = await connectNodes.mutateAsync({
-                projectId,
-                canvasNodeId: parentScopeId,
-                sourceId: reverse.sourceId,
-                targetId: reverse.targetId,
-              });
-              // The reverse Connection now exists, so record its id on the
-              // proxy's matching orientation. Without this the cache keeps the
-              // null that triggered the offer, and the next same-polarity drag
-              // re-offers and then collides on the duplicate Connection. The
-              // patch lives here (not in runOptimisticInnerRoute's rollback)
-              // because the Edge persists even if the routeFlow below fails —
-              // ADR-0013's accepted live-but-routeless reverse Connection.
-              patchCanvas((c) => ({
-                boundaryProxies: c.boundaryProxies.map((p) =>
-                  p.nodeId !== proxyNodeId
-                    ? p
-                    : polarity === "OUTBOUND"
-                      ? { ...p, ownerSourceEdgeId: created.id }
-                      : { ...p, ownerTargetEdgeId: created.id },
-                ),
-              }));
-              return routeFlow({
-                flowId,
-                outerEdgeId: created.id,
-                sourceNodeId: source,
-                targetNodeId: target,
-              });
-            }),
-        },
-      });
+      await runOptimisticInnerRoute(source, target, () =>
+        routeFlow({
+          flowId,
+          outerEdgeId,
+          sourceNodeId: source,
+          targetNodeId: target,
+        }),
+      );
     },
-    [
-      canvasNodeId,
-      utils,
-      canvasInput,
-      runOptimisticInnerRoute,
-      patchCanvas,
-      routeFlow,
-      connectNodes,
-      projectId,
-    ],
+    [canvasNodeId, utils, canvasInput, runOptimisticInnerRoute, routeFlow],
   );
 
   // Draw a Connection. Refuses a still-optimistic (temp_) endpoint (no real id
@@ -1037,7 +975,7 @@ function CanvasInner({
             type: "connection",
             source,
             target,
-            markerEnd: STRUCTURAL_MARKER_END,
+            // No marker — undirected until a Flow is routed (ADR-0023).
             data: { label: null, optimistic: true },
           },
           es,
@@ -1321,14 +1259,22 @@ function CanvasInner({
     [setNodes, patchCanvas],
   );
 
-  // Route a Flow onto a Connection (Slice 2). Optimistic on the
-  // `edgeFlows` aggregation only — the new FlowRoute row itself is not
-  // surfaced anywhere in the canvas, only its count. Bump `routed`,
-  // decrement `unrouted`, fire `routeFlow`; on failure undo via an inverse
-  // delta (NOT a snapshot restore) so an overlapping in-flight route on the
-  // same edge isn't clobbered, then reconcile to server truth.
+  // Route a Flow onto a Connection (Slice 2). Optimistic on the `edgeFlows`
+  // aggregation only — bump `routed`, decrement `unrouted`, and bump the
+  // arrow-direction counts by this Flow's deltas so the derived arrowhead
+  // appears THIS frame (the deltas come from the dispatcher, which computed them
+  // from the Flow's interaction via flowArrowEndpoints; ADR-0023). Fire
+  // `routeFlow`; on failure undo via an inverse delta (NOT a snapshot restore)
+  // so an overlapping in-flight route on the same edge isn't clobbered, then
+  // reconcile to server truth.
   const commitRouteFlow = useCallback(
-    (flowId: string, outerEdgeId: string, flowKind: FlowKind): void => {
+    (
+      flowId: string,
+      outerEdgeId: string,
+      flowKind: FlowKind,
+      arrowAtSourceDelta: number,
+      arrowAtTargetDelta: number,
+    ): void => {
       patchCanvas((c) => ({
         edgeFlows: c.edgeFlows.map((ef) =>
           ef.edgeId === outerEdgeId
@@ -1337,6 +1283,8 @@ function CanvasInner({
                 routed: ef.routed + 1,
                 unrouted: Math.max(0, ef.unrouted - 1),
                 byKind: bumpByKind(ef.byKind, flowKind, 1),
+                arrowAtSource: ef.arrowAtSource + arrowAtSourceDelta,
+                arrowAtTarget: ef.arrowAtTarget + arrowAtTargetDelta,
               }
             : ef,
         ),
@@ -1351,7 +1299,7 @@ function CanvasInner({
           });
         })
         .catch(() => {
-          // Inverse-delta rollback: undo only this op's own +1/-1 against the
+          // Inverse-delta rollback: undo only this op's own deltas against the
           // current counts, so a concurrent route that succeeded mid-flight
           // keeps its increment. Then reconcile to the authoritative counts —
           // but only here, on the error path: a happy-path `getCanvas`
@@ -1364,6 +1312,14 @@ function CanvasInner({
                     routed: Math.max(0, ef.routed - 1),
                     unrouted: ef.unrouted + 1,
                     byKind: bumpByKind(ef.byKind, flowKind, -1),
+                    arrowAtSource: Math.max(
+                      0,
+                      ef.arrowAtSource - arrowAtSourceDelta,
+                    ),
+                    arrowAtTarget: Math.max(
+                      0,
+                      ef.arrowAtTarget - arrowAtTargetDelta,
+                    ),
                   }
                 : ef,
             ),
@@ -1381,7 +1337,13 @@ function CanvasInner({
   // dispatch path is shipped now so the context contract is complete; a
   // future inspector composes on top with zero service-layer changes.
   const commitUnrouteFlow = useCallback(
-    (flowRouteId: string, outerEdgeId: string, flowKind: FlowKind): void => {
+    (
+      flowRouteId: string,
+      outerEdgeId: string,
+      flowKind: FlowKind,
+      arrowAtSourceDelta: number,
+      arrowAtTargetDelta: number,
+    ): void => {
       patchCanvas((c) => ({
         edgeFlows: c.edgeFlows.map((ef) =>
           ef.edgeId === outerEdgeId
@@ -1390,6 +1352,8 @@ function CanvasInner({
                 routed: Math.max(0, ef.routed - 1),
                 unrouted: ef.unrouted + 1,
                 byKind: bumpByKind(ef.byKind, flowKind, -1),
+                arrowAtSource: Math.max(0, ef.arrowAtSource - arrowAtSourceDelta),
+                arrowAtTarget: Math.max(0, ef.arrowAtTarget - arrowAtTargetDelta),
               }
             : ef,
         ),
@@ -1413,6 +1377,8 @@ function CanvasInner({
                     routed: ef.routed + 1,
                     unrouted: Math.max(0, ef.unrouted - 1),
                     byKind: bumpByKind(ef.byKind, flowKind, 1),
+                    arrowAtSource: ef.arrowAtSource + arrowAtSourceDelta,
+                    arrowAtTarget: ef.arrowAtTarget + arrowAtTargetDelta,
                   }
                 : ef,
             ),
@@ -1430,12 +1396,20 @@ function CanvasInner({
   const routeFlowDispatch = useCallback(
     (action: RouteFlowAction) => {
       if (action.kind === "route") {
-        commitRouteFlow(action.flowId, action.outerEdgeId, action.flowKind);
+        commitRouteFlow(
+          action.flowId,
+          action.outerEdgeId,
+          action.flowKind,
+          action.arrowAtSourceDelta,
+          action.arrowAtTargetDelta,
+        );
       } else {
         commitUnrouteFlow(
           action.flowRouteId,
           action.outerEdgeId,
           action.flowKind,
+          action.arrowAtSourceDelta,
+          action.arrowAtTargetDelta,
         );
       }
     },
@@ -1479,11 +1453,13 @@ function CanvasInner({
                   onNodesChange={onNodesChange}
                   onEdgesChange={onEdgesChange}
                   onConnect={(c) => void handleConnect(c)}
-                  // Strict connection mode is what makes a Connection run only
-                  // output Port → input Port (a drag can go only from a source
-                  // handle to a target handle); pin it explicitly so that
-                  // output→input invariant can't be silently lost (ADR-0009).
-                  connectionMode={ConnectionMode.Strict}
+                  // Loose connection mode: a Connection can be drawn between any
+                  // two handles in either direction — Components are not
+                  // directional, so a Port has no input/output role and the drag
+                  // direction carries no meaning (direction is derived from the
+                  // Flows routed on the Connection; ADR-0023, retiring ADR-0009's
+                  // strict output→input rule).
+                  connectionMode={ConnectionMode.Loose}
                   // Instant drag feedback: reject a self-link and a still-optimistic
                   // (temp_) endpoint by snapping back. Duplicates are deliberately
                   // allowed through (passing [] skips the duplicate rule) so

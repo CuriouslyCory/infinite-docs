@@ -95,44 +95,22 @@ export class ConflictError extends ArchitectureError {
 }
 
 /**
- * Structured payload identifying why a well-formed request is semantically
- * invalid — the AI-readable channel the human message cannot carry, mirroring
- * {@link ConflictErrorDetails}. Reaches the tRPC client as `error.data.archDetails`
- * via the `errorFormatter` (no per-code mapping needed); the MCP adapter reads
- * `cause.details` directly. Additive: future discriminable validation failures
- * add their own `reason` literals without changing existing callers.
- */
-export interface ValidationErrorDetails {
-  // The discriminant the client keys on. `POLARITY_MISMATCH`: a Flow was routed
-  // onto a Connection whose structural direction contradicts the Flow's polarity
-  // (INBOUND ⇒ owner must be the Edge target; OUTBOUND ⇒ owner must be the
-  // source). The canvas maps this to the reverse-Connection offer; the service
-  // is the backstop for non-UI callers (ADR-0013).
-  reason: "POLARITY_MISMATCH";
-  // Which endpoint the Flow's owner MUST occupy for its polarity — the fact a
-  // non-UI caller (MCP, #42) needs to draw the reverse Connection without
-  // re-deriving the polarity rule.
-  expectedOwnerRole: "source" | "target";
-}
-
-/**
  * A semantically invalid request that Zod cannot catch on its own — e.g. a
  * self-Connection (source === target) or endpoints that do not sit on the
  * Canvas the Connection is drawn on (ADR-0005). The shape is valid; the meaning
  * is not.
  *
- * Optional structured `details` carry an AI-readable discriminator (e.g.
- * `reason: "POLARITY_MISMATCH"` for a polarity-vs-arrow rejection; ADR-0013),
- * flowing to `error.data.archDetails` on the client exactly like
- * {@link ConflictError}'s details.
+ * Carries no structured `details` today: the former `POLARITY_MISMATCH`
+ * discriminator retired with the polarity-vs-arrow rejection (ADR-0023 —
+ * direction is derived from a Flow's interaction, so there is no mismatch state
+ * to reach). A future discriminable validation failure can reintroduce a typed
+ * `details` payload additively, the same shape {@link ConflictError} uses.
  */
 export class ValidationError extends ArchitectureError {
   readonly code: ArchitectureErrorCode = "BAD_REQUEST";
-  readonly details?: ValidationErrorDetails;
 
-  constructor(message = "That request is not valid.", details?: ValidationErrorDetails) {
+  constructor(message = "That request is not valid.") {
     super(message);
     this.name = "ValidationError";
-    this.details = details;
   }
 }
