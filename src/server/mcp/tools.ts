@@ -38,6 +38,9 @@ export function registerArchitectureTools(
         title: descriptor.title,
         description: descriptor.description,
         inputSchema: descriptor.inputSchema,
+        ...(descriptor.outputSchema
+          ? { outputSchema: descriptor.outputSchema }
+          : {}),
       },
       async (args, extra) => {
         const actor = actorFromAuthInfo(extra.authInfo);
@@ -45,9 +48,23 @@ export function registerArchitectureTools(
           const result = await db.$transaction((tx) =>
             descriptor.invoke(tx, actor, args),
           );
-          return {
+          // When the descriptor declared an outputSchema, ride the typed
+          // payload as MCP `structuredContent` so the agent gets a parsed
+          // object on the wire (SDK 1.26.0) instead of re-parsing JSON out
+          // of the text content. ADR-0026.
+          const response: {
+            content: { type: "text"; text: string }[];
+            structuredContent?: Record<string, unknown>;
+          } = {
             content: [{ type: "text", text: result.message }],
           };
+          if (result.structured !== undefined) {
+            response.structuredContent = result.structured as Record<
+              string,
+              unknown
+            >;
+          }
+          return response;
         } catch (error) {
           throw toMcpWriteError(error);
         }

@@ -17,6 +17,8 @@
 > deferred to #42). Slices 4–5 remain plan-only. ADRs land per slice. The
 > "Open questions" section at the bottom has been resolved for Slice 1 —
 > entries are kept as a record of the decisions and where they were captured.
+>
+> **apply_graph substrate**: shipped via #20 (Components + Connections only; flows/routes arms remain Slice 5 / #38).
 
 ## The kernel insight
 
@@ -263,8 +265,10 @@ routed". Two arrows, two stories, each enumerable. ADR-0009 vindicated.
 
 New MCP resources: `flow/:id`, `flow-route/:id`. New tools: `attach-flow-spec`,
 `add-flow`, `route-flow`, `unroute-flow`, `list-flows`. The `apply-graph` batch
-tool gains `flows:[]` and `routes:[]` arms. All additive; the agent's mental
-model becomes *"Components own contracts; Connections route them."*
+tool gains `flows:[]` and `routes:[]` arms. The `apply_graph` substrate itself
+landed in #20 (Components + Connections); the additive `flows:[]` / `routes:[]`
+arms remain Slice 5 / #38 work. All additive; the agent's mental model becomes
+*"Components own contracts; Connections route them."*
 
 ## Performance posture
 

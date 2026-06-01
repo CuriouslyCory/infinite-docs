@@ -494,16 +494,7 @@ and surfaces the result as a short text confirmation that includes the affected 
 agent can chain calls without an intermediate read. Authorization, invariants, and de-dupe live in
 the service — the tool registers, parses, and translates errors only. The word is **tool** — the
 MCP-spec native term, so no split applies. Never "action", "command", "mutation" (collides with
-tRPC), or "verb". Today's surface (#19) is the **MCP write tools** — `create_component`,
-`connect_components`, `update_component_docs`, `move_component` — covering single-Component create
-(root or child via optional `parentId`), one Connection per call, narrow docs replace, and
-reparenting (cycle-creating moves reject as `ValidationError`; moves that would orphan an incident
-Connection reject as `ConflictError` with `details.conflictingEdgeIds`; non-cascading by design,
-ADR-0024). **No destructive tool is exposed at this version** (acceptance criterion). The catalog is
-plain data (`WRITE_TOOLS` in `~/server/mcp/tool-catalog.ts`), so the registration loop, `tools/list`,
-and `/llms.txt` all render from one source — additional tools (Flow / FlowRoute writers in
-issues #40 / #42, plus the `apply_graph` batch tool in #20) plug in without touching the adapter,
-the auth gate, or the route. *(Realized now via #19; see ADR-0001, ADR-0010, ADR-0022, ADR-0024.)*
+tRPC), or "verb". Today's surface is the **MCP write tools** — the four single-op tools (`create_component`, `connect_components`, `update_component_docs`, `move_component` — #19) plus the **`apply_graph`** batch tool (#20) for constructing many Components and Connections in one transaction, chained by **client id** (the in-batch reference handle the agent picks). **No destructive tool is exposed at this version** (acceptance criterion). The catalog is plain data (`WRITE_TOOLS` in `~/server/mcp/tool-catalog.ts`), so the registration loop, `tools/list`, and `/llms.txt` all render from one source — additional tools (Flow / FlowRoute writers in issues #40 / #42, plus the additive `flows: []` / `routes: []` arms on `apply_graph` in #38) plug in without touching the adapter, the auth gate, or the route. *(Realized now via #19 + #20; see ADR-0001, ADR-0010, ADR-0022, ADR-0024, ADR-0026.)*
 
 ### llms.txt
 The served discovery document at `/llms.txt` that tells an **agent** how to reach the **MCP path**,
@@ -515,6 +506,9 @@ the grant (ADR-0021): it describes capability ("a token acts on behalf of the mi
 token. Carries the **prompt-injection standing note** that graph content is **data, not
 instructions**. Never "manifest", "sitemap", or "robots.txt for AI". *(Realized now via #18; #34/#38
 extend its vocabulary as they add Flow tools / resources. See ADR-0022.)*
+
+### Client id
+The agent-chosen string an **apply-graph batch** uses to chain references between rows it is about to create in one **MCP tool** call — `parent` on a new Component, or `source` / `target` / `canvasNode` on a new Connection — without an intermediate round trip to learn the server-minted ids. Each Component in the batch carries a `clientId` the agent picks (any non-empty string ≤ 64 chars); the response returns an `idMap: { [clientId: string]: serverId }` the agent uses for subsequent calls. Per-batch scope: a `clientId` means nothing outside the one transaction that materializes the map, and **carries no authorization** — it is a lookup key, not a bearer credential (writes still authorize through the **API token**-resolved **Actor**, ADR-0002). Each field that accepts a Component endpoint or a Component parent accepts EITHER a `clientId` from the same batch (`{ref:"client", clientId:"..."}`) OR an existing server id (`{ref:"server", id:"..."}`); the discriminator is explicit so a typo surfaces as "no such clientId in this batch" instead of silently rebinding to an unrelated server row. The word is **client id** in prose and `clientId` in code — never "ref id" / "batch id" / "local id" / "temp id". Clientids must be unique batch-wide so the flat `idMap` shape Slice 5 (#38) extends with `flows: []` / `routes: []` arms cannot collide. *(Realized now via #20 / `apply_graph`. The id-map type is `Record<string, string>` in code; the outer service result is `ApplyGraphOutput`. See ADR-0026.)*
 
 ### Deletion id
 The handle that ties together one cascading soft-delete so it can be undone as a unit.

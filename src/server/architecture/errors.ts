@@ -70,6 +70,12 @@ export interface ConflictErrorDetails {
   // occupied (ADR-0010 named pattern, third adopter; see the master plan at
   // docs/plans/flow-routed-connections.md).
   conflictingFlowRouteIds?: string[];
+  // Set by the apply_graph batch tool to point at the input slot (or slots)
+  // inside one batch that collided — either with itself, with a sibling entry,
+  // or with an existing live row. Distinct from the server-id keys above:
+  // those name persisted rows, this names input strings the agent picked.
+  // ADR-0010 named pattern, ADR-0026.
+  conflictingClientIds?: string[];
 }
 
 /**

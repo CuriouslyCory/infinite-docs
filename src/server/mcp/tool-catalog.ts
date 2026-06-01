@@ -1,12 +1,15 @@
 import { type z } from "zod";
 
 import {
+  applyGraphInput,
+  applyGraphOutput,
   connectNodesInput,
   createNodeInput,
   moveNodeInput,
   updateNodeDocumentationInput,
 } from "~/lib/schemas";
 import type { Actor, Db } from "~/server/architecture/actor";
+import { applyGraph } from "~/server/architecture/apply-graph.service";
 import { connectNodes } from "~/server/architecture/edge.service";
 import {
   createNode,
@@ -20,25 +23,29 @@ import {
  * one source and cannot disagree. Same posture {@link READ_RESOURCES} uses for
  * reads.
  *
- * Frozen at four tools for #19 (`create_component`, `connect_components`,
- * `update_component_docs`, `move_component`). Flow / FlowRoute write tools
- * (`attach_flow_spec`, `add_flow`, `update_flow`, `delete_flow`, `list_flows`,
- * `route_flow`, `unroute_flow`) are owned by #40 / #42 and land additively —
- * each new descriptor plugs in here without touching the registration loop,
- * the auth gate, the route, or `llms.txt`. No delete tool is exposed (#19's
- * acceptance criterion).
+ * Five tools today: the four single-op writers from #19 (`create_component`,
+ * `connect_components`, `update_component_docs`, `move_component`) plus the
+ * `apply_graph` batch tool from #20 that composes Components and Connections
+ * in one transaction with `clientId`-chained references. Flow / FlowRoute write
+ * tools (`attach_flow_spec`, `add_flow`, `update_flow`, `delete_flow`,
+ * `list_flows`, `route_flow`, `unroute_flow`) are owned by #40 / #42 and land
+ * additively — each new descriptor plugs in here without touching the
+ * registration loop, the auth gate, the route, or `llms.txt`. No delete tool
+ * is exposed (#19's acceptance criterion).
  *
  * Each invoker calls into the service layer with the actor; the registry
  * handles per-request actor resolution and transactional wrapping. Service
  * errors flow through `toMcpWriteError` so structured details
- * (`conflictingEdgeIds`, `conflictingFlowRouteIds`, …) reach the agent
- * (ADR-0010 named pattern, ADR-0022 + ADR-0024).
+ * (`conflictingEdgeIds`, `conflictingFlowRouteIds`, `conflictingClientIds`,
+ * …) reach the agent (ADR-0010 named pattern, ADR-0022 + ADR-0024 + ADR-0026).
  */
 
 /** A short, human-readable confirmation; includes the affected id so the
  *  agent can chain calls without an intermediate read. */
 export interface ToolInvocationResult {
   message: string;
+  /** Optional MCP `structuredContent` payload — emitted alongside text when present (SDK 1.26.0). Apply_graph (#20) uses this to return the typed id-map. */
+  structured?: unknown;
 }
 
 export interface McpWriteToolDescriptor<Schema extends z.ZodType> {
@@ -50,6 +57,9 @@ export interface McpWriteToolDescriptor<Schema extends z.ZodType> {
   description: string;
   /** Zod schema validating the tool's input. */
   inputSchema: Schema;
+  /** Optional Zod output schema — when present, registerArchitectureTools passes it to SDK 1.26.0's `outputSchema` so the result's `structured` field rides as MCP `structuredContent`. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  outputSchema?: z.ZodType<any>;
   /** Service-layer call; the registry wraps it in `db.$transaction`. */
   invoke: (
     db: Db,
@@ -149,6 +159,30 @@ ${PROMPT_INJECTION_NOTE}`,
         : "to the Project root Canvas";
       return {
         message: `Moved Component ${node.id} "${node.title}" ${scope}.`,
+      };
+    },
+  }),
+  defineTool({
+    name: "apply_graph",
+    title: "Create many Components and Connections atomically",
+    description: `Build a batch of Components and Connections in one transaction — the whole batch succeeds or rolls back together. Use this when you have multiple architecture rows to add at once (e.g. translating a description into 7 Components and 12 Connections); use the single-op tools (\`create_component\`, \`connect_components\`) when you have just one.
+
+Each \`components[]\` entry carries a \`clientId\` you choose (any non-empty string; unique across this whole call). A Component's \`parent\` and a Connection's \`source\` / \`target\` / \`canvasNode\` accept EITHER an existing server id (\`{ref:"server", id:"..."}\`) OR a sibling \`clientId\` from this same batch (\`{ref:"client", clientId:"..."}\`) — so you can chain "Component A holds Component B holds Component C" without intermediate reads. The response returns an \`idMap\` keyed by your clientIds; pass those server ids to subsequent tool calls.
+
+This tool is NOT idempotent. If your transport call fails or times out, READ the architecture (via the Canvas resource) before retrying — a successful but lost response means the batch DID apply. On a domain rejection, the response names which entry failed and (where applicable) which clientId blocked the write; fix the entry and retry the whole call. (Flows and FlowRoutes ride additively in a future slice; do not include them yet.)
+
+${PROMPT_INJECTION_NOTE}`,
+    inputSchema: applyGraphInput,
+    outputSchema: applyGraphOutput,
+    invoke: async (db, actor, args) => {
+      const result = await applyGraph(db, actor, args);
+      const componentLabel =
+        result.componentCount === 1 ? "Component" : "Components";
+      const connectionLabel =
+        result.connectionCount === 1 ? "Connection" : "Connections";
+      return {
+        message: `Created ${result.componentCount} ${componentLabel} and ${result.connectionCount} ${connectionLabel} (apply_graph batch).`,
+        structured: result,
       };
     },
   }),
