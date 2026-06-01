@@ -617,6 +617,41 @@ describe("getCanvas.edgeFlows aggregation (Slice 2)", () => {
     });
   });
 
+  it("derives arrowAtSource/arrowAtTarget from each routed Flow's interaction (ADR-0023)", async () => {
+    // Edge is A(source) -> B(target); every Flow below is owned by B.
+    const { actor, edge, flow, b, project } = await seedAToB();
+    // REQUEST (the seed flow): owner B is consulted -> arrow points AT the
+    // owner (= target end).
+    await routeFlow(testDb, actor, { flowId: flow.id, outerEdgeId: edge.id });
+    let entry = (await getCanvas(testDb, null, { slug: project.slug }))
+      .edgeFlows[0];
+    expect(entry).toMatchObject({ arrowAtSource: 0, arrowAtTarget: 1 });
+
+    // PUSH: owner B emits -> arrow points AWAY from the owner (= source end).
+    const push = await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "SSE_STREAM",
+      key: "sse:ticks",
+      title: "Ticks",
+      interaction: "PUSH",
+    });
+    await routeFlow(testDb, actor, { flowId: push.id, outerEdgeId: edge.id });
+    entry = (await getCanvas(testDb, null, { slug: project.slug })).edgeFlows[0];
+    expect(entry).toMatchObject({ arrowAtSource: 1, arrowAtTarget: 1 });
+
+    // DUPLEX: owner B both sends and receives -> arrows at BOTH ends.
+    const duplex = await addFlow(testDb, actor, {
+      ownerNodeId: b.id,
+      kind: "WEBSOCKET",
+      key: "ws:live",
+      title: "Live",
+      interaction: "DUPLEX",
+    });
+    await routeFlow(testDb, actor, { flowId: duplex.id, outerEdgeId: edge.id });
+    entry = (await getCanvas(testDb, null, { slug: project.slug })).edgeFlows[0];
+    expect(entry).toMatchObject({ arrowAtSource: 2, arrowAtTarget: 2 });
+  });
+
   it("counts orphan when a routed Flow gets soft-deleted by deleteFlow", async () => {
     const { actor, edge, flow, project } = await seedAToB();
     await routeFlow(testDb, actor, {
@@ -1227,12 +1262,9 @@ describe("getCanvas boundary derivation (#13 / #14)", () => {
     const proxy = inside.boundaryProxies.find((p) => p.nodeId === b.id);
     expect(proxy).toBeDefined();
     expect(proxy?.origin).toBe("direct");
-    // The outer Edge a palette drag would refine is the root A→B Connection.
-    // B (API) is its target, so the incident Edge surfaces as `ownerTargetEdgeId`;
-    // there is no B→A Connection, so `ownerSourceEdgeId` is null. (The
-    // orientation split collapses to one incident id in Slice 3 / ADR-0023.)
-    expect(proxy?.ownerTargetEdgeId).toBe(edge.id);
-    expect(proxy?.ownerSourceEdgeId).toBeNull();
+    // The single incident outer Edge a palette drag would refine is the root
+    // A↔B Connection (undirected; ADR-0023).
+    expect(proxy?.outerEdgeId).toBe(edge.id);
     expect(inside.flowPalettes[b.id]?.flows.some((f) => f.id === flow.id)).toBe(
       true,
     );
@@ -1256,10 +1288,9 @@ describe("getCanvas boundary derivation (#13 / #14)", () => {
     // The API is not connected to anything at this depth directly — it is
     // inherited from the Web Server ancestor (boundary transitivity, #13).
     expect(proxy?.origin).toBe("inherited");
-    // Inherited proxies are context-only — not routable at this scope, so both
-    // orientation ids are null (Slice 4).
-    expect(proxy?.ownerSourceEdgeId).toBeNull();
-    expect(proxy?.ownerTargetEdgeId).toBeNull();
+    // Inherited proxies are context-only — not routable at this scope, so the
+    // incident outer Edge id is null (ADR-0023).
+    expect(proxy?.outerEdgeId).toBeNull();
   });
 
   it("the root Canvas has no boundary proxies", async () => {

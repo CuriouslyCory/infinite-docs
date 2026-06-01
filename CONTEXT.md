@@ -207,21 +207,25 @@ derived without a per-level query walk. Because a Canvas is a *derived view*,
 it is the read half of the Component/Node split, so its result is named in
 **Node**/**Edge** terms in code and tests even though the feature is described
 to users as "the interior **Components**". The `edgeFlows` field is the
-per-Edge Flow aggregation that drives the routed-count pill on a Connection
-(see **FlowRoute**): for each interior Edge, an entry
-`{ edgeId, total, routed, unrouted, orphan, byKind }` where `total` is the
-active **Flows** owned by either endpoint (loose — no polarity filter; a later
-slice tightens), `routed` is the active **FlowRoutes** whose `outerEdgeId` is
-this Edge with a still-live Flow, `orphan` covers FlowRoutes whose Flow was
-soft-deleted by a re-parse (the wiring hangs visibly rather than vanishing),
-and `byKind` is the per-`FlowKind` count of the routed set. The `boundaryProxies`
-field is the transitively-derived **boundary proxy** list for the scope (each
-`{ nodeId, title, kind, origin, ownerSourceEdgeId, ownerTargetEdgeId }`, where the
-two edge ids are the outer Connections split by the proxy owner's role — an
-OUTBOUND **Flow** rides `ownerSourceEdgeId`, an INBOUND Flow `ownerTargetEdgeId`
-— so the canvas can detect a **polarity** mismatch *before* dispatching
-`routeFlow` and offer the **reverse Connection** instead (Slice 4 / ADR-0013);
-see **Boundary proxy**), and
+per-Edge Flow aggregation that drives the routed-count pill AND the derived
+arrowheads on a Connection (see **FlowRoute**, **Interaction**): for each
+interior Edge, an entry
+`{ edgeId, total, routed, unrouted, orphan, byKind, arrowAtSource, arrowAtTarget }`
+where `total` is the active **Flows** owned by either endpoint (loose — any
+owner-endpoint Flow can ride the Connection; ADR-0023), `routed` is the active
+**FlowRoutes** whose `outerEdgeId` is this Edge with a still-live Flow, `orphan`
+covers FlowRoutes whose Flow was soft-deleted by a re-parse (the wiring hangs
+visibly rather than vanishing), `byKind` is the per-`FlowKind` count of the
+routed set, and `arrowAtSource` / `arrowAtTarget` count how many live routed
+Flows point their arrow at the Edge's stored `source` / `target` endpoint
+(derived per Flow from `(owner, interaction)` — the canonical rule lives in
+`~/lib/flow-direction`; the client renders a `markerStart`/`markerEnd` from
+them, both → a two-way Connection, neither → an undirected line; ADR-0023). The
+`boundaryProxies` field is the transitively-derived **boundary proxy** list for
+the scope (each `{ nodeId, title, kind, origin, outerEdgeId }`, where
+`outerEdgeId` is the single incident outer Connection a palette drag refines —
+a Connection is undirected, so any Flow rides it regardless of interaction
+(ADR-0023); see **Boundary proxy**), and
 `flowPalettes` maps each in-scope proxy's `nodeId` to the first page of its
 owner's **Flows** (`{ flows, hasMore }`) so the boundary-proxy **Flow palette**
 renders without a second round trip — the overflow pages in through
@@ -619,10 +623,10 @@ convention (the
 for authz and cascade-index friendliness, soft-delete columns (`deletedAt`, `deletionId`),
 and is owner-only writable via `routeFlow` / `unrouteFlow`. A FlowRoute's `flowId` must
 reference an active **Flow** whose `ownerNodeId` is one endpoint of the outer **Edge** —
-the *touches-endpoint* invariant. Its polarity-vs-arrow refinement (INBOUND ⇒ owner = target,
-OUTBOUND ⇒ owner = source) is **service-enforced as of Slice 4** (ADR-0013); a polarity mismatch
-is rejected with a discriminable error (`details.reason = "POLARITY_MISMATCH"`) the canvas maps
-to the **reverse-Connection** offer. De-dupe is `(outerEdgeId, flowId)` among active rows
+the *touches-endpoint* invariant, which is the WHOLE of `routeFlow`'s direction check: a
+Connection is undirected, so any owner-endpoint Flow routes onto it and its **Interaction**
+verb decides which way the derived arrow points (ADR-0023, retiring ADR-0013's
+polarity-vs-arrow rejection and the reverse-Connection offer). De-dupe is `(outerEdgeId, flowId)` among active rows
 — the **ADR-0010 named pattern**, third adopter (`idx_flow_route_dedup`, partial unique
 backstop; service-primary `findFirst` is the readable fast path; both translate to
 `ConflictError` with `details.conflictingFlowRouteIds`). The inner-Edge and FlowRoute writes
@@ -632,10 +636,12 @@ aborts the route's transaction — convergence on a shared inner Edge, not a ret
 surfaced as the `edgeFlows` aggregation in **getCanvas**, the routed-count pill on the
 Connection, and the "+ flow" popover on a selected Connection — and, since Slice 3 (#36),
 cross-scope refinement (the `innerEdgeId` writer) and palette rendering on **boundary
-proxies**, with the drag-from-palette gesture, and — since Slice 4 (#37) — service-enforced
-polarity validation with the canvas reverse-Connection reconciliation (ADR-0013). See ADR-0011
-(Flow foundation), ADR-0012 (cross-scope writer), ADR-0013 (polarity invariant + reverse-Connection
-offer), and the master plan at `docs/plans/flow-routed-connections.md`.)*
+proxies**, with the drag-from-palette gesture. As of ADR-0023 a Connection is undirected:
+`routeFlow` enforces only touches-endpoint, the per-Edge `arrowAtSource`/`arrowAtTarget`
+aggregation in **getCanvas** drives the derived arrowheads, and the polarity gate +
+reverse-Connection reconciliation (the old Slice 4 / ADR-0013) are retired. See ADR-0011
+(Flow foundation), ADR-0012 (cross-scope writer), ADR-0023 (undirected Connection, derived
+direction), and the master plan at `docs/plans/flow-routed-connections.md`.)*
 
 ### Flow kind (`FlowKind`)
 A **Flow**'s category, stored on it as `kind: FlowKind`. One of seven values: `GENERIC` (the

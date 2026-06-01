@@ -198,11 +198,8 @@ export type CanvasInteriorNode = Prisma.NodeGetPayload<{
 // absent key.
 //
 // - `total` = active Flows whose owner is either endpoint of the Edge (LOOSE:
-//   no polarity filter). Slice 4 / ADR-0013 enforces polarity at WRITE time
-//   (`routeFlow`) and polarity-filters the interactive "+ flow" picker, but this
-//   read-side denominator stays loose; tightening it to the polarity-matched set
-//   travels with the routed/unrouted inspector display (Slice 5 / #38) so the
-//   count and the inspector list agree.
+//   any owner-endpoint Flow can ride a Connection, so this is the full set;
+//   ADR-0023).
 // - `routed` = active FlowRoutes with this Edge as `outerEdgeId` and a live
 //   Flow.
 // - `unrouted` = `total - routed`.
@@ -210,6 +207,14 @@ export type CanvasInteriorNode = Prisma.NodeGetPayload<{
 //   is soft-deleted (re-parse fallout — the Flow's spec dropped its key,
 //   the route hangs visibly rather than vanishing silently; ADR-0011).
 // - `byKind` = per-`FlowKind` count of the `routed` set only.
+// - `arrowAtSource` / `arrowAtTarget` = how many live routed Flows point their
+//   arrow at the Edge's stored `source` / `target` endpoint, derived per Flow
+//   from `(owner, interaction)` — the canonical rule is `~/lib/flow-direction`
+//   `flowArrowEndpoints`, mirrored in the aggregation SQL. The client renders a
+//   `markerStart` when `arrowAtSource > 0` and a `markerEnd` when
+//   `arrowAtTarget > 0`; both → a two-way (WebSocket) Connection, neither → an
+//   undirected line. Counts (not booleans) so the optimistic route/unroute
+//   delta is inverse-safe under concurrent edits (ADR-0023).
 export interface EdgeFlowsEntry {
   edgeId: string;
   total: number;
@@ -217,6 +222,8 @@ export interface EdgeFlowsEntry {
   unrouted: number;
   orphan: number;
   byKind: Partial<Record<PrismaFlowKind, number>>;
+  arrowAtSource: number;
+  arrowAtTarget: number;
 }
 
 // A boundary proxy on the requested Canvas scope (M3 / #13): a read-only
@@ -233,21 +240,16 @@ export interface BoundaryProxyEntry {
   title: string;
   kind: PrismaNodeKind;
   origin: "direct" | "inherited";
-  // The outer Connection(s) between the current scope's Component and this proxy
-  // on the scope's parent Canvas — the Edge a palette drag refines (Slice 3 /
-  // ADR-0012), split by the proxy owner's role so the canvas can pick the one
-  // matching a Flow's polarity BEFORE dispatching (Slice 4 / ADR-0013). An
-  // OUTBOUND Flow (owner emits) rides the Edge where the owner is the source;
-  // an INBOUND Flow (owner consumes) rides the Edge where the owner is the
-  // target. Each is non-null only for `origin: "direct"` proxies (refinement
-  // binds an Edge incident to the current scope) AND only when a Connection of
-  // that orientation exists — a null `ownerSourceEdgeId` on an OUTBOUND drag is
-  // exactly the polarity mismatch that triggers the reverse-Connection offer.
-  // Both null = inherited or unconnected; route at the scope where the direct
-  // Connection lives. (When two Connections share an orientation, the
-  // lexically-first id is chosen.)
-  ownerSourceEdgeId: string | null;
-  ownerTargetEdgeId: string | null;
+  // The incident outer Connection between the current scope's Component and this
+  // proxy on the scope's parent Canvas — the single Edge a palette drag refines
+  // (Slice 3 / ADR-0012). A Connection is undirected, so there is exactly one per
+  // pair regardless of which way it was drawn, and any Flow rides it regardless
+  // of its interaction (ADR-0023 retired the orientation split and the
+  // reverse-Connection offer). Non-null only for `origin: "direct"` proxies (a
+  // refinement binds an Edge incident to the current scope); null = inherited or
+  // unconnected. (When several Connections somehow share the pair — impossible
+  // under the unordered de-dupe — the lexically-first id is chosen.)
+  outerEdgeId: string | null;
 }
 
 // One Flow as the boundary-proxy palette renders it (Slice 3 / ADR-0012). A
@@ -296,8 +298,7 @@ interface BoundaryProxyRow {
   title: string;
   kind: PrismaNodeKind;
   is_direct: boolean;
-  owner_source_edge_id: string | null;
-  owner_target_edge_id: string | null;
+  outer_edge_id: string | null;
   palette: FlowPaletteItem[];
 }
 
@@ -307,8 +308,8 @@ interface BoundaryProxyRow {
  * from `canvasNodeId` to the root; for each ancestor `a` it pulls the Edges on
  * `a`'s parent Canvas incident to `a` and takes the OTHER endpoint as a boundary
  * proxy. `is_direct` (depth 0) marks the scope's own externals — routable here,
- * carrying the orientation-split outer Edge ids — vs inherited ones (#14). Each
- * proxy's palette is a
+ * carrying the single incident outer Edge id (ADR-0023) — vs inherited ones
+ * (#14). Each proxy's palette is a
  * correlated `json_agg` of its first FLOW_PALETTE_PAGE_SIZE + 1 active Flows (+1
  * reveals `hasMore`). The root scope has no ancestors, so it has no proxies.
  *
@@ -347,8 +348,7 @@ async function deriveBoundaryProxies(
       proxy.title AS title,
       proxy.kind AS kind,
       BOOL_OR(a.depth = 0) AS is_direct,
-      MIN(CASE WHEN a.depth = 0 AND e."sourceId" = proxy.id THEN e.id END) AS owner_source_edge_id,
-      MIN(CASE WHEN a.depth = 0 AND e."targetId" = proxy.id THEN e.id END) AS owner_target_edge_id,
+      MIN(CASE WHEN a.depth = 0 THEN e.id END) AS outer_edge_id,
       (
         SELECT COALESCE(
           json_agg(
@@ -494,13 +494,28 @@ export async function getCanvas(
           flow_kind: PrismaFlowKind;
           is_orphan: boolean;
           n: bigint;
+          arrow_at_source: bigint;
+          arrow_at_target: bigint;
         }[]
       >`
         SELECT
           fr."outerEdgeId" AS edge_id,
           f.kind AS flow_kind,
           (f."deletedAt" IS NOT NULL) AS is_orphan,
-          COUNT(*)::bigint AS n
+          COUNT(*)::bigint AS n,
+          -- Arrow direction per live routed Flow, derived from (owner,
+          -- interaction). Mirrors flowArrowEndpoints in src/lib/flow-direction
+          -- (the canonical rule): REQUEST/SUBSCRIBE point at the owner,
+          -- PUSH points away, DUPLEX both. Summed here, folded across kinds
+          -- per edge in JS; only the non-orphan rows contribute (ADR-0023).
+          SUM(CASE WHEN
+            (f."ownerNodeId" = e."sourceId" AND f.interaction IN ('REQUEST', 'SUBSCRIBE', 'DUPLEX'))
+            OR (f."ownerNodeId" = e."targetId" AND f.interaction IN ('PUSH', 'DUPLEX'))
+          THEN 1 ELSE 0 END)::bigint AS arrow_at_source,
+          SUM(CASE WHEN
+            (f."ownerNodeId" = e."sourceId" AND f.interaction IN ('PUSH', 'DUPLEX'))
+            OR (f."ownerNodeId" = e."targetId" AND f.interaction IN ('REQUEST', 'SUBSCRIBE', 'DUPLEX'))
+          THEN 1 ELSE 0 END)::bigint AS arrow_at_target
         FROM "FlowRoute" fr
         JOIN "Edge" e ON e.id = fr."outerEdgeId"
         JOIN "Flow" f ON f.id = fr."flowId"
@@ -569,6 +584,8 @@ export async function getCanvas(
       unrouted: 0,
       orphan: 0,
       byKind: {},
+      arrowAtSource: 0,
+      arrowAtTarget: 0,
     });
   }
   for (const row of routeRows) {
@@ -580,6 +597,10 @@ export async function getCanvas(
     } else {
       entry.routed += count;
       entry.byKind[row.flow_kind] = (entry.byKind[row.flow_kind] ?? 0) + count;
+      // Arrowheads count only live routed Flows; an orphan's Flow is gone, so
+      // its (dead) interaction must not steer the rendered direction (ADR-0023).
+      entry.arrowAtSource += Number(row.arrow_at_source);
+      entry.arrowAtTarget += Number(row.arrow_at_target);
     }
   }
   for (const row of totalRows) {
@@ -610,6 +631,8 @@ export async function getCanvas(
       unrouted: 0,
       orphan: 0,
       byKind: {},
+      arrowAtSource: 0,
+      arrowAtTarget: 0,
     },
   );
 
@@ -626,8 +649,7 @@ export async function getCanvas(
       title: row.title,
       kind: row.kind,
       origin: row.is_direct ? "direct" : "inherited",
-      ownerSourceEdgeId: row.owner_source_edge_id,
-      ownerTargetEdgeId: row.owner_target_edge_id,
+      outerEdgeId: row.outer_edge_id,
     });
     const items = row.palette ?? [];
     const hasMore = items.length > FLOW_PALETTE_PAGE_SIZE;

@@ -132,8 +132,7 @@ function toBoundaryRFNode(
       title: proxy.title,
       kind: proxy.kind,
       origin: proxy.origin,
-      ownerSourceEdgeId: proxy.ownerSourceEdgeId,
-      ownerTargetEdgeId: proxy.ownerTargetEdgeId,
+      outerEdgeId: proxy.outerEdgeId,
       flows: palette?.flows ?? [],
       hasMore: palette?.hasMore ?? false,
     },
@@ -891,11 +890,9 @@ function CanvasInner({
       }
       const data = utils.architecture.getCanvas.getData(canvasInput);
       const proxy = data?.boundaryProxies.find((p) => p.nodeId === proxyNodeId);
-      // Whichever incident outer Edge exists carries it (collapses to a single
-      // id once Slice 3 retires the orientation split).
-      const outerEdgeId = proxy
-        ? (proxy.ownerTargetEdgeId ?? proxy.ownerSourceEdgeId)
-        : null;
+      // The single incident outer Edge carries it — a Connection is undirected
+      // (ADR-0023).
+      const outerEdgeId = proxy?.outerEdgeId ?? null;
       if (!outerEdgeId) {
         toast.error("That flow can’t be routed here.");
         return;

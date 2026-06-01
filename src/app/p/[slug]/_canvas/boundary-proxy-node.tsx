@@ -37,15 +37,10 @@ export type BoundaryProxyNodeData = {
   // Canvas — routable here. "inherited": projected down from an ancestor —
   // context-only, collapsed by default to keep deep Canvases uncluttered (#14).
   origin: "direct" | "inherited";
-  // The outer Connection(s) a palette drag refines, split by the proxy owner's
-  // role so the island picks the one matching a Flow's polarity (Slice 4 /
-  // ADR-0013): an OUTBOUND Flow rides `ownerSourceEdgeId` (owner is source), an
-  // INBOUND Flow rides `ownerTargetEdgeId` (owner is target). Each null for
-  // inherited proxies or when no Connection of that orientation exists — a null
-  // on the polarity-matching side is the mismatch that triggers the
-  // reverse-Connection offer.
-  ownerSourceEdgeId: string | null;
-  ownerTargetEdgeId: string | null;
+  // The single incident outer Connection a palette drag refines (ADR-0023). A
+  // Connection is undirected, so any Flow rides it regardless of interaction;
+  // null for inherited or unconnected proxies.
+  outerEdgeId: string | null;
   flows: CanvasFlowPaletteItem[];
   hasMore: boolean;
 };
@@ -62,12 +57,11 @@ export type BoundaryProxyNode = Node<BoundaryProxyNodeData, "boundary-proxy">;
  * For a DIRECT proxy an owner can refine its Flows: each palette item carries a
  * React Flow Handle whose id encodes the Flow (`flowHandleId`), so dragging
  * between a child Component's Port and a palette item synthesises a refinement
- * route through the island's `onConnect` (Slice 3 / ADR-0012). The Handle's
- * polarity orients the drag — an INBOUND Flow is consumed by the owner (drag a
- * child's output into it: the handle is a `target`), an OUTBOUND Flow is emitted
- * by the owner (drag it onto a child's input: the handle is a `source`). The
- * direction-blind service writes the endpoints as drawn; polarity *validation*
- * is Slice 4.
+ * route through the island's `onConnect` (Slice 3 / ADR-0012). The route is
+ * direction-agnostic — any Flow rides the single incident Connection regardless
+ * of its interaction, and the rendered arrowheads are derived from the routed
+ * Flows (ADR-0023). The handle's `type`/`position` are cosmetic-only (they stop
+ * mattering once the canvas runs in Loose mode).
  *
  * Client-only: domain types come from `~/lib` (never `~/server`), so the server
  * graph stays out of the browser bundle (ADR-0004). `title`/`key` are untrusted
@@ -76,13 +70,9 @@ export type BoundaryProxyNode = Node<BoundaryProxyNodeData, "boundary-proxy">;
 export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
   const Icon = KIND_ICON[data.kind];
   const canEdit = useContext(CanEditContext);
-  // A direct proxy with any incident outer Connection is routable: when the
-  // polarity-matching orientation is missing, the drag still fires — the island
-  // offers the reverse Connection rather than blocking the gesture (Slice 4 /
-  // ADR-0013).
-  const routable =
-    data.origin === "direct" &&
-    (data.ownerSourceEdgeId !== null || data.ownerTargetEdgeId !== null);
+  // A direct proxy with an incident outer Connection is routable. The
+  // Connection is undirected, so any Flow can ride it (ADR-0023).
+  const routable = data.origin === "direct" && data.outerEdgeId !== null;
   // Inherited proxies start collapsed (context, not a work surface); direct
   // proxies with a palette start open so the refinement gesture is discoverable.
   // The default is DERIVED from `data` so a proxy that first renders with no
