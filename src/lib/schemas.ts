@@ -614,3 +614,116 @@ export const mcpReadInput = z.object({
   mode: exportMarkdownMode.default("full"),
 });
 export type McpReadInput = z.input<typeof mcpReadInput>;
+
+/**
+ * A reference to a Node inside an `apply_graph` batch — either an existing
+ * server-minted id (already in the DB) or a `clientId` the agent picked for a
+ * sibling Component in this same batch. Tagged-union discriminator, NOT a
+ * prefix sigil ("@n1" loses static narrowing and bakes the encoding into the
+ * wire format) and NOT heuristic ("treat anything in the clientIds set as a
+ * client ref" silently rebinds when a real server id happens to share that
+ * string). See ADR-0026 for the shape decision, CONTEXT.md "Client id" for the
+ * glossary entry.
+ */
+export const applyGraphNodeRef = z.discriminatedUnion("ref", [
+  z.object({ ref: z.literal("server"), id: z.string().min(1) }),
+  z.object({ ref: z.literal("client"), clientId: z.string().min(1).max(64) }),
+]);
+export type ApplyGraphNodeRef = z.infer<typeof applyGraphNodeRef>;
+
+/**
+ * One Component arm of an `apply_graph` batch. Mirrors {@link createNodeInput}
+ * minus `projectId` (lifted to the top of the batch) and with `parentId`
+ * replaced by a {@link applyGraphNodeRef} — so a Component can name its parent
+ * by either a server id or a sibling `clientId` from this same call. The
+ * `clientId` is the agent-chosen handle other batch entries reference; it must
+ * be unique across the whole batch (enforced in {@link applyGraphInput}'s
+ * `superRefine`). `title` is UNTRUSTED user content, stored verbatim
+ * (prompt-injection standing note, CONTEXT.md). See ADR-0026.
+ */
+export const applyGraphComponentInput = z.object({
+  clientId: z.string().min(1).max(64),
+  parent: applyGraphNodeRef.nullable().default(null),
+  kind: nodeKind.default("GENERIC"),
+  title: z.string().min(1).max(200).default("Untitled"),
+  posX: z.number().finite().default(0),
+  posY: z.number().finite().default(0),
+});
+// `z.input` (not `z.infer`) so callers may omit the defaulted fields; the
+// service re-parses with the schema to materialize the defaults.
+export type ApplyGraphComponentInput = z.input<typeof applyGraphComponentInput>;
+
+/**
+ * One Connection arm of an `apply_graph` batch. Mirrors
+ * {@link connectNodesInput} minus `projectId` (lifted to the top), with
+ * `canvasNodeId` / `sourceId` / `targetId` all replaced by
+ * {@link applyGraphNodeRef} so endpoints and the Canvas scope can each be
+ * either a server id or a sibling `clientId`. No `clientId` on Connections in
+ * this slice — nothing inside #20's surface references a Connection by client
+ * id (memory: prefer narrow required inputs). Slice 5 / #38 adds an optional
+ * `clientId?` here additively when FlowRoutes need to reference Connections.
+ * `label` is UNTRUSTED user content, stored verbatim. See ADR-0026.
+ */
+export const applyGraphConnectionInput = z.object({
+  canvasNode: applyGraphNodeRef.nullable().default(null),
+  source: applyGraphNodeRef,
+  target: applyGraphNodeRef,
+  label: z.string().max(200).optional(),
+});
+// `z.input` (not `z.infer`) so callers may omit the defaulted fields.
+export type ApplyGraphConnectionInput = z.input<
+  typeof applyGraphConnectionInput
+>;
+
+/**
+ * Top-level input for the `apply_graph` MCP batch tool. Discriminated
+ * top-level arrays (`components: []`, `connections: []`), not a flat
+ * `entities: []` — Slice 5 / #38 appends `flows: []` and `routes: []` here
+ * additively without renumbering, and discriminated arrays keep the wire
+ * shape statically narrowable per arm. Per-arm length caps bound the
+ * transaction-holding time the batch can monopolize (philosophy #1 — keep the
+ * app feeling fast even when one agent ships a huge batch).
+ *
+ * The `superRefine` enforces batch-wide `clientId` uniqueness across the
+ * `components` array so the flat `idMap` shape Slice 5 will join on its own
+ * arms cannot collide today. Connections do not carry a `clientId` in this
+ * slice, so the check is component-only here; #38's additive arms will extend
+ * the same `seen` map. See ADR-0026 for the shape decisions; CONTEXT.md
+ * "Client id" for the glossary entry.
+ */
+export const applyGraphInput = z
+  .object({
+    projectId: z.string().min(1),
+    components: z.array(applyGraphComponentInput).max(500).default([]),
+    connections: z.array(applyGraphConnectionInput).max(1000).default([]),
+  })
+  .superRefine((value, ctx) => {
+    const seen = new Map<string, number>();
+    for (const [i, c] of value.components.entries()) {
+      if (seen.has(c.clientId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["components", i, "clientId"],
+          message: `Duplicate clientId "${c.clientId}" (also at components[${seen.get(c.clientId)}]).`,
+        });
+      }
+      seen.set(c.clientId, i);
+    }
+  });
+// `z.input` (not `z.infer`) so callers may omit defaulted fields; the service
+// re-parses with the schema to materialize them.
+export type ApplyGraphInput = z.input<typeof applyGraphInput>;
+
+/**
+ * Typed output of the `apply_graph` MCP batch tool. Drives MCP's `outputSchema`
+ * (SDK 1.26.0) so the agent receives `structuredContent` on the wire — not a
+ * JSON-encoded message blob it has to re-parse. `idMap` is keyed by the
+ * `clientId` strings the agent picked for each Component and maps to the
+ * server-minted Node ids it should pass to subsequent tool calls. See ADR-0026.
+ */
+export const applyGraphOutput = z.object({
+  idMap: z.record(z.string(), z.string()),
+  componentCount: z.number().int().nonnegative(),
+  connectionCount: z.number().int().nonnegative(),
+});
+export type ApplyGraphOutput = z.infer<typeof applyGraphOutput>;

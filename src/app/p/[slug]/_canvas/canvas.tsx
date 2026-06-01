@@ -1540,16 +1540,16 @@ function CanvasInner({
                         breadcrumb bar. */}
                     <CopyMarkdownToolbar slug={slug} />
                   </Panel>
-                  {selectedNodeId !== null && (
-                    <Panel
-                      position="top-right"
-                      className="top-0! right-0! bottom-0! m-0! flex"
-                    >
-                      {/* Owner gets the editable panel; a capability viewer
-                          gets the same surface read-only (#16). The discriminated
-                          `readOnly` prop keeps the write callbacks off the viewer
-                          path at compile time. */}
-                      {canEdit ? (
+                  {selectedNodeId !== null &&
+                    (canEdit ? (
+                      <Panel
+                        key={selectedNodeId}
+                        position="top-right"
+                        className="top-0! right-0! bottom-0! m-0! flex"
+                      >
+                        {/* Owner mode: full edit affordances wired to the
+                            canvas's mutations. Discriminated `readOnly: false`
+                            keeps write callbacks visible at compile time (#16). */}
                         <ComponentDetailPanel
                           readOnly={false}
                           slug={slug}
@@ -1564,7 +1564,16 @@ function CanvasInner({
                           onFlowCountChange={commitFlowCount}
                           onCommitDocumentation={commitDocumentation}
                         />
-                      ) : (
+                      </Panel>
+                    ) : (
+                      <Panel
+                        key={selectedNodeId}
+                        position="top-right"
+                        className="top-0! right-0! bottom-0! m-0! flex"
+                      >
+                        {/* Viewer mode: read-only docs + Flow list, zero write
+                            affordances. Discriminated `readOnly: true` omits
+                            mutations at compile time (#16). */}
                         <ComponentDetailPanel
                           readOnly={true}
                           slug={slug}
@@ -1576,9 +1585,8 @@ function CanvasInner({
                           }
                           onClose={closeDetailPanel}
                         />
-                      )}
-                    </Panel>
-                  )}
+                      </Panel>
+                    ))}
                   {nodes.length === 0 && (
                     <Panel position="top-center">
                       <p className="mt-2 text-sm text-white/50">

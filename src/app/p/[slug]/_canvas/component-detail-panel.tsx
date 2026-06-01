@@ -149,7 +149,7 @@ export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
 
       {!props.readOnly && (
         <AttachSpecSection
-          key={ownerNodeId}
+          key={`attach-spec-${ownerNodeId}`}
           ownerNodeId={ownerNodeId}
           currentKind={currentKind}
           slug={slug}
