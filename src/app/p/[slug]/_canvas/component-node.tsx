@@ -140,8 +140,8 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
       <Handle
         type="target"
         position={Position.Left}
-        aria-label="Connection point"
-        title="Drag to connect"
+        aria-label="Connection point (left)"
+        title="Drag to connect (left)"
         className="h-2! w-2! border-white/40! bg-white/60!"
       />
       <Icon
@@ -259,8 +259,8 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
       <Handle
         type="source"
         position={Position.Right}
-        aria-label="Connection point"
-        title="Drag to connect"
+        aria-label="Connection point (right)"
+        title="Drag to connect (right)"
         className="h-2! w-2! border-white/40! bg-white/60!"
       />
     </div>

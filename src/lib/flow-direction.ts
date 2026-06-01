@@ -1,4 +1,4 @@
-import { type FlowInteraction } from "./schemas";
+import { type FlowInteraction } from "~/lib/schemas";
 
 /**
  * The single source of truth for deriving a Connection's arrow direction from

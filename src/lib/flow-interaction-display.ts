@@ -1,4 +1,4 @@
-import { type FlowInteraction } from "./schemas";
+import { type FlowInteraction } from "~/lib/schemas";
 
 /**
  * Presentation for a Flow's {@link FlowInteraction} verb — the small pill shown
