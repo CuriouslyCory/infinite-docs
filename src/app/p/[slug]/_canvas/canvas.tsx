@@ -790,8 +790,13 @@ function CanvasInner({
                   dropped: [],
                 },
                 {
-                  onSuccess: () => {
-                    void utils.architecture.getCanvas.invalidate();
+                  onSuccess: async () => {
+                    await utils.architecture.getCanvas.invalidate();
+                    const canvas = utils.architecture.getCanvas.getData(canvasInput);
+                    if (canvas) {
+                      setNodes(canvas.interiorNodes.map(toRFNode));
+                      setEdges(canvas.interiorEdges.map(toRFEdge));
+                    }
                     toast.success(
                       `Attached spec — created ${result.new.length} component${
                         result.new.length === 1 ? "" : "s"
@@ -838,8 +843,13 @@ function CanvasInner({
           dropped: decisions.dropped,
         },
         {
-          onSuccess: (result) => {
-            void utils.architecture.getCanvas.invalidate();
+          onSuccess: async (result) => {
+            await utils.architecture.getCanvas.invalidate();
+            const canvas = utils.architecture.getCanvas.getData(canvasInput);
+            if (canvas) {
+              setNodes(canvas.interiorNodes.map(toRFNode));
+              setEdges(canvas.interiorEdges.map(toRFEdge));
+            }
             closeSpecModal();
             toast.success(
               `Applied spec — ${result.created} created, ${result.overwritten} overwritten, ${result.detached} detached, ${result.deleted} deleted.`,

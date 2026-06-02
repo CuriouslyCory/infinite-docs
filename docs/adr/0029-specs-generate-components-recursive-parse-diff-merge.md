@@ -35,7 +35,7 @@ Component across this slice's re-attach).
 
 ## Context
 
-#62 retired the Flow capability model entirely: `Flow`/`FlowSpec`/`FlowRoute`
+Issue `#62` retired the Flow capability model entirely: `Flow`/`FlowSpec`/`FlowRoute`
 and their indexes are gone, the `Spec` model is renamed and reshaped to point at
 derived child Nodes via `Node.sourceSpecId` + `Node.specKey`, and the cascade
 arms exist — but no code yet *creates* a Spec or *generates* its children.

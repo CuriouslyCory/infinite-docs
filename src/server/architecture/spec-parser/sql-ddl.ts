@@ -52,13 +52,23 @@ function parse(source: string): ParseResult {
     if (statement.type !== "create" || statement.keyword !== "table") continue;
 
     const tableName = readTableName(statement.table);
-    if (tableName === null || seenTables.has(tableName)) continue;
+    if (tableName === null) continue;
+    if (seenTables.has(tableName)) {
+      return {
+        ok: false,
+        parseError: `Duplicate table name: \`${tableName}\`.`,
+      };
+    }
     seenTables.add(tableName);
 
     const defs = Array.isArray(statement.create_definitions)
       ? statement.create_definitions
       : [];
-    tables.push(buildTable(tableName, defs));
+    const tableResult = buildTable(tableName, defs);
+    if (!tableResult.ok) {
+      return tableResult;
+    }
+    tables.push(tableResult.tree);
   }
 
   if (tables.length === 0) {
@@ -70,7 +80,10 @@ function parse(source: string): ParseResult {
   return { ok: true, tree: tables };
 }
 
-function buildTable(tableName: string, defs: unknown[]): ParsedComponent {
+function buildTable(
+  tableName: string,
+  defs: unknown[],
+): ParseResult & { tree?: ParsedComponent } {
   const pkColumns = new Set<string>();
   for (const def of defs) {
     if (!isRecord(def)) continue;
@@ -87,7 +100,13 @@ function buildTable(tableName: string, defs: unknown[]): ParsedComponent {
   for (const def of defs) {
     if (!isRecord(def) || def.resource !== "column") continue;
     const column = buildColumn(tableName, def, pkColumns);
-    if (column === null || seen.has(column.specKey)) continue;
+    if (column === null) continue;
+    if (seen.has(column.specKey)) {
+      return {
+        ok: false,
+        parseError: `Duplicate column in table \`${tableName}\`: \`${column.title}\`.`,
+      };
+    }
     seen.add(column.specKey);
     children.push(column);
   }
@@ -98,7 +117,7 @@ function buildTable(tableName: string, defs: unknown[]): ParsedComponent {
     title: tableName,
   };
   if (children.length > 0) table.children = children;
-  return table;
+  return { ok: true, tree: table };
 }
 
 function buildColumn(

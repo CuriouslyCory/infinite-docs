@@ -625,7 +625,13 @@ export const parsedComponent: z.ZodType<ParsedComponent> = z.lazy(() =>
     specKey: z.string().min(1).max(512),
     kind: nodeKind,
     title: z.string().min(1).max(200),
-    documentation: z.string().optional(),
+    documentation: z
+      .string()
+      .refine(
+        (s) => new TextEncoder().encode(s).length <= MAX_NODE_DOCUMENTATION_BYTES,
+        { message: "Documentation exceeds the 100 KB cap." },
+      )
+      .optional(),
     metadata: componentMetadata.optional(),
     children: z.array(parsedComponent).optional(),
   }),
