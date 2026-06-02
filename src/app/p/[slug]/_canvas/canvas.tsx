@@ -1174,13 +1174,22 @@ function CanvasInner({
       }));
 
       void editEdge({ id, label }).catch(() => {
-        if (prev) {
-          setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(prev) : e)));
-          patchCanvas((c) => ({
-            interiorEdges: c.interiorEdges.map((e) => (e.id === id ? prev : e)),
-          }));
-        }
         toast.error("Couldn’t save the connection. Please try again.");
+        const current = utils.architecture.getCanvas
+          .getData(canvasInput)
+          ?.interiorEdges.find((e) => e.id === id);
+        // Roll back ONLY the label, and only if the cache still shows what this
+        // edit wrote — restore against the CURRENT row (not the captured `prev`)
+        // so a concurrent interaction change that succeeded in the interim is
+        // preserved rather than clobbered by a stale full-object restore.
+        if (current?.label !== label) return;
+        const reverted: CanvasEdge = { ...current, label: prev.label };
+        setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(reverted) : e)));
+        patchCanvas((c) => ({
+          interiorEdges: c.interiorEdges.map((e) =>
+            e.id === id ? reverted : e,
+          ),
+        }));
       });
     },
     [utils, canvasInput, setEdges, patchCanvas, editEdge],
@@ -1209,18 +1218,25 @@ function CanvasInner({
       }));
 
       void setEdgeInteraction({ id, interaction }).catch((error: unknown) => {
+        toast.error(messageForInteractionFailure(error));
         const current = utils.architecture.getCanvas
           .getData(canvasInput)
           ?.interiorEdges.find((e) => e.id === id);
-        // Only restore if the cache still shows what THIS change optimistically
-        // wrote — a newer change's patch must survive.
-        if (current?.interaction === interaction) {
-          setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(prev) : e)));
-          patchCanvas((c) => ({
-            interiorEdges: c.interiorEdges.map((e) => (e.id === id ? prev : e)),
-          }));
-        }
-        toast.error(messageForInteractionFailure(error));
+        // Roll back ONLY the interaction, and only if the cache still shows what
+        // THIS change wrote — restore against the CURRENT row so a concurrent
+        // label edit that succeeded in the interim survives (the field-scoped
+        // analogue of `commitEdgeEdit`'s rollback).
+        if (current?.interaction !== interaction) return;
+        const reverted: CanvasEdge = {
+          ...current,
+          interaction: prev.interaction,
+        };
+        setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(reverted) : e)));
+        patchCanvas((c) => ({
+          interiorEdges: c.interiorEdges.map((e) =>
+            e.id === id ? reverted : e,
+          ),
+        }));
       });
     },
     [utils, canvasInput, setEdges, patchCanvas, setEdgeInteraction],
@@ -1405,7 +1421,7 @@ function CanvasInner({
                         />
                       </Panel>
                     ))}
-                  {nodes.length === 0 && (
+                  {!nodes.some((n) => n.type === "component") && (
                     <Panel position="top-center">
                       <p className="mt-2 text-sm text-white/50">
                         Empty canvas. Add a Component to start modeling.
