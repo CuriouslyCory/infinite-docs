@@ -37,8 +37,14 @@ async function seedTwoRootNodes() {
   const user = await makeUser();
   const actor: Actor = { userId: user.id, via: "session" };
   const project = await makeProject(user.id);
-  const a = await createNode(testDb, actor, { projectId: project.id, title: "A" });
-  const b = await createNode(testDb, actor, { projectId: project.id, title: "B" });
+  const a = await createNode(testDb, actor, {
+    projectId: project.id,
+    title: "A",
+  });
+  const b = await createNode(testDb, actor, {
+    projectId: project.id,
+    title: "B",
+  });
   return { user, actor, project, a, b };
 }
 
@@ -210,7 +216,11 @@ describe("connectNodes", () => {
 
   it("lets directional interactions on both ordered pairs plus an association coexist", async () => {
     const { actor, project, a, b } = await seedTwoRootNodes();
-    const draw = (interaction: "ASSOCIATION" | "REQUEST" | "PUSH", from: string, to: string) =>
+    const draw = (
+      interaction: "ASSOCIATION" | "REQUEST" | "PUSH",
+      from: string,
+      to: string,
+    ) =>
       connectNodes(testDb, actor, {
         projectId: project.id,
         sourceId: from,
@@ -445,7 +455,10 @@ describe("updateEdge", () => {
   it("updates a Connection's label", async () => {
     const { actor, edge } = await seedEdge();
 
-    const updated = await updateEdge(testDb, actor, { id: edge.id, label: "new" });
+    const updated = await updateEdge(testDb, actor, {
+      id: edge.id,
+      label: "new",
+    });
 
     expect(updated.label).toBe("new");
     const persisted = await testDb.edge.findUnique({ where: { id: edge.id } });
@@ -455,7 +468,10 @@ describe("updateEdge", () => {
   it("clears the label when passed null", async () => {
     const { actor, edge } = await seedEdge();
 
-    const updated = await updateEdge(testDb, actor, { id: edge.id, label: null });
+    const updated = await updateEdge(testDb, actor, {
+      id: edge.id,
+      label: null,
+    });
 
     expect(updated.label).toBeNull();
   });
@@ -637,7 +653,7 @@ describe("getCanvas (Connections)", () => {
     expect(canvas.interiorEdges[0]?.sourceId).toBe(a1.id);
   });
 
-  it("returns only the same-Canvas Connections for the requested scope (cross-scope render is #63)", async () => {
+  it("shows each scope its same-Canvas Connection, collapsing a deeper one viewed from an ancestor", async () => {
     const { actor, project, a, b } = await seedTwoRootNodes();
     // A root Connection, and a Connection between two children of `parent`.
     await connectNodes(testDb, actor, {
@@ -671,14 +687,17 @@ describe("getCanvas (Connections)", () => {
       canvasNodeId: parent.id,
     });
 
-    // Each Canvas shows only the Connections whose BOTH endpoints sit on it.
+    // The root shows its own a↔b; the deeper childA↔childB collapses to a point
+    // at the root (both ends resolve to `parent`) and renders only on the
+    // parent's Canvas (ADR-0031).
     expect(root.interiorEdges).toHaveLength(1);
     expect(root.interiorEdges[0]?.sourceId).toBe(a.id);
+    expect(root.boundaryProxies).toHaveLength(0);
     expect(interior.interiorEdges).toHaveLength(1);
     expect(interior.interiorEdges[0]?.sourceId).toBe(childA.id);
   });
 
-  it("does NOT render a cross-scope Connection on either endpoint's Canvas yet (#63)", async () => {
+  it("renders a cross-scope Connection as an altitude edge at the common ancestor and a far-end proxy on the endpoint's own Canvas (#63)", async () => {
     const { actor, project, a } = await seedTwoRootNodes();
     const parent = await createNode(testDb, actor, {
       projectId: project.id,
@@ -689,7 +708,7 @@ describe("getCanvas (Connections)", () => {
       parentId: parent.id,
       title: "Child",
     });
-    await connectNodes(testDb, actor, {
+    const edge = await connectNodes(testDb, actor, {
       projectId: project.id,
       sourceId: a.id,
       targetId: child.id,
@@ -701,9 +720,42 @@ describe("getCanvas (Connections)", () => {
       canvasNodeId: parent.id,
     });
 
-    // The endpoints sit on different Canvases, so neither interior edge set
-    // includes it — cross-scope rendering arrives in #63.
-    expect(root.interiorEdges).toHaveLength(0);
-    expect(interior.interiorEdges).toHaveLength(0);
+    // At the root (the common ancestor), both ends resolve on-scope: `a` to
+    // itself, `child` to its ancestor `parent` — the altitude view, no proxy.
+    expect(root.boundaryProxies).toHaveLength(0);
+    expect(root.interiorEdges).toEqual([
+      {
+        id: edge.id,
+        sourceId: a.id,
+        targetId: child.id,
+        sourceRepr: a.id,
+        targetRepr: parent.id,
+        interaction: "ASSOCIATION",
+        label: null,
+      },
+    ]);
+
+    // On the parent's Canvas, only `child` is on-scope; `a` sits outside the
+    // subtree, so it renders as a far-end boundary proxy.
+    expect(interior.interiorEdges).toEqual([
+      {
+        id: edge.id,
+        sourceId: a.id,
+        targetId: child.id,
+        sourceRepr: `proxy_${edge.id}`,
+        targetRepr: child.id,
+        interaction: "ASSOCIATION",
+        label: null,
+      },
+    ]);
+    expect(interior.boundaryProxies).toEqual([
+      {
+        nodeId: `proxy_${edge.id}`,
+        title: "A",
+        kind: "GENERIC",
+        realEndpointId: a.id,
+        edgeId: edge.id,
+      },
+    ]);
   });
 });

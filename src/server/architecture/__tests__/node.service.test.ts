@@ -471,6 +471,415 @@ describe("getCanvas scope validation", () => {
   });
 });
 
+// The cross-scope read derivation (ADR-0031): for scope S and edge E=(A,B),
+// `rep(N,S)` is the ancestor of N whose parent is S. Both reps present &
+// distinct → an interior edge (same-Canvas or altitude); exactly one present →
+// an interior edge to a per-edge boundary proxy of the off-scope endpoint; both
+// equal or neither present → not rendered. The whole derivation is one recursive
+// ancestry CTE folded into getCanvas's single round trip.
+describe("getCanvas cross-scope rendering", () => {
+  it("renders a same-Canvas Connection with each repr equal to its endpoint", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "B",
+    });
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    });
+
+    const canvas = await getCanvas(testDb, null, { slug: project.slug });
+
+    expect(canvas.boundaryProxies).toEqual([]);
+    expect(canvas.interiorEdges).toEqual([
+      {
+        id: expect.any(String) as string,
+        sourceId: a.id,
+        targetId: b.id,
+        sourceRepr: a.id,
+        targetRepr: b.id,
+        interaction: "ASSOCIATION",
+        label: null,
+      },
+    ]);
+  });
+
+  it("renders an altitude view: deep endpoints resolve to their on-scope ancestors", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const c1 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "C1",
+    });
+    const c2 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "C2",
+    });
+    const g1 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: c1.id,
+      title: "G1",
+    });
+    const g2 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: c2.id,
+      title: "G2",
+    });
+    // The Connection lives between two deep grandchildren in different subtrees.
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: g1.id,
+      targetId: g2.id,
+    });
+
+    const canvas = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: parent.id,
+    });
+
+    expect(canvas.boundaryProxies).toEqual([]);
+    expect(canvas.interiorEdges).toHaveLength(1);
+    // sourceId/targetId stay the real deep endpoints; the reprs lift to the
+    // ancestors whose parent IS this scope (C1, C2).
+    expect(canvas.interiorEdges[0]).toMatchObject({
+      sourceId: g1.id,
+      targetId: g2.id,
+      sourceRepr: c1.id,
+      targetRepr: c2.id,
+    });
+  });
+
+  it("renders a cross-scope Connection's far end as a boundary proxy", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const inside = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Inside",
+    });
+    const outside = await createNode(testDb, actor, {
+      projectId: project.id,
+      kind: "EXTERNAL_API",
+      title: "Outside",
+    });
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: inside.id,
+      targetId: outside.id,
+    });
+
+    const canvas = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: parent.id,
+    });
+
+    expect(canvas.interiorEdges).toEqual([
+      {
+        id: edge.id,
+        sourceId: inside.id,
+        targetId: outside.id,
+        sourceRepr: inside.id,
+        targetRepr: `proxy_${edge.id}`,
+        interaction: "ASSOCIATION",
+        label: null,
+      },
+    ]);
+    expect(canvas.boundaryProxies).toEqual([
+      {
+        nodeId: `proxy_${edge.id}`,
+        title: "Outside",
+        kind: "EXTERNAL_API",
+        realEndpointId: outside.id,
+        edgeId: edge.id,
+      },
+    ]);
+  });
+
+  it("carries no origin/inherited/transitive field on a boundary proxy", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const inside = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Inside",
+    });
+    const outside = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Outside",
+    });
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: inside.id,
+      targetId: outside.id,
+    });
+
+    const canvas = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: parent.id,
+    });
+
+    expect(canvas.boundaryProxies).toHaveLength(1);
+    expect(Object.keys(canvas.boundaryProxies[0]!).sort()).toEqual([
+      "edgeId",
+      "kind",
+      "nodeId",
+      "realEndpointId",
+      "title",
+    ]);
+  });
+
+  it("collapses a Connection whose endpoints share one on-scope representative", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+    const g1 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: child.id,
+      title: "G1",
+    });
+    const g2 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: child.id,
+      title: "G2",
+    });
+    // Both endpoints descend from the SAME child, so on Parent's Canvas they
+    // both resolve to `child` (a == b) — nothing to render at this altitude.
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: g1.id,
+      targetId: g2.id,
+    });
+
+    const canvas = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: parent.id,
+    });
+
+    expect(canvas.interiorEdges).toEqual([]);
+    expect(canvas.boundaryProxies).toEqual([]);
+  });
+
+  it("renders a lineal (ingress) Connection as proxy-of-ancestor → child on the child's home Canvas", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      kind: "HOST",
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+    // A parent→child Connection expresses ingress (ADR-0028).
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: parent.id,
+      targetId: child.id,
+    });
+
+    // The child's home Canvas IS the parent's interior Canvas.
+    const canvas = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: parent.id,
+    });
+
+    expect(canvas.interiorEdges).toEqual([
+      {
+        id: edge.id,
+        sourceId: parent.id,
+        targetId: child.id,
+        sourceRepr: `proxy_${edge.id}`,
+        targetRepr: child.id,
+        interaction: "ASSOCIATION",
+        label: null,
+      },
+    ]);
+    expect(canvas.boundaryProxies).toEqual([
+      {
+        nodeId: `proxy_${edge.id}`,
+        title: "Parent",
+        kind: "HOST",
+        realEndpointId: parent.id,
+        edgeId: edge.id,
+      },
+    ]);
+  });
+
+  it("collapses the same lineal Connection at the root scope (both ends resolve to the parent)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: parent.id,
+      targetId: child.id,
+    });
+
+    const canvas = await getCanvas(testDb, null, { slug: project.slug });
+
+    expect(canvas.interiorEdges).toEqual([]);
+    expect(canvas.boundaryProxies).toEqual([]);
+  });
+
+  it("omits a Connection whose endpoint Component is soft-deleted", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "B",
+    });
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    });
+    // A live Edge with a dead endpoint must not render — neither as an interior
+    // edge nor as a proxy (the prior interior-edges filter had this posture).
+    await testDb.node.update({
+      where: { id: b.id },
+      data: { deletedAt: new Date() },
+    });
+
+    const canvas = await getCanvas(testDb, null, { slug: project.slug });
+
+    expect(canvas.interiorEdges).toEqual([]);
+    expect(canvas.boundaryProxies).toEqual([]);
+  });
+
+  it("emits one proxy PER crossing edge when two Connections reach the same far Component", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const a1 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "A1",
+    });
+    const a2 = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "A2",
+    });
+    const outside = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Outside",
+    });
+    const e1 = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a1.id,
+      targetId: outside.id,
+    });
+    const e2 = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a2.id,
+      targetId: outside.id,
+    });
+
+    const canvas = await getCanvas(testDb, null, {
+      slug: project.slug,
+      canvasNodeId: parent.id,
+    });
+
+    expect(canvas.interiorEdges).toHaveLength(2);
+    // Two proxies — one per crossing edge — sharing realEndpointId but each with
+    // a distinct synthetic nodeId (no de-dupe by far Node; ADR-0031).
+    expect(canvas.boundaryProxies).toHaveLength(2);
+    const proxies = [...canvas.boundaryProxies].sort((x, y) =>
+      x.edgeId < y.edgeId ? -1 : 1,
+    );
+    expect(proxies.map((p) => p.realEndpointId)).toEqual([
+      outside.id,
+      outside.id,
+    ]);
+    expect(new Set(proxies.map((p) => p.nodeId)).size).toBe(2);
+    expect(new Set(proxies.map((p) => p.edgeId))).toEqual(
+      new Set([e1.id, e2.id]),
+    );
+  });
+
+  it("throws loudly when a Connection endpoint is nested past the depth cap", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    // Build a chain n0 (root) → n1 → … → n257 (258 Components, depth 257). The
+    // ancestry walk caps at 256, so resolving n257's root representative clips —
+    // surface that as a loud ValidationError, never a silently-dropped edge.
+    // One `createMany` (explicit ids so the parent chain self-references) keeps
+    // this a single round trip; the service's depth cap is what's under test.
+    const chain = Array.from({ length: 258 }, (_, i) => ({
+      id: `depth_${i}`,
+      projectId: project.id,
+      parentId: i === 0 ? null : `depth_${i - 1}`,
+      title: `n${i}`,
+    }));
+    await testDb.node.createMany({ data: chain });
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: "depth_257",
+      targetId: "depth_0",
+    });
+
+    await expect(
+      getCanvas(testDb, null, { slug: project.slug }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
 describe("updateNode", () => {
   it("renames a Component and the new title persists", async () => {
     const user = await makeUser();
@@ -1727,11 +2136,15 @@ describe("deleteNode cascade — Spec (ADR-0030)", () => {
     const del = await deleteNode(testDb, actor, { id: node.id });
 
     expect(del.specIds).toEqual([spec.id]);
-    const swept = await testDb.spec.findUniqueOrThrow({ where: { id: spec.id } });
+    const swept = await testDb.spec.findUniqueOrThrow({
+      where: { id: spec.id },
+    });
     expect(swept.deletionId).toBe(del.deletionId);
     expect(swept.deletedAt).not.toBeNull();
 
-    const res = await restoreNode(testDb, actor, { deletionId: del.deletionId });
+    const res = await restoreNode(testDb, actor, {
+      deletionId: del.deletionId,
+    });
     expect(res.specIds).toEqual([spec.id]);
     const revived = await testDb.spec.findUniqueOrThrow({
       where: { id: spec.id },
@@ -1744,8 +2157,14 @@ describe("deleteNode cascade — Spec (ADR-0030)", () => {
     const user = await makeUser();
     const actor: Actor = { userId: user.id, via: "session" };
     const project = await makeProject(user.id);
-    const a = await createNode(testDb, actor, { projectId: project.id, title: "A" });
-    const b = await createNode(testDb, actor, { projectId: project.id, title: "B" });
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "B",
+    });
     await testDb.spec.create({
       data: {
         projectId: project.id,

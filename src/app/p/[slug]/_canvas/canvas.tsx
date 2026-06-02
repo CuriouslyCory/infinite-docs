@@ -20,7 +20,7 @@ import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 
 import { canConnect } from "~/lib/connection-rules";
-import { type NodeKind } from "~/lib/schemas";
+import { type Interaction, type NodeKind } from "~/lib/schemas";
 import { type CanvasData, type CanvasEdge, type CanvasNode } from "~/lib/types";
 import { api } from "~/trpc/react";
 
@@ -61,9 +61,11 @@ import {
  * together (via `patchCanvas`, which preserves sibling keys) and rolling both
  * back with a toast on failure.
  *
- * As of #62 every Connection renders as a plain line (its `interaction` defaults
- * to `ASSOCIATION`); typed arrowheads and cross-scope rendering arrive in the
- * next slices (#65 / #63).
+ * The cross-scope read shape (`boundaryProxies`, per-edge `sourceRepr` /
+ * `targetRepr`) is derived by `getCanvas` as of #63 (ADR-0031); this island does
+ * not yet consume those fields, so every Connection still renders as a plain line
+ * between its same-Canvas endpoints. Typed arrowheads and the client rendering of
+ * cross-scope Connections / boundary proxies arrive in #65.
  */
 
 // Module-level: React Flow re-mounts every node/edge (and warns) if `nodeTypes`
@@ -131,27 +133,48 @@ function optimisticCanvasNode(
   };
 }
 
+// A freshly drawn Connection is same-Canvas — both endpoints render here, so each
+// endpoint IS its own on-scope representative (`sourceRepr`/`targetRepr` === the
+// endpoint ids). getCanvas derives the reprs server-side for every cross-scope
+// case (ADR-0031); the optimistic + reconcile paths only ever build same-Canvas
+// rows, so they set the reprs to the endpoint ids directly.
 function optimisticCanvasEdge(
   id: string,
-  projectId: string,
   sourceId: string,
   targetId: string,
 ): CanvasEdge {
-  const now = new Date();
   return {
     id,
-    projectId,
     sourceId,
     targetId,
+    sourceRepr: sourceId,
+    targetRepr: targetId,
     // A freshly-drawn Connection is an ASSOCIATION (a plain line) until the user
     // types it (#65). The optimistic shape must match the getCanvas edge row so
     // remount reconciliation never flickers (ADR-0027).
     interaction: "ASSOCIATION",
     label: null,
-    createdAt: now,
-    updatedAt: now,
-    deletedAt: null,
-    deletionId: null,
+  };
+}
+
+// Map the `connectNodes` result (a raw server Edge) onto the Canvas edge shape
+// getCanvas returns, for the optimistic temp → real reconcile. Same-Canvas, so
+// the reprs are the endpoint ids (see {@link optimisticCanvasEdge}).
+function reconciledCanvasEdge(real: {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  interaction: Interaction;
+  label: string | null;
+}): CanvasEdge {
+  return {
+    id: real.id,
+    sourceId: real.sourceId,
+    targetId: real.targetId,
+    sourceRepr: real.sourceId,
+    targetRepr: real.targetId,
+    interaction: real.interaction,
+    label: real.label,
   };
 }
 
@@ -249,6 +272,7 @@ function CanvasInner({
         const base: CanvasData = old ?? {
           interiorNodes: [],
           interiorEdges: [],
+          boundaryProxies: [],
           breadcrumbs: [],
         };
         return { ...base, ...patch(base) };
@@ -296,9 +320,7 @@ function CanvasInner({
           posY: position.y,
         });
         // Reconcile temp → real id in both stores, atomically by id.
-        setNodes((ns) =>
-          ns.map((n) => (n.id === tempId ? toRFNode(real) : n)),
-        );
+        setNodes((ns) => ns.map((n) => (n.id === tempId ? toRFNode(real) : n)));
         patchCanvas((c) => ({
           interiorNodes: c.interiorNodes.map((n) =>
             n.id === tempId ? real : n,
@@ -454,8 +476,7 @@ function CanvasInner({
         ),
       }));
 
-      const prior =
-        inflightDocSavesRef.current.get(id) ?? Promise.resolve();
+      const prior = inflightDocSavesRef.current.get(id) ?? Promise.resolve();
       // `prior.catch(() => undefined)` so a prior failure doesn't poison the
       // chain — each save's failure handling is local to its own .catch below.
       const next: Promise<void> = prior
@@ -601,16 +622,18 @@ function CanvasInner({
       patchCanvas((c) => ({
         interiorEdges: [
           ...c.interiorEdges,
-          optimisticCanvasEdge(tempId, projectId, source, target),
+          optimisticCanvasEdge(tempId, source, target),
         ],
       }));
 
       try {
-        const real = await connectNodes.mutateAsync({
-          projectId,
-          sourceId: source,
-          targetId: target,
-        });
+        const real = reconciledCanvasEdge(
+          await connectNodes.mutateAsync({
+            projectId,
+            sourceId: source,
+            targetId: target,
+          }),
+        );
         setEdges((es) => es.map((e) => (e.id === tempId ? toRFEdge(real) : e)));
         patchCanvas((c) => ({
           interiorEdges: c.interiorEdges.map((e) =>
@@ -625,14 +648,7 @@ function CanvasInner({
         toast.error("Couldn’t add the connection. Please try again.");
       }
     },
-    [
-      utils,
-      canvasInput,
-      setEdges,
-      patchCanvas,
-      projectId,
-      connectNodes,
-    ],
+    [utils, canvasInput, setEdges, patchCanvas, projectId, connectNodes],
   );
 
   // Remove a Connection (React Flow's Delete/Backspace). `onEdgesChange`
@@ -965,9 +981,7 @@ function CanvasInner({
                         ownerNodeId={selectedNodeId}
                         currentKind={selectedNode?.kind ?? "GENERIC"}
                         parentKind={parentKind}
-                        initialDocumentation={
-                          selectedNode?.documentation ?? ""
-                        }
+                        initialDocumentation={selectedNode?.documentation ?? ""}
                         onClose={closeDetailPanel}
                         onChangeKind={commitNodeKind}
                         onCommitDocumentation={commitDocumentation}
@@ -987,9 +1001,7 @@ function CanvasInner({
                         ownerNodeId={selectedNodeId}
                         currentKind={selectedNode?.kind ?? "GENERIC"}
                         parentKind={parentKind}
-                        initialDocumentation={
-                          selectedNode?.documentation ?? ""
-                        }
+                        initialDocumentation={selectedNode?.documentation ?? ""}
                         onClose={closeDetailPanel}
                       />
                     </Panel>

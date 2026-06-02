@@ -19,16 +19,28 @@ export type ProjectListItem =
 export type CanvasNode =
   RouterOutputs["architecture"]["getCanvas"]["interiorNodes"][number];
 
-/** A single Connection as the Canvas read returns it (a data-layer Edge). */
+/**
+ * A single Connection as the Canvas read returns it — the stored Edge fields plus
+ * the derived `sourceRepr`/`targetRepr` that resolve each endpoint onto the
+ * current scope (a real Node, an ancestor for the altitude view, or a boundary
+ * proxy's synthetic id). Derived per scope from endpoint ancestry, never a stored
+ * Edge scope (ADR-0031).
+ */
 export type CanvasEdge =
   RouterOutputs["architecture"]["getCanvas"]["interiorEdges"][number];
 
 /**
- * The full Canvas read payload — interior Components, Connections, and the
- * breadcrumb trail. Derived from the router output so it tracks every key
- * `getCanvas` returns, which is what lets the cache-merge helper preserve
- * sibling keys instead of a hand-maintained subset drifting out of sync.
- * (Cross-scope rendering — the redefined boundary proxy — is reintroduced in
- * #63.)
+ * A read-only stand-in for the off-scope endpoint of a cross-scope Connection,
+ * one per crossing edge (ADR-0031). The client renders it as a passive node (#65).
+ */
+export type CanvasBoundaryProxy =
+  RouterOutputs["architecture"]["getCanvas"]["boundaryProxies"][number];
+
+/**
+ * The full Canvas read payload — interior Components, Connections, the boundary
+ * proxies cross-scope Connections need, and the breadcrumb trail. Derived from
+ * the router output so it tracks every key `getCanvas` returns, which is what lets
+ * the cache-merge helper preserve sibling keys instead of a hand-maintained
+ * subset drifting out of sync.
  */
 export type CanvasData = RouterOutputs["architecture"]["getCanvas"];
