@@ -37,6 +37,22 @@ export type CanvasBoundaryProxy =
   RouterOutputs["architecture"]["getCanvas"]["boundaryProxies"][number];
 
 /**
+ * A Component as the project-wide "Connect to…" search returns it (#66) — a flat,
+ * scope-independent row carrying `parentId` so the client can rebuild each
+ * Component's ancestor path for disambiguation without a server walk.
+ */
+export type ProjectComponent =
+  RouterOutputs["architecture"]["listProjectComponents"][number];
+
+/**
+ * One Connection incident to a Component, as the detail panel's Connections
+ * section lists it (#66) — complete across scopes, with the far endpoint resolved
+ * to its display fields and `sourceIsSelf` for arrow orientation (ADR-0032).
+ */
+export type NodeConnection =
+  RouterOutputs["architecture"]["listNodeConnections"][number];
+
+/**
  * The full Canvas read payload — interior Components, Connections, the boundary
  * proxies cross-scope Connections need, and the breadcrumb trail. Derived from
  * the router output so it tracks every key `getCanvas` returns, which is what lets

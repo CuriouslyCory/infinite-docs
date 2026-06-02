@@ -15,6 +15,7 @@ import {
   createNode,
   deleteNode,
   getCanvas,
+  listProjectComponents,
   moveNode,
   restoreNode,
   updateNode,
@@ -2235,4 +2236,105 @@ describe("deleteNode cascade — Spec (ADR-0030)", () => {
   // so the conflicting active row the test would need cannot be constructed. The
   // restoreNode Spec pre-check is kept (cheap, parallel to the Edge guard) but is
   // not reachable this way. (Same reasoning the retired FlowSpec guard carried.)
+});
+
+describe("listProjectComponents", () => {
+  it("returns every live Component across all scopes, flat, with parentId", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const root = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Root",
+      kind: "HOST",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: root.id,
+      title: "Child",
+      kind: "SERVICE",
+    });
+    const grandchild = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: child.id,
+      title: "Grandchild",
+      kind: "MODULE",
+    });
+
+    const components = await listProjectComponents(testDb, null, {
+      slug: project.slug,
+    });
+
+    expect(components).toEqual(
+      expect.arrayContaining([
+        { id: root.id, title: "Root", kind: "HOST", parentId: null },
+        {
+          id: child.id,
+          title: "Child",
+          kind: "SERVICE",
+          parentId: root.id,
+        },
+        {
+          id: grandchild.id,
+          title: "Grandchild",
+          kind: "MODULE",
+          parentId: child.id,
+        },
+      ]),
+    );
+    expect(components).toHaveLength(3);
+  });
+
+  it("excludes soft-deleted Components", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const keep = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Keep",
+    });
+    const gone = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Gone",
+    });
+    await deleteNode(testDb, actor, { id: gone.id });
+
+    const components = await listProjectComponents(testDb, null, {
+      slug: project.slug,
+    });
+
+    expect(components.map((c) => c.id)).toEqual([keep.id]);
+  });
+
+  it("is slug-readable without a session (the slug is the read grant)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    await createNode(testDb, actor, { projectId: project.id, title: "A" });
+
+    const components = await listProjectComponents(testDb, null, {
+      slug: project.slug,
+    });
+
+    expect(components).toHaveLength(1);
+  });
+
+  it("throws NotFound for an unknown slug", async () => {
+    await expect(
+      listProjectComponents(testDb, null, { slug: "no-such-slug" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("throws NotFound for a soft-deleted Project", async () => {
+    const user = await makeUser();
+    const project = await makeProject(user.id);
+    await testDb.project.update({
+      where: { id: project.id },
+      data: { deletedAt: new Date() },
+    });
+
+    await expect(
+      listProjectComponents(testDb, null, { slug: project.slug }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
 });

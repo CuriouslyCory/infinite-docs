@@ -13,6 +13,7 @@ import {
   createNode,
   deleteNode,
   getCanvas,
+  listProjectComponents,
   restoreNode,
   updateNode,
   updateNodeDocumentation,
@@ -22,6 +23,7 @@ import {
 import {
   connectNodes,
   deleteEdge,
+  listNodeConnections,
   restoreEdge,
   updateEdge,
   updateEdgeInteraction,
@@ -38,6 +40,8 @@ import {
   exportMarkdownInput,
   getCanvasInput,
   getProjectBySlugInput,
+  listNodeConnectionsInput,
+  listProjectComponentsInput,
   previewSpecInput,
   restoreEdgeInput,
   restoreNodeInput,
@@ -114,6 +118,37 @@ export const architectureRouter = createTRPCRouter({
         : null;
       try {
         return await getCanvas(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Public: the project-wide Component list powering the "Connect to…" search
+  // (#66). Slug is the read capability (ADR-0002) — same posture as `getCanvas`.
+  listProjectComponents: publicProcedure
+    .input(listProjectComponentsInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor | null = ctx.session?.user
+        ? { userId: ctx.session.user.id, via: "session" }
+        : null;
+      try {
+        return await listProjectComponents(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Public: a Component's complete incident Connections for the detail panel's
+  // Connections section (#66 / ADR-0032). Slug-readable so a viewer sees the
+  // read-only list (ADR-0002), same posture as `getCanvas`.
+  listNodeConnections: publicProcedure
+    .input(listNodeConnectionsInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor | null = ctx.session?.user
+        ? { userId: ctx.session.user.id, via: "session" }
+        : null;
+      try {
+        return await listNodeConnections(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

@@ -240,6 +240,19 @@ export const getCanvasInput = z.object({
 export type GetCanvasInput = z.input<typeof getCanvasInput>;
 
 /**
+ * Input for the project-wide Component list that powers the "Connect to…" search
+ * (#66). Addressed by the capability `slug` (the read grant, ADR-0002) — a flat,
+ * scope-independent read of every live Component, deliberately distinct from the
+ * scope-keyed `getCanvasInput` (different cardinality; ADR-0032).
+ */
+export const listProjectComponentsInput = z.object({
+  slug: z.string().min(1),
+});
+export type ListProjectComponentsInput = z.infer<
+  typeof listProjectComponentsInput
+>;
+
+/**
  * Input for renaming a Component (updating a Node's `title`). Addressed by the
  * Node `id` — the natural key for an existing row — NOT by a projectId: the
  * service loads the Node, resolves its Project, and enforces owner-only access
@@ -429,6 +442,20 @@ export const deleteEdgeInput = z.object({
   id: z.string().min(1),
 });
 export type DeleteEdgeInput = z.infer<typeof deleteEdgeInput>;
+
+/**
+ * Input for the per-Component connection list shown in the Component-detail
+ * panel's Connections section (#66). Addressed by the capability `slug` (the
+ * read grant, ADR-0002) plus the Component's `nodeId`. Node-keyed and COMPLETE
+ * across scopes — it returns every active Connection incident to the Component,
+ * not just the ones visible on the current Canvas (ADR-0032), so it is distinct
+ * from both `getCanvasInput` (scope-keyed) and `deleteEdgeInput` (edge-keyed).
+ */
+export const listNodeConnectionsInput = z.object({
+  slug: z.string().min(1),
+  nodeId: z.string().min(1),
+});
+export type ListNodeConnectionsInput = z.infer<typeof listNodeConnectionsInput>;
 
 /**
  * Input for undoing a cascading `deleteNode` Edge sweep. Addressed by the
