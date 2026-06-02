@@ -41,8 +41,7 @@ export const CURRENT_KEY_VERSION = 1;
  * secret is config, not the per-request ambient context ADR-0001 forbids.
  */
 function pepperForVersion(keyVersion: number): string {
-  const pepper =
-    keyVersion === 1 ? process.env.API_TOKEN_PEPPER : undefined;
+  const pepper = keyVersion === 1 ? process.env.API_TOKEN_PEPPER : undefined;
   if (!pepper) {
     throw new Error(
       `API_TOKEN_PEPPER for key version ${keyVersion} is not set. ` +

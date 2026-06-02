@@ -14,7 +14,10 @@ import { type ComponentProps } from "react";
  * than via a `cn` helper — the repo styles with template strings, not clsx.
  */
 
-export function Command({ className = "", ...props }: ComponentProps<typeof CommandPrimitive>) {
+export function Command({
+  className = "",
+  ...props
+}: ComponentProps<typeof CommandPrimitive>) {
   return (
     <CommandPrimitive
       className={`flex h-full w-full flex-col overflow-hidden rounded-lg bg-[#1f2138] text-white ${className}`}
@@ -44,7 +47,7 @@ export function CommandList({
 }: ComponentProps<typeof CommandPrimitive.List>) {
   return (
     <CommandPrimitive.List
-      className={`max-h-72 overflow-y-auto overflow-x-hidden p-1 ${className}`}
+      className={`max-h-72 overflow-x-hidden overflow-y-auto p-1 ${className}`}
       {...props}
     />
   );
@@ -67,7 +70,7 @@ export function CommandGroup({
 }: ComponentProps<typeof CommandPrimitive.Group>) {
   return (
     <CommandPrimitive.Group
-      className={`overflow-hidden p-1 text-white [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-white/40 ${className}`}
+      className={`overflow-hidden p-1 text-white [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-white/40 [&_[cmdk-group-heading]]:uppercase ${className}`}
       {...props}
     />
   );

@@ -153,7 +153,8 @@ function changedFields(
   const fields: SpecChangedField[] = [];
   if (parsed.title !== existing.title) fields.push("title");
   if (parsed.kind !== existing.kind) fields.push("kind");
-  if (!metadataEqual(parsed.metadata, existing.metadata)) fields.push("metadata");
+  if (!metadataEqual(parsed.metadata, existing.metadata))
+    fields.push("metadata");
   return fields;
 }
 

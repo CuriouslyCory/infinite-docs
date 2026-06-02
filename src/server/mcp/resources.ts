@@ -59,7 +59,9 @@ export function registerArchitectureResources(server: McpServer, db: Db): void {
             descriptor.toInput(variables),
           );
           return {
-            contents: [{ uri: uri.href, mimeType: MARKDOWN_MIME, text: markdown }],
+            contents: [
+              { uri: uri.href, mimeType: MARKDOWN_MIME, text: markdown },
+            ],
           };
         } catch (error) {
           throw toMcpReadError(error);

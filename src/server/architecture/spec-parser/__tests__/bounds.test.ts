@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ParsedComponent } from "~/lib/schemas";
-import {
-  MAX_PARSED_NODES,
-  MAX_TREE_DEPTH,
-  enforceBounds,
-} from "../bounds";
+import { MAX_PARSED_NODES, MAX_TREE_DEPTH, enforceBounds } from "../bounds";
 
 function chain(depth: number): ParsedComponent[] {
   let current: ParsedComponent | null = null;

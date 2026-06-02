@@ -119,8 +119,12 @@ export async function applyGraph(
   };
 }
 
-type ParsedComponent = ReturnType<typeof applyGraphInput.parse>["components"][number];
-type ParsedConnection = ReturnType<typeof applyGraphInput.parse>["connections"][number];
+type ParsedComponent = ReturnType<
+  typeof applyGraphInput.parse
+>["components"][number];
+type ParsedConnection = ReturnType<
+  typeof applyGraphInput.parse
+>["connections"][number];
 
 function validateNoDanglingClientRefs(
   components: ParsedComponent[],

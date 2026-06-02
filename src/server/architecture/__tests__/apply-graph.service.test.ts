@@ -83,8 +83,16 @@ describe("applyGraph", () => {
       const result = await applyGraph(testDb, actor, {
         projectId: project.id,
         components: [
-          { clientId: "c", parent: { ref: "client", clientId: "b" }, title: "C" },
-          { clientId: "b", parent: { ref: "client", clientId: "a" }, title: "B" },
+          {
+            clientId: "c",
+            parent: { ref: "client", clientId: "b" },
+            title: "C",
+          },
+          {
+            clientId: "b",
+            parent: { ref: "client", clientId: "a" },
+            title: "B",
+          },
           { clientId: "a", title: "A" },
         ],
         connections: [],
@@ -270,8 +278,16 @@ describe("applyGraph", () => {
       const error = await applyGraph(testDb, actor, {
         projectId: project.id,
         components: [
-          { clientId: "a", parent: { ref: "client", clientId: "b" }, title: "A" },
-          { clientId: "b", parent: { ref: "client", clientId: "a" }, title: "B" },
+          {
+            clientId: "a",
+            parent: { ref: "client", clientId: "b" },
+            title: "A",
+          },
+          {
+            clientId: "b",
+            parent: { ref: "client", clientId: "a" },
+            title: "B",
+          },
         ],
         connections: [],
       }).then(
@@ -287,7 +303,11 @@ describe("applyGraph", () => {
       const selfParentError = await applyGraph(testDb, actor, {
         projectId: project.id,
         components: [
-          { clientId: "a", parent: { ref: "client", clientId: "a" }, title: "A" },
+          {
+            clientId: "a",
+            parent: { ref: "client", clientId: "a" },
+            title: "A",
+          },
         ],
         connections: [],
       }).then(

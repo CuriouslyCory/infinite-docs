@@ -80,7 +80,10 @@ function parse(source: string): ParseResult {
       const title =
         asString(opRaw.summary) ?? asString(opRaw.operationId) ?? specKey;
 
-      const metadata: ComponentMetadata = { method: methodUpper, path: pathStr };
+      const metadata: ComponentMetadata = {
+        method: methodUpper,
+        path: pathStr,
+      };
       if (Array.isArray(opRaw.tags)) {
         const tags = opRaw.tags.filter(
           (t): t is string => typeof t === "string",

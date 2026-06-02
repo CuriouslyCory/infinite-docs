@@ -75,9 +75,7 @@ describe("hash-at-rest", () => {
     // The stored hash is exactly HMAC(pepper, raw), recomputed independently.
     const pepper = process.env.API_TOKEN_PEPPER;
     expect(pepper).toBeTruthy();
-    const expected = createHmac("sha256", pepper!)
-      .update(token)
-      .digest("hex");
+    const expected = createHmac("sha256", pepper!).update(token).digest("hex");
     expect(row.tokenHash).toBe(expected);
   });
 

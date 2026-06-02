@@ -15,8 +15,7 @@ import { KindPickerPopover } from "./kind-palette";
 // island's initial load (performance philosophy #1). The panel already lives
 // inside the SSR-disabled canvas island (ADR-0004), so no `ssr: false` needed.
 const ComponentDocsEditor = dynamic(
-  () =>
-    import("./component-docs-editor").then((m) => m.ComponentDocsEditor),
+  () => import("./component-docs-editor").then((m) => m.ComponentDocsEditor),
   {
     loading: () => <p className="text-xs text-white/40">Loading editor…</p>,
   },
@@ -77,7 +76,10 @@ type ComponentDetailPanelProps = {
       /** Optimistic change-kind commit; the mutation lives on the canvas. */
       onChangeKind: (ownerNodeId: string, kind: NodeKind) => void;
       /** Debounced optimistic docs autosave; the mutation lives on the canvas. */
-      onCommitDocumentation: (ownerNodeId: string, documentation: string) => void;
+      onCommitDocumentation: (
+        ownerNodeId: string,
+        documentation: string,
+      ) => void;
       /** "Preview" runs the spec parse/diff; the modal lives on the canvas. */
       onPreviewSpec: (
         ownerNodeId: string,
@@ -95,8 +97,13 @@ type ComponentDetailPanelProps = {
 );
 
 export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
-  const { ownerNodeId, currentKind, parentKind, initialDocumentation, onClose } =
-    props;
+  const {
+    ownerNodeId,
+    currentKind,
+    parentKind,
+    initialDocumentation,
+    onClose,
+  } = props;
   // Escape closes the panel from anywhere — the canvas keeps focus after the
   // single-select that opens the panel, so a handler on the panel root would
   // never fire from the user's most likely starting point.
@@ -161,7 +168,7 @@ function ReadOnlyKindRow({ currentKind }: { currentKind: NodeKind }) {
   const Icon = KIND_ICON[currentKind];
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
+      <h3 className="text-xs font-semibold tracking-wide text-white/60 uppercase">
         Kind
       </h3>
       <div className="flex items-center gap-2 rounded bg-white/5 px-2 py-1.5 text-sm text-white">
@@ -188,7 +195,7 @@ function KindSection({
   const Icon = KIND_ICON[currentKind];
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
+      <h3 className="text-xs font-semibold tracking-wide text-white/60 uppercase">
         Kind
       </h3>
       {/* Opens the SAME kind palette the Add control uses (ADR-0020), keyed by

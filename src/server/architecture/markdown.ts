@@ -242,15 +242,16 @@ function renderBoundary(input: SerializerInput): string {
   const sorted = [...input.boundaryProxies].sort(
     (a, b) =>
       // Direct first, then inherited; tiebreak by title then nodeId.
-      cmp(a.origin === "direct" ? "0" : "1", b.origin === "direct" ? "0" : "1") ||
+      cmp(
+        a.origin === "direct" ? "0" : "1",
+        b.origin === "direct" ? "0" : "1",
+      ) ||
       cmp(a.title, b.title) ||
       cmp(a.nodeId, b.nodeId),
   );
   const lines = ["## Boundary context", ""];
   for (const p of sorted) {
-    lines.push(
-      `- **${p.title}** (${KIND_LABEL[p.kind]}) — ${p.origin}`,
-    );
+    lines.push(`- **${p.title}** (${KIND_LABEL[p.kind]}) — ${p.origin}`);
   }
   lines.push("");
   return lines.join("\n");

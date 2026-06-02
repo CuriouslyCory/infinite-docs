@@ -5,10 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { NotFoundError } from "../errors";
 import { exportMarkdown } from "../export.service";
-import {
-  serializeGraph,
-  type SerializerInput,
-} from "../markdown";
+import { serializeGraph, type SerializerInput } from "../markdown";
 import { resetDb, testDb } from "./helpers/test-db";
 
 beforeEach(async () => {
@@ -222,8 +219,7 @@ describe("serializeGraph (pure, deterministic)", () => {
           parentId: null,
           title: "X",
           kind: "GENERIC",
-          documentation:
-            "# Real heading\n\n```\n# not a heading\n```\n",
+          documentation: "# Real heading\n\n```\n# not a heading\n```\n",
         },
       ],
       edges: [],

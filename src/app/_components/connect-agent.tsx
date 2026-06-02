@@ -174,8 +174,8 @@ export function ConnectAgent() {
           <div>
             <h2 className="font-semibold">Copy your token now</h2>
             <p className="text-sm text-white/70">
-              This is the only time you’ll see this token. If you lose it, revoke
-              it and generate a new one.
+              This is the only time you’ll see this token. If you lose it,
+              revoke it and generate a new one.
             </p>
           </div>
           <div className="flex items-center gap-2">

@@ -29,7 +29,10 @@ export function isSlugCollision(error: unknown): boolean {
 // The two partial unique indexes that enforce Connection de-dupe (ADR-0010,
 // re-keyed for the typed cross-scope model — ADR-0027/0028): `idx_edge_dedup`
 // (directional) and `idx_edge_assoc_dedup` (association).
-const EDGE_DEDUP_INDEX_NAMES = ["idx_edge_dedup", "idx_edge_assoc_dedup"] as const;
+const EDGE_DEDUP_INDEX_NAMES = [
+  "idx_edge_dedup",
+  "idx_edge_assoc_dedup",
+] as const;
 
 // Matches either Edge de-dupe partial unique index. Narrowed on the constraint
 // identifier so an unrelated future P2002 on Edge is not silently swallowed as
@@ -55,9 +58,8 @@ export function isEdgeDedupCollision(error: unknown): boolean {
   }
 
   // Driver-adapter shape.
-  const driverCause = (
-    meta as { driverAdapterError?: { cause?: unknown } }
-  ).driverAdapterError?.cause;
+  const driverCause = (meta as { driverAdapterError?: { cause?: unknown } })
+    .driverAdapterError?.cause;
   if (!driverCause || typeof driverCause !== "object") return false;
 
   const originalMessage = (driverCause as { originalMessage?: unknown })

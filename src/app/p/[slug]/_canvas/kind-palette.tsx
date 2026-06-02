@@ -12,11 +12,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "~/components/ui/command";
-import {
-  KIND_ICON,
-  KIND_LABEL,
-  suggestedKinds,
-} from "~/lib/node-kinds";
+import { KIND_ICON, KIND_LABEL, suggestedKinds } from "~/lib/node-kinds";
 import { type NodeKind } from "~/lib/schemas";
 
 /**
@@ -99,10 +95,18 @@ function KindItem({
   const Icon = KIND_ICON[kind];
   return (
     <CommandItem value={KIND_LABEL[kind]} onSelect={() => onSelect(kind)}>
-      <Icon size={14} aria-hidden className="shrink-0 text-[hsl(280,100%,80%)]" />
+      <Icon
+        size={14}
+        aria-hidden
+        className="shrink-0 text-[hsl(280,100%,80%)]"
+      />
       <span className="truncate">{KIND_LABEL[kind]}</span>
       {active && (
-        <Check size={14} aria-hidden className="ml-auto shrink-0 text-white/60" />
+        <Check
+          size={14}
+          aria-hidden
+          className="ml-auto shrink-0 text-white/60"
+        />
       )}
     </CommandItem>
   );

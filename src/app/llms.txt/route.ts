@@ -1,9 +1,6 @@
 import { getPublicOrigin } from "mcp-handler";
 
-import {
-  READ_RESOURCES,
-  RESOURCE_SCHEME,
-} from "~/server/mcp/catalog";
+import { READ_RESOURCES, RESOURCE_SCHEME } from "~/server/mcp/catalog";
 import { WRITE_TOOLS } from "~/server/mcp/tool-catalog";
 
 /**
@@ -34,9 +31,9 @@ export function GET(req: Request): Response {
   // Tool descriptions are multi-paragraph (agent guidance); render the
   // one-line title as the header so the discovery doc skims cleanly. The full
   // description is still available via `tools/list`.
-  const toolBlock = WRITE_TOOLS.map(
-    (t) => `- ${t.name} — ${t.title}`,
-  ).join("\n");
+  const toolBlock = WRITE_TOOLS.map((t) => `- ${t.name} — ${t.title}`).join(
+    "\n",
+  );
 
   const body = `# infinite-docs — MCP architecture access
 
