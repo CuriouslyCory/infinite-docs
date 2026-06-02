@@ -978,6 +978,16 @@ function CanvasInner({
               c.id === tempId ? { ...c, id: real.id } : c,
             ),
         );
+
+        // Belt-and-suspenders against a target reparented (e.g. via the MCP
+        // `move_component` tool) between the palette load and this success: the
+        // RF store keeps its already-correct reconciled state, but a background
+        // refetch of `getCanvas` (and the project-wide map the next palette open
+        // reads) ensures the next remount re-seeds from authoritative ancestry.
+        // In the common (no-reparent) case the refetch is a no-op; in the edge
+        // case it self-heals without a flicker (ADR-0032).
+        void utils.architecture.getCanvas.invalidate(canvasInput);
+        void utils.architecture.listProjectComponents.invalidate({ slug });
       } catch (error) {
         // Roll the optimistic edge, proxy, and list row back out of every store.
         if (optimisticEdge) {
@@ -1004,6 +1014,7 @@ function CanvasInner({
     [
       utils,
       slug,
+      canvasInput,
       canvasNodeId,
       breadcrumbIds,
       setEdges,

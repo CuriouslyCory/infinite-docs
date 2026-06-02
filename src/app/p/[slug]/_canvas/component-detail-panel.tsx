@@ -276,11 +276,14 @@ function ConnectionsSection({
   ownerNodeId: string;
   onConnect?: (target: ConnectTarget) => void;
 }) {
-  const { data: connections, isLoading } =
-    api.architecture.listNodeConnections.useQuery({
-      slug,
-      nodeId: ownerNodeId,
-    });
+  const {
+    data: connections,
+    isLoading,
+    isError,
+  } = api.architecture.listNodeConnections.useQuery({
+    slug,
+    nodeId: ownerNodeId,
+  });
 
   // Already-connected far ends (plus the Component itself) are excluded from the
   // search so the user can't pick a target that would just bounce off the
@@ -325,6 +328,11 @@ function ConnectionsSection({
 
       {isLoading ? (
         <p className="text-xs text-white/40">Loading…</p>
+      ) : isError ? (
+        // Distinct from "No connections yet." so a failed fetch is not silently
+        // indistinguishable from a genuinely empty list (TanStack v5 leaves
+        // `data` undefined on first-fetch error).
+        <p className="text-xs text-white/40">Couldn’t load connections.</p>
       ) : !connections || connections.length === 0 ? (
         <p className="text-xs text-white/40">No connections yet.</p>
       ) : (

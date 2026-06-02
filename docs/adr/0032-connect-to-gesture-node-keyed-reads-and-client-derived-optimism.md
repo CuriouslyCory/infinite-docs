@@ -87,6 +87,19 @@ without a flicker. New Connections default to `ASSOCIATION`; the interaction is 
 afterward through the #65 picker (drawing a directional Connection up front — which
 would grow the directional de-dupe arm in `~/lib/connection-rules.ts` — is deferred).
 
+**Safety net — background invalidate after success.** The client `rep(N, S)` only
+sees the `parentId` map the palette loaded; a target reparented in-flight (e.g.
+by a concurrent MCP `move_component` call from the same owner) would leave the
+optimistic placement attached to a stale representative. After `connectNodes`
+resolves we therefore fire a background `getCanvas.invalidate(canvasInput)` and
+`listProjectComponents.invalidate({slug})`. The RF store keeps its already-
+correct reconciled state (so there is no flicker in the common case); the cache
+refetch only matters at the next remount, where it self-heals the rare reparent-
+during-flight case without disturbing the live view. This complements — does not
+replace — the live client-side `rep` derivation above: the live derivation keeps
+the immediate render correct for the 99% case, the invalidate covers the 1% edge
+case the cache cannot detect.
+
 ## Consequences
 
 - **Reviewable invariant:** `listProjectComponents` and `listNodeConnections` are

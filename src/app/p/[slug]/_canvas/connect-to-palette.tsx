@@ -164,11 +164,14 @@ export function ConnectToPopover({
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { data: components, isLoading } =
-    api.architecture.listProjectComponents.useQuery(
-      { slug },
-      { enabled: open },
-    );
+  const {
+    data: components,
+    isLoading,
+    isError,
+  } = api.architecture.listProjectComponents.useQuery(
+    { slug },
+    { enabled: open },
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -197,7 +200,15 @@ export function ConnectToPopover({
             }
           }}
         >
-          {isLoading || !components ? (
+          {isError ? (
+            // Distinct from the loading box so a failed fetch doesn't masquerade
+            // as a permanent loading spinner (TanStack v5 leaves `data`
+            // undefined and `isLoading=false` after retries exhaust). Closing
+            // and reopening the popover re-fires the lazy query.
+            <div className="w-80 rounded-lg border border-white/15 bg-[#1f2138] p-4 text-sm text-white/40 shadow-2xl">
+              Couldn’t load components. Close and reopen to retry.
+            </div>
+          ) : isLoading || !components ? (
             <div className="w-80 rounded-lg border border-white/15 bg-[#1f2138] p-4 text-sm text-white/40 shadow-2xl">
               Loading components…
             </div>
