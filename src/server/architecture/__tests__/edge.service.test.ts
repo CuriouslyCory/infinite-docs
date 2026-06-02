@@ -13,11 +13,12 @@ import {
 import {
   connectNodes,
   deleteEdge,
+  listNodeConnections,
   restoreEdge,
   updateEdge,
   updateEdgeInteraction,
 } from "../edge.service";
-import { createNode, getCanvas } from "../node.service";
+import { createNode, deleteNode, getCanvas } from "../node.service";
 import { createProject } from "../project.service";
 import { resetDb, testDb } from "./helpers/test-db";
 
@@ -871,5 +872,162 @@ describe("getCanvas (Connections)", () => {
         edgeId: edge.id,
       },
     ]);
+  });
+});
+
+describe("listNodeConnections", () => {
+  it("lists a same-Canvas Connection, far end resolved, sourceIsSelf true for the source", async () => {
+    const { actor, project, a, b } = await seedTwoRootNodes();
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+      interaction: "REQUEST",
+      label: "calls",
+    });
+
+    const fromA = await listNodeConnections(testDb, null, {
+      slug: project.slug,
+      nodeId: a.id,
+    });
+    expect(fromA).toEqual([
+      {
+        id: edge.id,
+        interaction: "REQUEST",
+        label: "calls",
+        sourceIsSelf: true,
+        other: { id: b.id, title: "B", kind: "GENERIC" },
+      },
+    ]);
+
+    // The SAME Connection appears on B, with sourceIsSelf false (B is the target).
+    const fromB = await listNodeConnections(testDb, null, {
+      slug: project.slug,
+      nodeId: b.id,
+    });
+    expect(fromB).toEqual([
+      {
+        id: edge.id,
+        interaction: "REQUEST",
+        label: "calls",
+        sourceIsSelf: false,
+        other: { id: a.id, title: "A", kind: "GENERIC" },
+      },
+    ]);
+  });
+
+  it("lists a CROSS-SCOPE Connection (far end on another Canvas)", async () => {
+    const { actor, project, a } = await seedTwoRootNodes();
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: child.id,
+    });
+
+    const fromA = await listNodeConnections(testDb, null, {
+      slug: project.slug,
+      nodeId: a.id,
+    });
+    expect(fromA).toEqual([
+      {
+        id: edge.id,
+        interaction: "ASSOCIATION",
+        label: null,
+        sourceIsSelf: true,
+        other: { id: child.id, title: "Child", kind: "GENERIC" },
+      },
+    ]);
+  });
+
+  it("lists a LINEAL Connection from a Component to its own descendant (collapsed off the Canvas, ADR-0031)", async () => {
+    const { actor, project } = await seedTwoRootNodes();
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: parent.id,
+      targetId: child.id,
+    });
+
+    // This ingress Connection collapses on the parent's home Canvas (both reps
+    // equal the parent) — getCanvas would not surface it on the root scope — but
+    // the node-keyed list returns it completely (ADR-0032).
+    const fromParent = await listNodeConnections(testDb, null, {
+      slug: project.slug,
+      nodeId: parent.id,
+    });
+    expect(fromParent).toEqual([
+      {
+        id: edge.id,
+        interaction: "ASSOCIATION",
+        label: null,
+        sourceIsSelf: true,
+        other: { id: child.id, title: "Child", kind: "GENERIC" },
+      },
+    ]);
+  });
+
+  it("omits a soft-deleted Connection", async () => {
+    const { actor, project, a, b } = await seedTwoRootNodes();
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    });
+    await deleteEdge(testDb, actor, { id: edge.id });
+
+    const fromA = await listNodeConnections(testDb, null, {
+      slug: project.slug,
+      nodeId: a.id,
+    });
+    expect(fromA).toEqual([]);
+  });
+
+  it("omits a Connection whose far endpoint is soft-deleted", async () => {
+    const { actor, project, a, b } = await seedTwoRootNodes();
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    });
+    await deleteNode(testDb, actor, { id: b.id });
+
+    const fromA = await listNodeConnections(testDb, null, {
+      slug: project.slug,
+      nodeId: a.id,
+    });
+    expect(fromA).toEqual([]);
+  });
+
+  it("returns an empty list for a Component with no Connections", async () => {
+    const { project, a } = await seedTwoRootNodes();
+    const fromA = await listNodeConnections(testDb, null, {
+      slug: project.slug,
+      nodeId: a.id,
+    });
+    expect(fromA).toEqual([]);
+  });
+
+  it("throws NotFound for an unknown slug", async () => {
+    const { a } = await seedTwoRootNodes();
+    await expect(
+      listNodeConnections(testDb, null, { slug: "no-such-slug", nodeId: a.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 });

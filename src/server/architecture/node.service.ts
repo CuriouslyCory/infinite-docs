@@ -14,6 +14,7 @@ import {
   createNodeInput,
   deleteNodeInput,
   getCanvasInput,
+  listProjectComponentsInput,
   moveNodeInput,
   restoreNodeInput,
   updateNodeDocumentationInput,
@@ -24,6 +25,7 @@ import {
   type DeleteNodeInput,
   type GetCanvasInput,
   type Interaction,
+  type ListProjectComponentsInput,
   type MoveNodeInput,
   type NodeKind,
   type RestoreNodeInput,
@@ -546,6 +548,51 @@ export async function getCanvas(
   }
 
   return { interiorNodes, interiorEdges, boundaryProxies, breadcrumbs };
+}
+
+/** A Component as the project-wide "Connect to…" search returns it (#66). */
+export interface ProjectComponent {
+  id: string;
+  title: string;
+  kind: NodeKind;
+  parentId: string | null;
+}
+
+/**
+ * Lists EVERY live Component in the Project — a flat, scope-independent read that
+ * powers the project-wide "Connect to…" search surface (#66 / ADR-0032). Returns
+ * `{ id, title, kind, parentId }` per Component; the flat `parentId` lets the
+ * client rebuild each Component's ancestor path for disambiguation with zero
+ * extra server cost (a live Node's ancestors are always live — the subtree
+ * soft-delete cascade keeps the chain intact in the result), so there is no
+ * per-Component breadcrumb walk here.
+ *
+ * Deliberately distinct from the scope-keyed `getCanvas` (different cardinality —
+ * the whole Project vs one Canvas; ADR-0032), and NOT folded into its CTE.
+ * Slug-readable (ADR-0002): the capability slug IS the read grant, so `actor` is
+ * accepted only to match the readable-procedure signature and is never consulted;
+ * the slug→project bind is the gate. A missing / soft-deleted slug is a not-found.
+ */
+export async function listProjectComponents(
+  db: Db,
+  _actor: Actor | null,
+  input: ListProjectComponentsInput,
+): Promise<ProjectComponent[]> {
+  const { slug } = listProjectComponentsInput.parse(input);
+
+  const project = await db.project.findFirst({
+    where: { slug, deletedAt: null },
+    select: { id: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+
+  return db.node.findMany({
+    where: { projectId: project.id, deletedAt: null },
+    select: { id: true, title: true, kind: true, parentId: true },
+    orderBy: { createdAt: "asc" },
+  });
 }
 
 /**

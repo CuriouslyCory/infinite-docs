@@ -28,6 +28,7 @@ import {
   type CanvasData,
   type CanvasEdge,
   type CanvasNode,
+  type ProjectComponent,
 } from "~/lib/types";
 import { api, type RouterOutputs } from "~/trpc/react";
 
@@ -36,6 +37,7 @@ import {
   BoundaryProxyNodeView,
   type BoundaryProxyNode,
 } from "./boundary-proxy";
+import { type ConnectTarget } from "./connect-to-palette";
 import { CopyMarkdownToolbar } from "./copy-markdown";
 import {
   ComponentDetailPanel,
@@ -261,6 +263,32 @@ function reconciledCanvasEdge(real: {
 }
 
 /**
+ * The on-scope representative of `targetId` for scope `scopeId` — the `rep(N, S)`
+ * of ADR-0031, computed client-side from the flat `parentId` map the project-wide
+ * read returns: the ancestor of the target whose parent IS the scope, or `null`
+ * when the scope is not on the target's ancestor chain (the target is off-scope,
+ * and its far end renders as a boundary proxy). Returns the target itself when it
+ * is interior to the scope. The `parentId === scopeId` test handles the root scope
+ * (`scopeId === null`) too. Bounded by the map size — cycles are impossible
+ * (`moveNode` rejects them, ADR-0024), so the guard is a belt-and-suspenders fuse.
+ */
+function repOnScope(
+  targetId: string,
+  scopeId: string | null,
+  byId: ReadonlyMap<string, ProjectComponent>,
+): string | null {
+  let cur = byId.get(targetId);
+  let guard = 0;
+  while (cur && guard <= byId.size) {
+    if (cur.parentId === scopeId) return cur.id;
+    if (cur.parentId === null) return null;
+    cur = byId.get(cur.parentId);
+    guard += 1;
+  }
+  return null;
+}
+
+/**
  * Picks the toast message for a failed `updateNodeDocumentation` autosave.
  * The only Zod issue the input schema raises is the byte cap (id is a bare
  * non-empty string), so a `BAD_REQUEST` with a `zodError` payload means the
@@ -294,6 +322,23 @@ function messageForInteractionFailure(error: unknown): string {
     }
   }
   return "Couldn’t change the interaction. Please try again.";
+}
+
+/**
+ * Picks the toast message for a failed `commitConnect` (the "Connect to…"
+ * gesture). A `CONFLICT` means the de-dupe slot is already taken — the same
+ * Connection (or its reverse ASSOCIATION) already exists. The palette pre-excludes
+ * already-connected targets, so this is mostly a concurrent-write backstop; surface
+ * it distinctly all the same.
+ */
+function messageForConnectFailure(error: unknown): string {
+  if (error && typeof error === "object" && "data" in error) {
+    const data = (error as { data?: { code?: string } }).data;
+    if (data?.code === "CONFLICT") {
+      return "That connection already exists.";
+    }
+  }
+  return "Couldn’t add the connection. Please try again.";
 }
 
 function CanvasInner({
@@ -760,6 +805,213 @@ function CanvasInner({
       }
     },
     [utils, canvasInput, setEdges, patchCanvas, projectId, connectNodes],
+  );
+
+  // The "Connect to…" gesture (#66): wire the selected Component to ANY other
+  // Component the project-wide search returns — same-Canvas, cross-scope, or
+  // lineal. Generalizes `handleConnect`'s optimistic pattern to the off-scope
+  // case, inserting the far-end boundary proxy this frame, then reconciling
+  // temp → real ids on success (the RF store is seeded once and is NOT re-seeded
+  // by a query refetch, so the reconcile is manual, exactly like `handleConnect`).
+  //
+  // Where the connection renders on THIS scope follows the SAME `rep(N, S)`
+  // partition `getCanvas` derives server-side (ADR-0031), computed client-side
+  // from the flat `parentId` map the palette already loaded
+  // (`listProjectComponents`) — no extra fetch, no shipping ancestry we don't
+  // have. The selected Component is interior to this scope, so it is its own
+  // representative; only the target's rep must be resolved:
+  //   - target rep absent  → off-scope: render real-source → far-end proxy.
+  //   - target rep is self  → lineal to our own descendant: it COLLAPSES on this
+  //     scope (getCanvas would not draw it), so we add it only to the Connections
+  //     list, never the Canvas.
+  //   - else (a real on-scope node, possibly an ancestor for the altitude view)
+  //     → a plain interior edge to that representative, no proxy.
+  const commitConnect = useCallback(
+    async (sourceNodeId: string, target: ConnectTarget) => {
+      // Pre-check against the source's Connection list (self-link + duplicate),
+      // mirroring `handleConnect`'s drag-time guard so the user gets instant
+      // feedback instead of a server round trip + toast.
+      const existing =
+        utils.architecture.listNodeConnections
+          .getData({ slug, nodeId: sourceNodeId })
+          ?.map((c) => ({ source: sourceNodeId, target: c.other.id })) ?? [];
+      const check = canConnect(
+        { source: sourceNodeId, target: target.id },
+        existing,
+      );
+      if (!check.ok) {
+        toast.error(
+          check.reason === "self-link"
+            ? "A component can’t connect to itself."
+            : "That connection already exists.",
+        );
+        return;
+      }
+
+      // Resolve the target's on-scope representative from the project-wide map the
+      // palette loaded — the same `rep(N, S)` getCanvas derives (ADR-0031).
+      const components =
+        utils.architecture.listProjectComponents.getData({ slug }) ?? [];
+      const byId = new Map(components.map((c) => [c.id, c] as const));
+      const targetRep = repOnScope(target.id, canvasNodeId, byId);
+      const collapses = targetRep === sourceNodeId;
+      const offScope = targetRep === null;
+
+      const tempId = `temp_${crypto.randomUUID()}`;
+      const proxyNodeId = `proxy_${tempId}`;
+
+      // The optimistic Connection-list row (the panel updates this frame). The
+      // selected Component is the source, so `sourceIsSelf` is true.
+      const optimisticListRow = {
+        id: tempId,
+        interaction: "ASSOCIATION" as const,
+        label: null,
+        sourceIsSelf: true,
+        other: { id: target.id, title: target.title, kind: target.kind },
+      };
+      utils.architecture.listNodeConnections.setData(
+        { slug, nodeId: sourceNodeId },
+        (old) => [...(old ?? []), optimisticListRow],
+      );
+
+      // A lineal Connection to our own descendant collapses on this scope — it is
+      // real and listed, but getCanvas draws nothing here, so neither do we.
+      const optimisticEdge: CanvasEdge | null = collapses
+        ? null
+        : {
+            id: tempId,
+            sourceId: sourceNodeId,
+            targetId: target.id,
+            sourceRepr: sourceNodeId,
+            targetRepr: offScope ? proxyNodeId : targetRep,
+            interaction: "ASSOCIATION",
+            label: null,
+          };
+      const optimisticProxy: CanvasBoundaryProxy | null =
+        optimisticEdge && offScope
+          ? {
+              nodeId: proxyNodeId,
+              title: target.title,
+              kind: target.kind,
+              realEndpointId: target.id,
+              edgeId: tempId,
+            }
+          : null;
+
+      if (optimisticEdge) {
+        setEdges((es) => addEdge(toRFEdge(optimisticEdge), es));
+        patchCanvas((c) => ({
+          interiorEdges: [...c.interiorEdges, optimisticEdge],
+        }));
+      }
+      if (optimisticProxy) {
+        // Seed the far-end stand-in onto the left rail below any already there,
+        // the same placement the delete-undo path uses (ADR-0031).
+        setNodes((ns) => {
+          const railBase = ns.filter((n) => n.type === "boundary-proxy").length;
+          return [
+            ...ns,
+            toProxyRFNode(optimisticProxy, breadcrumbIds, {
+              x: -280,
+              y: railBase * 72,
+            }),
+          ];
+        });
+        patchCanvas((c) => ({
+          boundaryProxies: [...c.boundaryProxies, optimisticProxy],
+        }));
+      }
+
+      try {
+        const real = await connectNodes.mutateAsync({
+          projectId,
+          sourceId: sourceNodeId,
+          targetId: target.id,
+        });
+
+        // Reconcile temp → real ids in the RF store AND the cache mirror (the
+        // store is not re-seeded by a refetch). The real proxy id is
+        // `proxy_<realEdgeId>`, matching what getCanvas emits, so a later remount
+        // reconciles without a flicker.
+        const realProxyNodeId = `proxy_${real.id}`;
+        const reconciledEdge: CanvasEdge | null = optimisticEdge
+          ? {
+              ...optimisticEdge,
+              id: real.id,
+              targetRepr: offScope
+                ? realProxyNodeId
+                : optimisticEdge.targetRepr,
+            }
+          : null;
+        const reconciledProxy: CanvasBoundaryProxy | null = optimisticProxy
+          ? { ...optimisticProxy, nodeId: realProxyNodeId, edgeId: real.id }
+          : null;
+
+        if (reconciledEdge) {
+          setEdges((es) =>
+            es.map((e) => (e.id === tempId ? toRFEdge(reconciledEdge) : e)),
+          );
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.map((e) =>
+              e.id === tempId ? reconciledEdge : e,
+            ),
+          }));
+        }
+        if (reconciledProxy) {
+          setNodes((ns) =>
+            ns.map((n) =>
+              n.id === proxyNodeId
+                ? toProxyRFNode(reconciledProxy, breadcrumbIds, n.position)
+                : n,
+            ),
+          );
+          patchCanvas((c) => ({
+            boundaryProxies: c.boundaryProxies.map((p) =>
+              p.nodeId === proxyNodeId ? reconciledProxy : p,
+            ),
+          }));
+        }
+        utils.architecture.listNodeConnections.setData(
+          { slug, nodeId: sourceNodeId },
+          (old) =>
+            (old ?? []).map((c) =>
+              c.id === tempId ? { ...c, id: real.id } : c,
+            ),
+        );
+      } catch (error) {
+        // Roll the optimistic edge, proxy, and list row back out of every store.
+        if (optimisticEdge) {
+          setEdges((es) => es.filter((e) => e.id !== tempId));
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.filter((e) => e.id !== tempId),
+          }));
+        }
+        if (optimisticProxy) {
+          setNodes((ns) => ns.filter((n) => n.id !== proxyNodeId));
+          patchCanvas((c) => ({
+            boundaryProxies: c.boundaryProxies.filter(
+              (p) => p.nodeId !== proxyNodeId,
+            ),
+          }));
+        }
+        utils.architecture.listNodeConnections.setData(
+          { slug, nodeId: sourceNodeId },
+          (old) => (old ?? []).filter((c) => c.id !== tempId),
+        );
+        toast.error(messageForConnectFailure(error));
+      }
+    },
+    [
+      utils,
+      slug,
+      canvasNodeId,
+      breadcrumbIds,
+      setEdges,
+      setNodes,
+      patchCanvas,
+      projectId,
+      connectNodes,
+    ],
   );
 
   // Remove a Connection (React Flow's Delete/Backspace). `onEdgesChange`
@@ -1395,6 +1647,7 @@ function CanvasInner({
                         <ComponentDetailPanel
                           readOnly={false}
                           ownerNodeId={selectedNodeId}
+                          slug={slug}
                           currentKind={selectedNode?.kind ?? "GENERIC"}
                           parentKind={parentKind}
                           initialDocumentation={
@@ -1402,6 +1655,7 @@ function CanvasInner({
                           }
                           onClose={closeDetailPanel}
                           onChangeKind={commitNodeKind}
+                          onConnect={commitConnect}
                           onCommitDocumentation={commitDocumentation}
                           onPreviewSpec={handlePreviewSpec}
                           specPreviewPending={
@@ -1426,6 +1680,7 @@ function CanvasInner({
                         <ComponentDetailPanel
                           readOnly={true}
                           ownerNodeId={selectedNodeId}
+                          slug={slug}
                           currentKind={selectedNode?.kind ?? "GENERIC"}
                           parentKind={parentKind}
                           initialDocumentation={

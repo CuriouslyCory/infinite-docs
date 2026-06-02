@@ -10,11 +10,14 @@ import { isEdgeDedupCollision } from "./prisma-errors";
 import {
   connectNodesInput,
   deleteEdgeInput,
+  listNodeConnectionsInput,
   restoreEdgeInput,
   updateEdgeInput,
   updateEdgeInteractionInput,
   type ConnectNodesInput,
   type DeleteEdgeInput,
+  type ListNodeConnectionsInput,
+  type NodeKind,
   type RestoreEdgeInput,
   type UpdateEdgeInput,
   type UpdateEdgeInteractionInput,
@@ -149,6 +152,96 @@ export async function connectNodes(
       conflictingEdgeIds: racer ? [racer.id] : [],
     });
   }
+}
+
+/**
+ * One Connection as the Component-detail panel's Connections section lists it
+ * (#66): the Edge's own fields, whether the listed Component is the Connection's
+ * `source` (so the panel can draw the arrow relative to it without re-deriving
+ * `interaction` + draw order), and the FAR endpoint resolved to its display
+ * fields. `label` is UNTRUSTED user content (prompt-injection standing note).
+ */
+export interface NodeConnection {
+  id: string;
+  interaction: Interaction;
+  label: string | null;
+  sourceIsSelf: boolean;
+  other: { id: string; title: string; kind: NodeKind };
+}
+
+/**
+ * Lists every active Connection incident to one Component — COMPLETE across
+ * scopes (#66 / ADR-0032). Unlike `getCanvas.interiorEdges` (the Connections
+ * visible on ONE Canvas, far ends resolved to on-scope reprs / boundary
+ * proxies), this is node-keyed: it returns ALL of a Component's Connections,
+ * including the lineal ones to its own descendants that collapse off its home
+ * Canvas. Each row carries the far endpoint's display fields so the panel needs
+ * no second read; a soft-deleted far endpoint hides the row (the same posture
+ * `getCanvas` takes — a Connection with a dead end is not surfaced).
+ *
+ * Slug-readable (ADR-0002): the capability slug IS the read grant, so a viewer
+ * sees the list read-only; `actor` is accepted only to match the
+ * readable-procedure signature and is never consulted. The slug→project bind is
+ * the gate, and scoping the Edge query to that `projectId` means a `nodeId` from
+ * another Project simply matches nothing (no cross-project disclosure). One round
+ * trip — the far endpoints come back on the same query via the Edge→Node
+ * relations, never a per-edge follow-up.
+ */
+export async function listNodeConnections(
+  db: Db,
+  _actor: Actor | null,
+  input: ListNodeConnectionsInput,
+): Promise<NodeConnection[]> {
+  const { slug, nodeId } = listNodeConnectionsInput.parse(input);
+
+  const project = await db.project.findFirst({
+    where: { slug, deletedAt: null },
+    select: { id: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+
+  const edges = await db.edge.findMany({
+    where: {
+      projectId: project.id,
+      deletedAt: null,
+      OR: [{ sourceId: nodeId }, { targetId: nodeId }],
+    },
+    select: {
+      id: true,
+      sourceId: true,
+      interaction: true,
+      label: true,
+      source: {
+        select: { id: true, title: true, kind: true, deletedAt: true },
+      },
+      target: {
+        select: { id: true, title: true, kind: true, deletedAt: true },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const connections: NodeConnection[] = [];
+  for (const edge of edges) {
+    const sourceIsSelf = edge.sourceId === nodeId;
+    // The end that isn't the listed Component. A self-link can't exist
+    // (`connectNodes` rejects `sourceId === targetId`), so the far end is always
+    // the opposite relation.
+    const far = sourceIsSelf ? edge.target : edge.source;
+    // A soft-deleted far endpoint hides the Connection — the same posture
+    // `getCanvas` takes when an endpoint is dead.
+    if (far.deletedAt !== null) continue;
+    connections.push({
+      id: edge.id,
+      interaction: edge.interaction,
+      label: edge.label,
+      sourceIsSelf,
+      other: { id: far.id, title: far.title, kind: far.kind },
+    });
+  }
+  return connections;
 }
 
 // Untrusted label is interpolated only into this static error string —

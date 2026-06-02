@@ -149,7 +149,13 @@ Connections relevant to a scope with each end resolved to a real Component or a 
 (via the canonical `~/lib/connection-direction` helper) and the client rendering of cross-scope
 Connections — the far end shown as a boundary proxy — are realized now (#65 / ADR-0027). The
 interaction is editable after creation through the picker on the selected Connection
-(`updateEdgeInteraction`).**)*
+(`updateEdgeInteraction`). Drawing a Connection across scopes is realized now via the project-wide
+"Connect to…" search (#66 / ADR-0032): the owner picks the selected Component's far end from a
+searchable list of every Component at any depth, the Connection is created `ASSOCIATION` by default
+(its interaction set afterward via the picker), and the far-end boundary proxy is inserted
+optimistically and reconciled on success. A Component's complete incident Connections — across all
+scopes — are listed in the Component-detail panel's Connections section (`listNodeConnections`); the
+project-wide search is backed by `listProjectComponents`.**)*
 
 ### Edge
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
@@ -627,7 +633,8 @@ kinds.)*
 ### Component-detail panel
 The slide-in surface that opens when a **Component** is selected on the **Canvas** — a sidebar,
 not a modal, so panning and zooming continue behind it (performance). It hosts the Component's
-**kind** row and the markdown **documentation** editor (ADR-0015). **Dual-audience:** the owner
+**kind** row, the **Connections section** (#66), and the markdown **documentation** editor
+(ADR-0015). **Dual-audience:** the owner
 sees the full edit surface; a **viewer** (a non-owner holding the capability slug) sees the *same
 panel read-only* — rendered documentation (Plate `readOnly`), with no kind picker and no docs Edit
 toggle. The read-only affordances are *omitted, not disabled*, so the viewer panel never signals
@@ -636,7 +643,22 @@ service layer (ADR-0002). The word is **Component-detail panel** — never "insp
 (names the layout, not the surface), or "properties panel". *(Realized now; the read-only viewer
 variant landed with issue #16. The **Spec** paste field and the **Flow palette** it formerly
 hosted were removed with the Flow model (#62); the spec → Component generation surface returns in
-#64. See ADR-0002, ADR-0015.)*
+#64. The **Connections section** landed with #66. See ADR-0002, ADR-0015.)*
+
+### Connections section
+The **Component-detail panel** section that lists a Component's **Connections** and lets the owner
+add one (#66 / ADR-0032). **Dual-audience:** every reader (owner or **viewer**) sees the list —
+each row resolves the *far* endpoint to its title and **kind** and shows the **Interaction**
+relative to this Component; only the owner sees the **"Connect to…"** add affordance (omitted, not
+disabled, for a viewer — ADR-0002). The list is **complete across scopes**: it is node-keyed
+(`listNodeConnections`), so it includes a Component's **lineal** Connections to its own descendants
+— which *collapse* off its home **Canvas** and so never appear in **getCanvas** — not just the ones
+visible on the current Canvas. The **"Connect to…"** search behind the add control is a project-wide
+Component picker (`listProjectComponents`) built on the same `cmdk` **Command** primitive the **kind
+palette** uses; it searches every Component at any depth by title or kind. Adding a cross-scope
+Connection inserts the far-end **boundary proxy** optimistically and reconciles on success (ADR-0031,
+ADR-0032). The word is **Connections section** — never "links panel" or "edges list" (the user word
+is **Connection**). *(Realized now via #66.)*
 
 ### Flow palette
 Retired with the Flow model (#62). The read-only list of a Component's **Flows** is gone with the
