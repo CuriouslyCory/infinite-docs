@@ -80,10 +80,14 @@ function parse(source: string): ParseResult {
   return { ok: true, tree: tables };
 }
 
-function buildTable(
-  tableName: string,
-  defs: unknown[],
-): ParseResult & { tree?: ParsedComponent } {
+// One table's outcome: a single Component on success, or a parse error (a
+// duplicate column anchor — never a partial table). Distinct from `ParseResult`,
+// whose `tree` is the array of top-level tables.
+type TableResult =
+  | { ok: true; tree: ParsedComponent }
+  | { ok: false; parseError: string };
+
+function buildTable(tableName: string, defs: unknown[]): TableResult {
   const pkColumns = new Set<string>();
   for (const def of defs) {
     if (!isRecord(def)) continue;

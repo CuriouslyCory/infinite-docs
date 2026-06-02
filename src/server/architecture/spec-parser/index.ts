@@ -77,6 +77,7 @@ export {
   parseSpecDiff,
   type ExistingGeneratedComponent,
   type FlatParsedComponent,
+  type SpecChangedField,
   type SpecDiff,
   type SpecDiffChanged,
   type SpecDiffDropped,

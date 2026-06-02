@@ -184,6 +184,17 @@ export type ComponentMetadata = z.infer<typeof componentMetadata>;
 // gives a predictable wire-size budget regardless of script.
 export const MAX_NODE_DOCUMENTATION_BYTES = 100_000;
 
+// The single byte-capped validator for Node documentation, shared by every path
+// that writes docs (node create/update) AND by the parser output (#64) so a
+// preview can never accept docs that the apply write would later reject. Empty
+// string is allowed (clears the docs); the cap bounds the autosave/wire payload.
+export const nodeDocumentation = z
+  .string()
+  .refine(
+    (s) => new TextEncoder().encode(s).length <= MAX_NODE_DOCUMENTATION_BYTES,
+    { message: "Documentation exceeds the 100 KB cap." },
+  );
+
 /**
  * Input for creating a Component. Addressed by `projectId` (an internal handle),
  * NOT by the capability slug: writes are never granted by the slug (ADR-0002),
@@ -207,13 +218,7 @@ export const createNodeInput = z.object({
   title: z.string().min(1).max(200).default("Untitled"),
   posX: z.number().finite().default(0),
   posY: z.number().finite().default(0),
-  documentation: z
-    .string()
-    .refine(
-      (s) => new TextEncoder().encode(s).length <= MAX_NODE_DOCUMENTATION_BYTES,
-      { message: "Documentation exceeds the 100 KB cap." },
-    )
-    .optional(),
+  documentation: nodeDocumentation.optional(),
   metadata: componentMetadata.optional(),
   sourceSpecId: z.string().min(1).optional(),
   specKey: z.string().min(1).max(512).optional(),
@@ -280,14 +285,7 @@ export type UpdateNodeKindInput = z.infer<typeof updateNodeKindInput>;
  */
 export const updateNodeDocumentationInput = z.object({
   id: z.string().min(1),
-  // `string().max()` counts UTF-16 code units; the cap is named `_BYTES` and
-  // measured in UTF-8 bytes, so refine to UTF-8 bytes here too.
-  documentation: z
-    .string()
-    .refine(
-      (s) => new TextEncoder().encode(s).length <= MAX_NODE_DOCUMENTATION_BYTES,
-      { message: "Documentation exceeds the 100 KB cap." },
-    ),
+  documentation: nodeDocumentation,
 });
 export type UpdateNodeDocumentationInput = z.infer<
   typeof updateNodeDocumentationInput
@@ -625,13 +623,7 @@ export const parsedComponent: z.ZodType<ParsedComponent> = z.lazy(() =>
     specKey: z.string().min(1).max(512),
     kind: nodeKind,
     title: z.string().min(1).max(200),
-    documentation: z
-      .string()
-      .refine(
-        (s) => new TextEncoder().encode(s).length <= MAX_NODE_DOCUMENTATION_BYTES,
-        { message: "Documentation exceeds the 100 KB cap." },
-      )
-      .optional(),
+    documentation: nodeDocumentation.optional(),
     metadata: componentMetadata.optional(),
     children: z.array(parsedComponent).optional(),
   }),

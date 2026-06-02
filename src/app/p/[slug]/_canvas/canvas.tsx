@@ -749,11 +749,20 @@ function CanvasInner({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const closeDetailPanel = useCallback(() => setSelectedNodeId(null), []);
 
-  // Spec attach / merge state (#64 / ADR-0029). `parseError` lives on the panel
-  // (a failed preview returns no diff), `pendingPreview` carries the source the
+  // Spec attach / merge state (#64 / ADR-0029). `specPreviewError` and
+  // `activePreviewOwnerId` are each scoped to the node that STARTED the preview
+  // (an `ownerNodeId`): the panel renders for whatever node is currently
+  // selected, so a preview for A resolving after the user clicks B must not leak
+  // A's error/spinner into B's panel. `pendingPreview` carries the source the
   // user pasted so the modal's confirm can re-apply it without re-pasting, and
-  // `preview` is the diff classification the modal renders.
-  const [specPreviewError, setSpecPreviewError] = useState<string | null>(null);
+  // `specPreview` is the diff classification the modal renders.
+  const [specPreviewError, setSpecPreviewError] = useState<{
+    ownerNodeId: string;
+    message: string;
+  } | null>(null);
+  const [activePreviewOwnerId, setActivePreviewOwnerId] = useState<
+    string | null
+  >(null);
   const [pendingPreview, setPendingPreview] = useState<{
     ownerNodeId: string;
     kind: SpecKind;
@@ -766,12 +775,14 @@ function CanvasInner({
   const handlePreviewSpec = useCallback(
     (ownerNodeId: string, input: { kind: SpecKind; source: string }) => {
       setSpecPreviewError(null);
+      setActivePreviewOwnerId(ownerNodeId);
       previewSpec.mutate(
         { ownerNodeId, kind: input.kind, source: input.source },
         {
           onSuccess: (result) => {
             if (result.parseError !== null) {
-              setSpecPreviewError(result.parseError);
+              setSpecPreviewError({ ownerNodeId, message: result.parseError });
+              setActivePreviewOwnerId(null);
               return;
             }
             // First-attach with only NEW (no existing spec) skips the modal —
@@ -790,13 +801,20 @@ function CanvasInner({
                   dropped: [],
                 },
                 {
-                  onSuccess: async () => {
-                    await utils.architecture.getCanvas.invalidate();
-                    const canvas = utils.architecture.getCanvas.getData(canvasInput);
-                    if (canvas) {
-                      setNodes(canvas.interiorNodes.map(toRFNode));
-                      setEdges(canvas.interiorEdges.map(toRFEdge));
-                    }
+                  onSuccess: () => {
+                    // Re-sync from the REFETCHED cache: read inside `.then` so it
+                    // sees post-refetch data, not the stale pre-apply snapshot
+                    // (`void` keeps this callback void-returning for the mutation
+                    // option type). A spec apply mutates the owner's INTERIOR (its
+                    // children), never this canvas's own nodes, so only cross-scope
+                    // Connection reprs (ADR-0031) can change here — re-seed edges,
+                    // not nodes (re-seeding nodes would needlessly drop the owner's
+                    // selection).
+                    void utils.architecture.getCanvas.invalidate().then(() => {
+                      const canvas =
+                        utils.architecture.getCanvas.getData(canvasInput);
+                      if (canvas) setEdges(canvas.interiorEdges.map(toRFEdge));
+                    });
                     toast.success(
                       `Attached spec — created ${result.new.length} component${
                         result.new.length === 1 ? "" : "s"
@@ -808,22 +826,28 @@ function CanvasInner({
                       error.message || "Couldn’t attach the spec. Please try again.",
                     );
                   },
+                  onSettled: () => setActivePreviewOwnerId(null),
                 },
               );
               return;
             }
+            // The modal takes over the pending/error surface from here.
+            setActivePreviewOwnerId(null);
             setSpecPreview(result);
             setPendingPreview({ ownerNodeId, kind: input.kind, source: input.source });
           },
           onError: (error) => {
-            setSpecPreviewError(
-              error.message || "Couldn’t preview this spec. Please try again.",
-            );
+            setSpecPreviewError({
+              ownerNodeId,
+              message:
+                error.message || "Couldn’t preview this spec. Please try again.",
+            });
+            setActivePreviewOwnerId(null);
           },
         },
       );
     },
-    [previewSpec, applySpec, utils],
+    [previewSpec, applySpec, utils, canvasInput, setEdges],
   );
 
   const closeSpecModal = useCallback(() => {
@@ -843,13 +867,15 @@ function CanvasInner({
           dropped: decisions.dropped,
         },
         {
-          onSuccess: async (result) => {
-            await utils.architecture.getCanvas.invalidate();
-            const canvas = utils.architecture.getCanvas.getData(canvasInput);
-            if (canvas) {
-              setNodes(canvas.interiorNodes.map(toRFNode));
-              setEdges(canvas.interiorEdges.map(toRFEdge));
-            }
+          onSuccess: (result) => {
+            // Read inside `.then` so the re-sync sees post-refetch data, not the
+            // stale pre-apply snapshot. Only cross-scope Connection reprs change
+            // on this canvas (the apply touches the owner's interior), so re-seed
+            // edges, not nodes. See handlePreviewSpec for the rationale.
+            void utils.architecture.getCanvas.invalidate().then(() => {
+              const canvas = utils.architecture.getCanvas.getData(canvasInput);
+              if (canvas) setEdges(canvas.interiorEdges.map(toRFEdge));
+            });
             closeSpecModal();
             toast.success(
               `Applied spec — ${result.created} created, ${result.overwritten} overwritten, ${result.detached} detached, ${result.deleted} deleted.`,
@@ -863,7 +889,7 @@ function CanvasInner({
         },
       );
     },
-    [pendingPreview, applySpec, utils, closeSpecModal],
+    [pendingPreview, applySpec, utils, closeSpecModal, canvasInput, setEdges],
   );
 
   // Delete a Component: a cascading soft-delete. Optimistically remove it and its
@@ -1110,9 +1136,13 @@ function CanvasInner({
                         onCommitDocumentation={commitDocumentation}
                         onPreviewSpec={handlePreviewSpec}
                         specPreviewPending={
-                          previewSpec.isPending || applySpec.isPending
+                          activePreviewOwnerId === selectedNodeId
                         }
-                        specPreviewError={specPreviewError}
+                        specPreviewError={
+                          specPreviewError?.ownerNodeId === selectedNodeId
+                            ? specPreviewError.message
+                            : null
+                        }
                       />
                     </Panel>
                   ) : (

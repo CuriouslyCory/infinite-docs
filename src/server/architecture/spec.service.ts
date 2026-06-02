@@ -7,6 +7,7 @@ import {
   parseSpec,
   parseSpecDiff,
   type ExistingGeneratedComponent,
+  type SpecChangedField,
 } from "./spec-parser";
 import {
   applySpecInput,
@@ -24,12 +25,21 @@ export interface SpecPreviewNew {
   kind: NodeKind;
 }
 
-/** A CHANGED Component — matched by key, derived fields differ. */
+/**
+ * A CHANGED Component — matched by key, derived fields differ. `changedFields`
+ * names exactly what differs so the conflict modal can show the change even when
+ * the title is unchanged (a kind- or metadata-only diff would otherwise render a
+ * "changed" row with nothing visibly different; #64). `kind`/`previousKind` let
+ * the modal render the kind delta inline.
+ */
 export interface SpecPreviewChanged {
   specKey: string;
   nodeId: string;
   title: string;
   previousTitle: string;
+  kind: NodeKind;
+  previousKind: NodeKind;
+  changedFields: SpecChangedField[];
 }
 
 /**
@@ -223,6 +233,9 @@ export async function previewSpec(
       nodeId: c.nodeId,
       title: c.parsed.title,
       previousTitle: c.existing.title,
+      kind: c.parsed.kind,
+      previousKind: c.existing.kind,
+      changedFields: c.changedFields,
     })),
     dropped: diff.dropped.map((d) => ({
       nodeId: d.nodeId,

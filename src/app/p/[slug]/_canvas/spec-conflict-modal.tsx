@@ -306,7 +306,7 @@ function ChangedSection({
                   className="shrink-0 text-sky-300"
                 />
                 <span className="truncate">{row.title}</span>
-                {row.previousTitle !== row.title && (
+                {row.changedFields.includes("title") && (
                   <span className="shrink-0 text-xs text-white/40">
                     was “{row.previousTitle}”
                   </span>
@@ -342,6 +342,7 @@ function ChangedSection({
                   </SegmentedButton>
                 </div>
               </div>
+              <ChangedDelta row={row} />
               {decision.action === "overwrite" && (
                 <label className="flex items-center gap-2 pl-6 text-xs text-white/60">
                   <input
@@ -365,6 +366,25 @@ function ChangedSection({
         })}
       </ul>
     </section>
+  );
+}
+
+// The non-title deltas for a changed row. Without this, a kind- or metadata-only
+// change shows an unchanged title and no visible reason it is "changed", leaving
+// the user to choose overwrite vs. skip blind (#64).
+function ChangedDelta({ row }: { row: SpecPreview["changed"][number] }) {
+  const kindChanged = row.changedFields.includes("kind");
+  const metadataChanged = row.changedFields.includes("metadata");
+  if (!kindChanged && !metadataChanged) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-6 text-xs text-white/40">
+      {kindChanged && (
+        <span>
+          kind {KIND_LABEL[row.previousKind]} → {KIND_LABEL[row.kind]}
+        </span>
+      )}
+      {metadataChanged && <span>metadata changed</span>}
+    </div>
   );
 }
 

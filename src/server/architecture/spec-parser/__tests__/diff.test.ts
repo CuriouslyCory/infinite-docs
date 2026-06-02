@@ -39,6 +39,7 @@ describe("parseSpecDiff", () => {
     const diff = parseSpecDiff(tree, existing);
     expect(diff.new.map((n) => n.specKey)).toEqual(["createPet"]);
     expect(diff.changed.map((c) => c.specKey)).toEqual(["listPets"]);
+    expect(diff.changed[0]?.changedFields).toEqual(["title"]);
     expect(diff.dropped.map((d) => d.nodeId)).toEqual(["n2"]);
     expect(diff.matchedKeyToId).toEqual({ listPets: "n1" });
   });
@@ -61,5 +62,6 @@ describe("parseSpecDiff", () => {
     ];
     const diff = parseSpecDiff(tree, existing);
     expect(diff.changed).toHaveLength(1);
+    expect(diff.changed[0]?.changedFields).toEqual(["kind"]);
   });
 });

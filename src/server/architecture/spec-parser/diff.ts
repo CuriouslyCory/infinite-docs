@@ -32,11 +32,17 @@ export interface ExistingGeneratedComponent {
   metadata: unknown;
 }
 
+/** The DERIVED fields a re-parse can change (documentation is user-owned and
+ *  never compared; ADR-0029). Surfaced so the conflict modal can show WHAT
+ *  changed even when the title is identical (#64). */
+export type SpecChangedField = "title" | "kind" | "metadata";
+
 export interface SpecDiffChanged {
   specKey: string;
   nodeId: string;
   parsed: FlatParsedComponent;
   existing: ExistingGeneratedComponent;
+  changedFields: SpecChangedField[];
 }
 
 export interface SpecDiffDropped {
@@ -111,12 +117,14 @@ export function parseSpecDiff(
       continue;
     }
     matchedKeyToId[parsed.specKey] = match.id;
-    if (isChanged(parsed, match)) {
+    const fields = changedFields(parsed, match);
+    if (fields.length > 0) {
       changed.push({
         specKey: parsed.specKey,
         nodeId: match.id,
         parsed,
         existing: match,
+        changedFields: fields,
       });
     }
   }
@@ -135,13 +143,18 @@ export function parseSpecDiff(
   return { new: created, changed, dropped, matchedKeyToId };
 }
 
-function isChanged(
+// The DERIVED fields that differ between a parsed node and its live match (empty
+// => unchanged). Documentation is deliberately not compared — it is user-owned
+// after first create (ADR-0029).
+function changedFields(
   parsed: FlatParsedComponent,
   existing: ExistingGeneratedComponent,
-): boolean {
-  if (parsed.title !== existing.title) return true;
-  if (parsed.kind !== existing.kind) return true;
-  return !metadataEqual(parsed.metadata, existing.metadata);
+): SpecChangedField[] {
+  const fields: SpecChangedField[] = [];
+  if (parsed.title !== existing.title) fields.push("title");
+  if (parsed.kind !== existing.kind) fields.push("kind");
+  if (!metadataEqual(parsed.metadata, existing.metadata)) fields.push("metadata");
+  return fields;
 }
 
 // Order-insensitive structural equality for the metadata blob. Both sides
