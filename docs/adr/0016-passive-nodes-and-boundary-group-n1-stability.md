@@ -158,3 +158,17 @@ alternatives:
   three passive-node guards, and the N=0 / N=1 boundaries remains the
   human-in-the-loop check, gated on #23 (dev-auth owner session) like the
   rest of the boundary-proxy UI.
+
+## Realized in #65 (per-edge model)
+
+The passive-node code was removed with the dead Flow UI in #62 and re-introduced
+in #65 in its **simpler per-edge form** (ADR-0031 retired the boundary-GROUP half
+of this ADR — the container, the `origin: "direct" | "inherited"` partition, and
+the N=1-wrap invariant — while keeping the passive-node taxonomy). #65 ships:
+`CanvasRFNode = ComponentNode | BoundaryProxyNode`; `isPassiveNode(node:
+CanvasRFNode)` returning true for the single `boundary-proxy` kind; and the three
+interactive pointer handlers (`onNodeClick`, `onNodeDoubleClick`,
+`onNodeMouseEnter`) each calling `if (isPassiveNode(node)) return;`. The
+extension-point contract (a new passive kind = extend the union + the
+discriminator + register the node type, never a fresh inline guard) is preserved;
+the N=1 boundary-group wrap is **not** re-introduced (no container exists).

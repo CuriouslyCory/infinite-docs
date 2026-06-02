@@ -145,9 +145,11 @@ ADR-0005). *(Drawing, labeling, and removing a Connection are realized now — s
 self-link, cross-scope/lineal, and no-duplicate-active rules. A Connection's `interaction` is set
 at creation (`connectNodes`) and defaults to `ASSOCIATION`. **Cross-scope read** — surfacing the
 Connections relevant to a scope with each end resolved to a real Component or a **boundary proxy**
-— is realized now via **getCanvas** (#63 / ADR-0031). **Arrowhead rendering from `interaction`,
-and the client rendering of cross-scope Connections, land in a later slice (#65)**; until then the
-client draws only same-Canvas Connections, as plain lines.)*
+— is realized now via **getCanvas** (#63 / ADR-0031). **Arrowhead rendering from `interaction`
+(via the canonical `~/lib/connection-direction` helper) and the client rendering of cross-scope
+Connections — the far end shown as a boundary proxy — are realized now (#65 / ADR-0027). The
+interaction is editable after creation through the picker on the selected Connection
+(`updateEdgeInteraction`).**)*
 
 ### Edge
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
@@ -181,7 +183,9 @@ two partial unique indexes land via the #62 migration (ADR-0010 pattern). The cr
 of an Edge whose endpoints span scopes is realized now via **getCanvas**, which resolves each
 endpoint to its on-scope representative or a **boundary proxy** of the off-scope end, derived from
 endpoint ancestry (ADR-0031); cross-scope client rendering and the interaction-derived arrowheads
-land in #65.)*
+are realized now (#65). `updateEdgeInteraction` edits the `interaction` of an existing Edge and
+re-checks the directional de-dupe key, so an upgrade that would duplicate an active Edge is
+rejected as a `ConflictError`.)*
 
 ### Port
 A Component's connection point — the user-facing name for a React Flow **handle**.
@@ -225,7 +229,7 @@ the off-scope end of each Edge crossing this scope }`, where an Edge resolves vi
 ancestry (ADR-0031). *(The Node half of the derivation is realized now via **getCanvas**, and the
 Edge half — same-Canvas, altitude, and cross-scope — is realized now too; reading a non-root scope
 is realized now via **getCanvas**, and user-facing navigation into it is realized now via
-**Descent**. Client rendering of the cross-scope Edges and proxies lands in #65.)*
+**Descent**. Client rendering of the cross-scope Edges and proxies is realized now (#65).)*
 
 ### getCanvas
 The single service read that materializes a **Canvas** for a given **Canvas
@@ -254,7 +258,7 @@ loud `ValidationError`, distinct from the breadcrumb-truncation one. See ADR-000
 for the single-round-trip service contract, ADR-0004 for how the payload reaches the
 client island, ADR-0006 for the recursive-CTE / raw-SQL discipline both derived
 reads share, and ADR-0031 for the cross-scope derivation. Client rendering of the
-cross-scope Edges, the proxies, and the interaction-derived arrows lands in #65.)*
+cross-scope Edges, the proxies, and the interaction-derived arrows is realized now (#65).)*
 
 ### Canvas scope
 Which **Canvas** an operation is acting on. A Canvas has **no id of its own** (it
@@ -310,7 +314,10 @@ ADR-0031 supersedes the boundary halves of ADR-0012/0016). A boundary proxy is a
 (no Component-detail panel, no Descent, no hover-prefetch). The code term is **boundary-proxy**.
 Never frame it as an "external" or "inherited" node — the system has no external Nodes, only
 off-scope ones. *(The cross-scope read is realized now via **getCanvas** (#63 / ADR-0031); client
-rendering of the proxy and the arrowheads on its incident Connection lands in #65.)*
+rendering of the proxy — as a passive node with a *go to real endpoint* affordance (navigating to
+the off-scope Component's own scope) — and the arrowheads on its incident Connection are realized
+now (#65). A proxy whose real endpoint is an ancestor of the current scope (the lineal/ingress
+case) is labelled as an inbound boundary so it does not read as the host inside itself.)*
 
 ### Boundary endpoint
 Retired (#62): with no cross-scope **FlowRoute** and no `routeFlow` writer, there is no "one
@@ -334,8 +341,10 @@ by sprinkling fresh guards through the click / double-click / hover paths (ADR-0
 owner-edit vs viewer-read) and not "non-interactive" (which over-claims — passive nodes still
 expand and collapse their own internals; they are inert *with respect to the Canvas's interactive
 surfaces*, not globally inert). *(The **boundary proxy** is the sole passive kind today, re-derived
-by **getCanvas** per crossing edge (#63 / ADR-0031); its client rendering as a passive node lands
-in #65. Additional passive kinds compose by extension via the same discriminator, ADR-0016.)*
+by **getCanvas** per crossing edge (#63 / ADR-0031); its client rendering as a passive node — the
+`boundary-proxy` React Flow node type, recognized by the `isPassiveNode(CanvasRFNode)` discriminator
+— is realized now (#65). Additional passive kinds compose by extension via the same discriminator,
+ADR-0016.)*
 
 ### Project
 The root container of one architecture graph. Owned by a single user (`ownerId`) and addressed
@@ -608,8 +617,12 @@ and never "edge type" / "kind" (there is no `EdgeKind`; `interaction` is the onl
 `REQUEST`/`PUSH`/`SUBSCRIBE`/`DUPLEX` are the four directional successors carried over from the
 retired Flow model (where they were owner-relative); `ASSOCIATION` is the new default for an
 untyped plain-line Connection. *(Realized now as a per-Connection field set at `connectNodes`
-(default `ASSOCIATION`). Arrowhead rendering from `interaction` lands in #65; until then every
-Connection renders as a plain line.)*
+(default `ASSOCIATION`) and editable after creation via the picker on the selected Connection
+(`updateEdgeInteraction`). Arrowhead rendering from `interaction` is realized now (#65), derived by
+the canonical `~/lib/connection-direction` helper shared with the exporter (ADR-0027). User-facing
+labels live in `INTERACTION_LABEL` (`~/lib/interactions.ts`), keyed by `Interaction` so a new value
+fails to compile until labelled — the same exhaustiveness guard `KIND_LABEL` gives Component
+kinds.)*
 
 ### Component-detail panel
 The slide-in surface that opens when a **Component** is selected on the **Canvas** — a sidebar,

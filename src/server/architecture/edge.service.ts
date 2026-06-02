@@ -12,10 +12,12 @@ import {
   deleteEdgeInput,
   restoreEdgeInput,
   updateEdgeInput,
+  updateEdgeInteractionInput,
   type ConnectNodesInput,
   type DeleteEdgeInput,
   type RestoreEdgeInput,
   type UpdateEdgeInput,
+  type UpdateEdgeInteractionInput,
 } from "~/lib/schemas";
 
 /**
@@ -193,6 +195,88 @@ export async function updateEdge(
       ...(label !== undefined ? { label } : {}),
     },
   });
+}
+
+/**
+ * Upgrades a Connection's `interaction` (the picker on the selected edge; #65).
+ * Addressed by the Edge `id`; loaded, its Project resolved, and authorized
+ * owner-only through `access.assertCanWrite` (ADR-0001).
+ *
+ * Unlike `updateEdge` (label-only, never collides), changing `interaction` can
+ * collide with the de-dupe indexes: the four directional values de-dupe on the
+ * ORDERED `(projectId, sourceId, targetId, interaction)` tuple and `ASSOCIATION`
+ * on the unordered pair (ADR-0010/0027), so upgrading `A↔B ASSOCIATION` to
+ * `A→B REQUEST` moves the row into a different slot that another active
+ * Connection may already hold. We therefore re-run the same de-dupe pre-check +
+ * P2002 backstop `connectNodes` uses — with `id` excluded, since an Edge is never
+ * its own duplicate — surfacing the same `ConflictError` shape. `sourceId`/
+ * `targetId` are NEVER rewritten, so the arrow points the way the Connection was
+ * drawn (ADR-0027). A no-op (interaction unchanged) skips the check and writes
+ * nothing new.
+ */
+export async function updateEdgeInteraction(
+  db: Db,
+  actor: Actor,
+  input: UpdateEdgeInteractionInput,
+): Promise<Edge> {
+  const { id, interaction } = updateEdgeInteractionInput.parse(input);
+
+  const edge = await db.edge.findFirst({ where: { id, deletedAt: null } });
+  if (!edge) {
+    throw new NotFoundError();
+  }
+  const project = await db.project.findFirst({
+    where: { id: edge.projectId, deletedAt: null },
+    select: { ownerId: true, id: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanWrite(actor, project);
+
+  if (edge.interaction === interaction) {
+    return edge;
+  }
+
+  // Re-evaluate the de-dupe slot for the NEW interaction, excluding this Edge
+  // (it is not its own duplicate — the one wrinkle `connectNodes` never needs,
+  // because there the row does not exist yet).
+  const duplicateWhere: Prisma.EdgeWhereInput = {
+    ...activeDuplicateWhere(
+      edge.projectId,
+      edge.sourceId,
+      edge.targetId,
+      interaction,
+    ),
+    id: { not: edge.id },
+  };
+  const duplicate = await db.edge.findFirst({
+    where: duplicateWhere,
+    select: { id: true, label: true },
+  });
+  if (duplicate) {
+    throw new ConflictError(duplicateConnectionMessage(duplicate.label), {
+      conflictingEdgeIds: [duplicate.id],
+    });
+  }
+
+  try {
+    return await db.edge.update({
+      where: { id: edge.id },
+      data: { interaction },
+    });
+  } catch (error) {
+    if (!isEdgeDedupCollision(error)) throw error;
+    // A concurrent racer committed into the target slot first; the partial
+    // unique index caught it (ADR-0010). Re-read it for the same error shape.
+    const racer = await db.edge.findFirst({
+      where: duplicateWhere,
+      select: { id: true, label: true },
+    });
+    throw new ConflictError(duplicateConnectionMessage(racer?.label ?? null), {
+      conflictingEdgeIds: racer ? [racer.id] : [],
+    });
+  }
 }
 
 /**

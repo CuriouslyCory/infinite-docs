@@ -24,6 +24,7 @@ import {
   deleteEdge,
   restoreEdge,
   updateEdge,
+  updateEdgeInteraction,
 } from "~/server/architecture/edge.service";
 import { exportMarkdown } from "~/server/architecture/export.service";
 import { applySpec, previewSpec } from "~/server/architecture/spec.service";
@@ -41,6 +42,7 @@ import {
   restoreEdgeInput,
   restoreNodeInput,
   updateEdgeInput,
+  updateEdgeInteractionInput,
   updateNodeDocumentationInput,
   updateNodeInput,
   updateNodeKindInput,
@@ -214,6 +216,20 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
+  // Owner-only mutation: upgrade a Connection's interaction (the picker on the
+  // selected edge; #65). Owner access + the de-dupe re-check live in the
+  // service (ADR-0001); a collision surfaces as a CONFLICT.
+  updateEdgeInteraction: protectedProcedure
+    .input(updateEdgeInteractionInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await updateEdgeInteraction(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
   // Owner-only mutation: remove a Connection via a plain lone soft-delete
   // (no cascade — the FlowRoute cascade is gone; ADR-0030).
   deleteEdge: protectedProcedure
@@ -236,9 +252,7 @@ export const architectureRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
-        return await ctx.db.$transaction((tx) =>
-          restoreEdge(tx, actor, input),
-        );
+        return await ctx.db.$transaction((tx) => restoreEdge(tx, actor, input));
       } catch (error) {
         throw toTRPCError(error);
       }

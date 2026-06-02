@@ -183,3 +183,16 @@ different consumers, and are not to be DRY'd into one CTE.
   boundary proxies as passive nodes with a "descend to real endpoint" affordance,
   and the altitude distinction (discovered from `sourceRepr !== sourceId`). #63
   lands the data; the canvas does not yet draw the new rows.
+
+## Realized in #65
+
+The canvas now consumes this shape (it previously ignored `boundaryProxies` and
+the `*Repr` fields). `toRFEdge` attaches each Connection to `sourceRepr`/`targetRepr`
+(not the raw endpoint ids); `boundaryProxies` seed as `boundary-proxy` passive
+nodes. The frozen 5-field proxy row was **not** changed: "descend to real endpoint"
+navigates to the off-scope Component's **own scope** (`/p/[slug]/n/[realEndpointId]`,
+the meaning of "a node's scope" everywhere in this codebase), so no `parentId`-class
+field was added. The lineal/ingress case is detected client-side — a proxy whose
+`realEndpointId` is on the scope's breadcrumb trail — and labelled as an inbound
+boundary; no server data carries the distinction. Per-edge proxies render
+individually (no visual coalescing in this slice, as ADR-0031 sanctions).

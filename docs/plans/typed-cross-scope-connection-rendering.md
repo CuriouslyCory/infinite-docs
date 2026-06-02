@@ -211,8 +211,10 @@ a viewer (canEdit=false) sees arrowheads + proxies but no picker.
 - **Assumption (verified):** `canConnect` needs **no** interaction arm in #65 — #65 only
   *draws* `ASSOCIATION`s and *edits* interaction via `updateEdgeInteraction` (not through
   `canConnect`). The arm is a **#66** dependency (the draw-with-type "Connect to…" gesture).
-- **Open (UX, settle in dev-browser):** picker form (inline 5-glyph segmented control vs.
-  small popover); the "go to real" verb for ingress (ancestor) proxies ("Go to {title}").
+- **Decided:** picker form = **inline segmented control** (5 options driven by
+  `INTERACTION_LABEL`) at the selected edge, beside the label affordance. Interaction edit
+  surface = **separate `updateEdgeInteraction` mutation**. The "go to real" verb for ingress
+  (ancestor) proxies is "Go to {title}".
 - **Open (forward-compat):** whether #67 wants the `{atSource,atTarget}` boolean contract or
   a richer discriminant for glyph derivation — boolean pair trivially yields both markers and
   glyph; align with #67 to avoid a later refactor.
