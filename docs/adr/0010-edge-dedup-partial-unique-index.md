@@ -8,7 +8,20 @@ deferred future work; amends ADR-0005's consequences §3 by name. Amended by
 becomes an EXPRESSION index over `(canvasNodeId, LEAST(sourceId, targetId),
 GREATEST(sourceId, targetId))` so it enforces the **unordered** pair; the name,
 the partial `WHERE deletedAt IS NULL` clause, `NULLS NOT DISTINCT`, and the
-service-primary / index-backstop doctrine are unchanged.)*
+service-primary / index-backstop doctrine are unchanged.
+Amended further by
+[ADR-0027](0027-connection-carries-its-own-interaction.md) /
+[ADR-0028](0028-cross-scope-connections-lineal-ingress.md) (#62) — with
+`canvasNodeId` dropped, `idx_edge_dedup` is **replaced by two partial unique
+indexes keyed on `projectId`**: a **directional** index over
+`(projectId, sourceId, targetId, interaction)` (`WHERE interaction <>
+'ASSOCIATION'`) and an **`ASSOCIATION`-only unordered** index over
+`(projectId, LEAST(sourceId,targetId), GREATEST(sourceId,targetId))`. Both keep
+`WHERE deletedAt IS NULL`; `NULLS NOT DISTINCT` is dropped (`projectId` is
+non-null). The named pattern and the service-primary / index-backstop doctrine
+are unchanged; the collision matcher (`isEdgeDedupCollision`) now accepts both
+index names. The migration pre-flights an unordered-duplicate guard before
+creating the indexes.)*
 
 ## Context
 

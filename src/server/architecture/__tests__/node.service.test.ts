@@ -10,7 +10,6 @@ import {
   NotFoundError,
   ValidationError,
 } from "../errors";
-import { addFlow, attachFlowSpec, deleteFlow } from "../flow.service";
 import {
   assertNoOrphanedChildren,
   createNode,
@@ -602,7 +601,7 @@ describe("updateNodeKind", () => {
     expect(updated.kind).toBe("GLOBAL_INFRA");
   });
 
-  it("does not touch incident Connections or owned Flows (kind is cosmetic)", async () => {
+  it("does not touch incident Connections (kind is cosmetic)", async () => {
     const user = await makeUser();
     const actor: Actor = { userId: user.id, via: "session" };
     const project = await makeProject(user.id);
@@ -619,20 +618,11 @@ describe("updateNodeKind", () => {
       sourceId: a.id,
       targetId: b.id,
     });
-    const flow = await addFlow(testDb, actor, {
-      ownerNodeId: a.id,
-      kind: "GENERIC",
-      key: "f1",
-      title: "F1",
-      interaction: "REQUEST",
-    });
 
     await updateNodeKind(testDb, actor, { id: a.id, kind: "SERVICE" });
 
     const edgeAfter = await testDb.edge.findUnique({ where: { id: edge.id } });
-    const flowAfter = await testDb.flow.findUnique({ where: { id: flow.id } });
     expect(edgeAfter?.deletedAt).toBeNull();
-    expect(flowAfter?.deletedAt).toBeNull();
   });
 
   it("rejects a non-owner changing the kind", async () => {
@@ -1064,7 +1054,7 @@ describe("moveNode", () => {
     ).rejects.toBeInstanceOf(ForbiddenError);
   });
 
-  it("rejects a move when the Component still has incident Connections, naming them in details.conflictingEdgeIds", async () => {
+  it("succeeds when the Component has incident Connections — they simply become cross-scope (ADR-0028)", async () => {
     const user = await makeUser();
     const actor: Actor = { userId: user.id, via: "session" };
     const project = await makeProject(user.id);
@@ -1086,58 +1076,19 @@ describe("moveNode", () => {
       title: "Parent",
     });
 
-    const error = await moveNode(testDb, actor, {
-      id: a.id,
-      parentId: newParent.id,
-    }).then(
-      () => null,
-      (e: unknown) => e,
-    );
-
-    expect(error).toBeInstanceOf(ConflictError);
-    // Structured details are the AI-readable channel — the agent reads the
-    // blocking Connection ids and disconnects (or unroutes) before retrying
-    // (ADR-0010 named pattern, ADR-0024).
-    expect((error as ConflictError).details).toEqual({
-      conflictingEdgeIds: [edge.id],
-    });
-
-    // The move was rejected: parentId stays put.
-    const persisted = await testDb.node.findUnique({ where: { id: a.id } });
-    expect(persisted?.parentId).toBeNull();
-  });
-
-  it("ignores soft-deleted incident Connections when deciding whether to reject", async () => {
-    const user = await makeUser();
-    const actor: Actor = { userId: user.id, via: "session" };
-    const project = await makeProject(user.id);
-    const a = await createNode(testDb, actor, {
-      projectId: project.id,
-      title: "A",
-    });
-    const b = await createNode(testDb, actor, {
-      projectId: project.id,
-      title: "B",
-    });
-    const edge = await connectNodes(testDb, actor, {
-      projectId: project.id,
-      sourceId: a.id,
-      targetId: b.id,
-    });
-    await testDb.$transaction((tx) =>
-      deleteEdge(tx, actor, { id: edge.id }),
-    );
-    const newParent = await createNode(testDb, actor, {
-      projectId: project.id,
-      title: "Parent",
-    });
-
-    // The only incident edge is soft-deleted — move proceeds.
+    // The orphan-reject is retired: A reparents under Parent and its incident
+    // Connection to B (still on the root) simply becomes cross-scope — no
+    // reject, the Connection is untouched.
     const moved = await moveNode(testDb, actor, {
       id: a.id,
       parentId: newParent.id,
     });
     expect(moved.parentId).toBe(newParent.id);
+
+    const persistedEdge = await testDb.edge.findUnique({
+      where: { id: edge.id },
+    });
+    expect(persistedEdge?.deletedAt).toBeNull();
   });
 
   it("descendants travel with the moved Component (parentId of descendants unchanged)", async () => {
@@ -1346,7 +1297,6 @@ describe("deleteNode", () => {
     });
     const e2 = await connectNodes(testDb, actor, {
       projectId: project.id,
-      canvasNodeId: p.id,
       sourceId: c1.id,
       targetId: c2.id,
     });
@@ -1579,7 +1529,6 @@ describe("restoreNode", () => {
     });
     const e2 = await connectNodes(testDb, actor, {
       projectId: project.id,
-      canvasNodeId: p.id,
       sourceId: c1.id,
       targetId: c2.id,
     });
@@ -1755,16 +1704,8 @@ describe("restoreNode", () => {
   });
 });
 
-describe("deleteNode cascade — Flows & FlowSpec (ADR-0011)", () => {
-  const SMALL_OPENAPI_YAML = `
-openapi: 3.0.0
-paths:
-  /pets:
-    get: { summary: List pets }
-    post: { summary: Create pet }
-`;
-
-  it("stamps owned Flows and the owned FlowSpec with the same deletionId", async () => {
+describe("deleteNode cascade — Spec (ADR-0030)", () => {
+  it("stamps the owned Spec with the same deletionId, and restoreNode revives it", async () => {
     const user = await makeUser();
     const actor: Actor = { userId: user.id, via: "session" };
     const project = await makeProject(user.id);
@@ -1772,259 +1713,107 @@ paths:
       projectId: project.id,
       title: "API",
     });
-    await attachFlowSpec(testDb, actor, {
-      ownerNodeId: node.id,
-      kind: "OPENAPI",
-      source: SMALL_OPENAPI_YAML,
-    });
-
-    const del = await deleteNode(testDb, actor, { id: node.id });
-
-    expect(del.flowIds).toHaveLength(2);
-    expect(del.flowSpecIds).toHaveLength(1);
-
-    const sweptFlows = await testDb.flow.findMany({
-      where: { id: { in: del.flowIds } },
-    });
-    for (const flow of sweptFlows) {
-      expect(flow.deletionId).toBe(del.deletionId);
-      expect(flow.deletedAt).not.toBeNull();
-    }
-    const sweptSpecs = await testDb.flowSpec.findMany({
-      where: { id: { in: del.flowSpecIds } },
-    });
-    for (const spec of sweptSpecs) {
-      expect(spec.deletionId).toBe(del.deletionId);
-      expect(spec.deletedAt).not.toBeNull();
-    }
-  });
-
-  it("does not sweep Flows owned by Nodes outside the subtree", async () => {
-    const user = await makeUser();
-    const actor: Actor = { userId: user.id, via: "session" };
-    const project = await makeProject(user.id);
-    const a = await createNode(testDb, actor, {
-      projectId: project.id,
-      title: "A",
-    });
-    const b = await createNode(testDb, actor, {
-      projectId: project.id,
-      title: "B",
-    });
-    await addFlow(testDb, actor, {
-      ownerNodeId: a.id,
-      kind: "GENERIC",
-      key: "a-flow",
-      title: "A-Flow",
-      interaction: "REQUEST",
-    });
-    const bFlow = await addFlow(testDb, actor, {
-      ownerNodeId: b.id,
-      kind: "GENERIC",
-      key: "b-flow",
-      title: "B-Flow",
-      interaction: "REQUEST",
-    });
-
-    await deleteNode(testDb, actor, { id: a.id });
-
-    const survivor = await testDb.flow.findUniqueOrThrow({
-      where: { id: bFlow.id },
-    });
-    expect(survivor.deletedAt).toBeNull();
-    expect(survivor.deletionId).toBeNull();
-  });
-
-  it("does not re-stamp a Flow already soft-deleted by a lone deleteFlow", async () => {
-    const user = await makeUser();
-    const actor: Actor = { userId: user.id, via: "session" };
-    const project = await makeProject(user.id);
-    const node = await createNode(testDb, actor, {
-      projectId: project.id,
-      title: "API",
-    });
-    const flow = await addFlow(testDb, actor, {
-      ownerNodeId: node.id,
-      kind: "GENERIC",
-      key: "manual",
-      title: "Manual",
-      interaction: "REQUEST",
-    });
-
-    // Lone delete: soft-deletes with NO deletionId (ADR-0008).
-    await deleteFlow(testDb, actor, { id: flow.id });
-    const afterLone = await testDb.flow.findUniqueOrThrow({
-      where: { id: flow.id },
-    });
-    expect(afterLone.deletionId).toBeNull();
-
-    await deleteNode(testDb, actor, { id: node.id });
-
-    const afterCascade = await testDb.flow.findUniqueOrThrow({
-      where: { id: flow.id },
-    });
-    // Still null — the cascade's `deletedAt: null` filter excluded this row.
-    expect(afterCascade.deletionId).toBeNull();
-  });
-
-  it("restoreNode revives owned Flows and FlowSpec in lockstep with the parent", async () => {
-    const user = await makeUser();
-    const actor: Actor = { userId: user.id, via: "session" };
-    const project = await makeProject(user.id);
-    const node = await createNode(testDb, actor, {
-      projectId: project.id,
-      title: "API",
-    });
-    await attachFlowSpec(testDb, actor, {
-      ownerNodeId: node.id,
-      kind: "OPENAPI",
-      source: SMALL_OPENAPI_YAML,
-    });
-
-    const del = await deleteNode(testDb, actor, { id: node.id });
-    const res = await restoreNode(testDb, actor, {
-      deletionId: del.deletionId,
-    });
-
-    expect(res.flowIds).toEqual(del.flowIds);
-    expect(res.flowSpecIds).toEqual(del.flowSpecIds);
-    const flows = await testDb.flow.findMany({
-      where: { id: { in: del.flowIds } },
-    });
-    for (const flow of flows) {
-      expect(flow.deletedAt).toBeNull();
-      expect(flow.deletionId).toBeNull();
-    }
-    const specs = await testDb.flowSpec.findMany({
-      where: { id: { in: del.flowSpecIds } },
-    });
-    for (const spec of specs) {
-      expect(spec.deletedAt).toBeNull();
-      expect(spec.deletionId).toBeNull();
-    }
-  });
-
-  it("restoreNode rejects when a stamped Flow's (ownerNodeId, key) slot is occupied", async () => {
-    // Reachable today only via direct DB manipulation — cascading-delete
-    // sweeps a Flow alongside its owner Node, so re-adding the same
-    // (ownerNodeId, key) while soft-deleted always involves a fresh-id Node
-    // (different ownerNodeId). The path becomes reachable in production when
-    // future slices add concurrent writers that can slip a Flow in between
-    // operations. Same defensive posture as the Edge pre-check at
-    // node.service.ts:489-519. We construct the state by manually stamping
-    // the rows so the pre-check has something to find.
-    const user = await makeUser();
-    const actor: Actor = { userId: user.id, via: "session" };
-    const project = await makeProject(user.id);
-    const node = await createNode(testDb, actor, {
-      projectId: project.id,
-      title: "API",
-    });
-    const original = await addFlow(testDb, actor, {
-      ownerNodeId: node.id,
-      kind: "GENERIC",
-      key: "collide",
-      title: "Original",
-      interaction: "REQUEST",
-    });
-
-    // Mint a fake batch id and stamp Node + Flow as if they were swept
-    // together by a cascade. We bypass deleteNode so the Node ends up
-    // available for the conflicting Flow we create below.
-    const deletionId = "test-batch-id";
-    const now = new Date();
-    await testDb.flow.update({
-      where: { id: original.id },
-      data: { deletedAt: now, deletionId },
-    });
-    // restoreNode looks for at least one Node with the deletionId; without
-    // one it returns NotFoundError before reaching the Flow pre-check.
-    await testDb.node.update({
-      where: { id: node.id },
-      data: { deletedAt: now, deletionId },
-    });
-
-    // The conflicting active Flow: the partial unique index allows it
-    // because `original` is now soft-deleted. Direct create — addFlow would
-    // reject because the owner Node is soft-deleted.
-    const conflicting = await testDb.flow.create({
+    // No Spec writer ships in #62 (the spec→Component generator is #64), so
+    // seed the row directly to exercise the cascade arm.
+    const spec = await testDb.spec.create({
       data: {
         projectId: project.id,
         ownerNodeId: node.id,
-        kind: "GENERIC",
-        key: "collide",
-        title: "Conflicting",
-        interaction: "REQUEST",
+        kind: "OPENAPI",
+        source: "openapi: 3.0.0",
       },
     });
 
-    const error = await restoreNode(testDb, actor, { deletionId }).then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(error).toBeInstanceOf(ConflictError);
-    expect((error as ConflictError).details).toEqual({
-      conflictingFlowIds: [conflicting.id],
+    const del = await deleteNode(testDb, actor, { id: node.id });
+
+    expect(del.specIds).toEqual([spec.id]);
+    const swept = await testDb.spec.findUniqueOrThrow({ where: { id: spec.id } });
+    expect(swept.deletionId).toBe(del.deletionId);
+    expect(swept.deletedAt).not.toBeNull();
+
+    const res = await restoreNode(testDb, actor, { deletionId: del.deletionId });
+    expect(res.specIds).toEqual([spec.id]);
+    const revived = await testDb.spec.findUniqueOrThrow({
+      where: { id: spec.id },
     });
+    expect(revived.deletedAt).toBeNull();
+    expect(revived.deletionId).toBeNull();
   });
 
-  // NOTE: a parallel "restoreNode rejects when a stamped FlowSpec's owner
-  // slot is occupied" test is intentionally omitted. FlowSpec.ownerNodeId is
-  // a regular @unique constraint (not partial), so two FlowSpec rows on the
-  // same Node — even one soft-deleted — cannot coexist; the unreachable
-  // state can only be constructed by bypassing Postgres's unique constraint
-  // entirely. The pre-check in restoreNode is kept as defense-in-depth
-  // (cheap, parallel to the Edge and Flow guards), but it is not testable
-  // through normal paths.
-});
-
-describe("getCanvas — _count.flows aggregate (ADR-0011)", () => {
-  it("interiorNodes[i]._count.flows equals the active Flow count for that owner", async () => {
+  it("does not sweep a Spec owned by a Node outside the subtree", async () => {
     const user = await makeUser();
     const actor: Actor = { userId: user.id, via: "session" };
     const project = await makeProject(user.id);
-    const a = await createNode(testDb, actor, {
-      projectId: project.id,
-      title: "A",
+    const a = await createNode(testDb, actor, { projectId: project.id, title: "A" });
+    const b = await createNode(testDb, actor, { projectId: project.id, title: "B" });
+    await testDb.spec.create({
+      data: {
+        projectId: project.id,
+        ownerNodeId: a.id,
+        kind: "OPENAPI",
+        source: "a",
+      },
     });
-    const b = await createNode(testDb, actor, {
-      projectId: project.id,
-      title: "B",
+    const bSpec = await testDb.spec.create({
+      data: {
+        projectId: project.id,
+        ownerNodeId: b.id,
+        kind: "OPENAPI",
+        source: "b",
+      },
     });
-    await addFlow(testDb, actor, {
-      ownerNodeId: a.id,
-      kind: "GENERIC",
-      key: "a1",
-      title: "T",
-      interaction: "REQUEST",
-    });
-    await addFlow(testDb, actor, {
-      ownerNodeId: a.id,
-      kind: "GENERIC",
-      key: "a2",
-      title: "T",
-      interaction: "PUSH",
-    });
-    await addFlow(testDb, actor, {
-      ownerNodeId: b.id,
-      kind: "GENERIC",
-      key: "b1",
-      title: "T",
-      interaction: "REQUEST",
-    });
-    // Soft-delete one of A's: count must drop to 1.
-    const soft = await addFlow(testDb, actor, {
-      ownerNodeId: a.id,
-      kind: "GENERIC",
-      key: "a3",
-      title: "T",
-      interaction: "REQUEST",
-    });
-    await deleteFlow(testDb, actor, { id: soft.id });
 
-    const canvas = await getCanvas(testDb, null, { slug: project.slug });
-    const byId = new Map(canvas.interiorNodes.map((n) => [n.id, n]));
-    expect(byId.get(a.id)?._count.flows).toBe(2);
-    expect(byId.get(b.id)?._count.flows).toBe(1);
+    const del = await deleteNode(testDb, actor, { id: a.id });
+
+    expect(del.specIds).toHaveLength(1);
+    const survivor = await testDb.spec.findUniqueOrThrow({
+      where: { id: bSpec.id },
+    });
+    expect(survivor.deletedAt).toBeNull();
   });
+
+  it("spec-derived child Components ride the subtree cascade (no special arm)", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await makeProject(user.id);
+    const api = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "API",
+    });
+    const spec = await testDb.spec.create({
+      data: {
+        projectId: project.id,
+        ownerNodeId: api.id,
+        kind: "OPENAPI",
+        source: "openapi",
+      },
+    });
+    // A generated child Component: an ordinary Node carrying provenance.
+    const endpoint = await testDb.node.create({
+      data: {
+        projectId: project.id,
+        parentId: api.id,
+        title: "GET /pets",
+        sourceSpecId: spec.id,
+        specKey: "GET /pets",
+      },
+    });
+
+    const del = await deleteNode(testDb, actor, { id: api.id });
+
+    // The derived child is swept by the ordinary subtree descent.
+    expect(new Set(del.nodeIds)).toEqual(new Set([api.id, endpoint.id]));
+    const child = await testDb.node.findUniqueOrThrow({
+      where: { id: endpoint.id },
+    });
+    expect(child.deletionId).toBe(del.deletionId);
+  });
+
+  // NOTE: a "restoreNode rejects when a stamped Spec's owner slot is occupied"
+  // test is intentionally omitted. `Spec.ownerNodeId` is a regular @unique
+  // constraint (not partial), so a soft-deleted Spec still holds the owner slot
+  // — two Spec rows on the same owner cannot coexist even with one soft-deleted,
+  // so the conflicting active row the test would need cannot be constructed. The
+  // restoreNode Spec pre-check is kept (cheap, parallel to the Edge guard) but is
+  // not reachable this way. (Same reasoning the retired FlowSpec guard carried.)
 });

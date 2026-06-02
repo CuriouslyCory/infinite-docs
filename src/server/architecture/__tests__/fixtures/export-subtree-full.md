@@ -7,6 +7,7 @@
 
 - **Postgres** (Database) — direct
 - **Third Party API** (External API) — direct
+- **Analytics API** (External API) — inherited
 
 ## Components
 
@@ -32,4 +33,4 @@ Tokens are JWT-based.
 
 ## Connections
 
-- Auth Module → Users Module (canvas: API Gateway)
+- Auth Module → Users Module

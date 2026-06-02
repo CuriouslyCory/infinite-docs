@@ -38,7 +38,7 @@ describe("canConnect", () => {
     });
   });
 
-  it("treats A→B and B→A as the same Connection (undirected; ADR-0023)", () => {
+  it("treats A→B and B→A as the same ASSOCIATION (unordered pair; ADR-0027)", () => {
     const existing = [{ source: "b", target: "a" }];
     expect(canConnect({ source: "a", target: "b" }, existing)).toEqual({
       ok: false,

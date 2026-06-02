@@ -2,20 +2,14 @@ import { randomUUID } from "node:crypto";
 
 import {
   type Edge,
-  type FlowKind as PrismaFlowKind,
-  type FlowInteraction as PrismaFlowInteraction,
   type Node,
   type NodeKind as PrismaNodeKind,
-  type Prisma,
 } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
+import { activeDuplicateWhere } from "./edge.service";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
-import {
-  isEdgeDedupCollision,
-  isFlowDedupCollision,
-  isFlowRouteDedupCollision,
-} from "./prisma-errors";
+import { isEdgeDedupCollision } from "./prisma-errors";
 import {
   createNodeInput,
   deleteNodeInput,
@@ -159,130 +153,8 @@ export async function createNode(
   });
 }
 
-/**
- * Materializes a Canvas for a scope: its interior Components (Nodes whose
- * `parentId` is the scope) and Connections (Edges whose `canvasNodeId` is the
- * scope), per the Canvas derivation in CONTEXT.md. Addressed by the capability
- * `slug` (the read grant, ADR-0002), so it works without a session.
- *
- * Interior Nodes, interior Edges, and the breadcrumb trail are independent, so
- * they are fetched concurrently — one round-trip's depth, no waterfall (the
- * perf model, PRD). The result is named in Node/Edge terms even though users
- * see "the interior Components and Connections" (the Component/Node +
- * Connection/Edge split).
- *
- * `breadcrumbs` is the ordered ancestor chain (root -> current scope, the
- * current scope included) computed in a SINGLE recursive CTE, never a per-level
- * walk (ADR-0006). The root scope (`canvasNodeId === null`) has no ancestors and
- * returns `[]`. A non-null scope that resolves to no live Node in this Project
- * (missing / soft-deleted / cross-project) is a not-found — detected by an empty
- * breadcrumb trail, NOT by an empty interior (an empty interior is a legitimate
- * leaf Component). `boundaryProxies` joins this payload with boundary derivation
- * (M3).
- *
- * NOTE: the breadcrumb query is raw SQL — the first in the repo. Postgres folds
- * unquoted identifiers to lowercase, so every model/column name is double-quoted
- * PascalCase (`"Node"`, `"parentId"`, ...); the scope id and project id are
- * bound parameters, never string-interpolated. See ADR-0006.
- */
-// Shape of an `interiorNode` in the `getCanvas` payload: the Node plus the
-// `_count.flows` aggregate that drives the "N flows" pill on the Component
-// body. Folded into the same `findMany` so the count costs no extra round
-// trip (ADR-0001 single-round-trip read; ADR-0011 — Flow as first-class).
-export type CanvasInteriorNode = Prisma.NodeGetPayload<{
-  include: { _count: { select: { flows: true } } };
-}>;
-
-// Per-Edge Flow aggregation that drives the "N / M routed" pill on a
-// Connection (Slice 2 of flow-routed-connections). One entry per interior
-// Edge on the requested Canvas scope; missing Edges (no Flows touching, no
-// FlowRoutes) get a zero entry so the UI never has to defend against an
-// absent key.
-//
-// - `total` = active Flows whose owner is either endpoint of the Edge (LOOSE:
-//   any owner-endpoint Flow can ride a Connection, so this is the full set;
-//   ADR-0023).
-// - `routed` = active FlowRoutes with this Edge as `outerEdgeId` and a live
-//   Flow.
-// - `unrouted` = `total - routed`.
-// - `orphan` = active FlowRoutes with this Edge as `outerEdgeId` whose Flow
-//   is soft-deleted (re-parse fallout — the Flow's spec dropped its key,
-//   the route hangs visibly rather than vanishing silently; ADR-0011).
-// - `byKind` = per-`FlowKind` count of the `routed` set only.
-// - `arrowAtSource` / `arrowAtTarget` = how many live routed Flows point their
-//   arrow at the Edge's stored `source` / `target` endpoint, derived per Flow
-//   from `(owner, interaction)` — the canonical rule is `~/lib/flow-direction`
-//   `flowArrowEndpoints`, mirrored in the aggregation SQL. The client renders a
-//   `markerStart` when `arrowAtSource > 0` and a `markerEnd` when
-//   `arrowAtTarget > 0`; both → a two-way (WebSocket) Connection, neither → an
-//   undirected line. Counts (not booleans) so the optimistic route/unroute
-//   delta is inverse-safe under concurrent edits (ADR-0023).
-export interface EdgeFlowsEntry {
-  edgeId: string;
-  total: number;
-  routed: number;
-  unrouted: number;
-  orphan: number;
-  byKind: Partial<Record<PrismaFlowKind, number>>;
-  arrowAtSource: number;
-  arrowAtTarget: number;
-}
-
-// A boundary proxy on the requested Canvas scope (M3 / #13): a read-only
-// stand-in for an external Component this scope (or an ancestor) connects to on
-// its parent Canvas, projected inward. Derived transitively, never persisted —
-// `boundary(H) = directBoundary(H) ∪ boundary(H.parent)`.
-//
-// - `origin: "direct"` — an external the CURRENT scope's Component connects to
-//   on its own parent Canvas. `"inherited"` — projected down from an ancestor.
-//   Drives the collapse/group UX (#14): inherited proxies fold away to keep a
-//   deep Canvas uncluttered.
-export interface BoundaryProxyEntry {
-  nodeId: string;
-  title: string;
-  kind: PrismaNodeKind;
-  origin: "direct" | "inherited";
-  // The incident outer Connection between the current scope's Component and this
-  // proxy on the scope's parent Canvas — the single Edge a palette drag refines
-  // (Slice 3 / ADR-0012). A Connection is undirected, so there is exactly one per
-  // pair regardless of which way it was drawn, and any Flow rides it regardless
-  // of its interaction (ADR-0023 retired the orientation split and the
-  // reverse-Connection offer). Non-null only for `origin: "direct"` proxies (a
-  // refinement binds an Edge incident to the current scope); null = inherited or
-  // unconnected. (When several Connections somehow share the pair — impossible
-  // under the unordered de-dupe — the lexically-first id is chosen.)
-  outerEdgeId: string | null;
-}
-
-// One Flow as the boundary-proxy palette renders it (Slice 3 / ADR-0012). A
-// lean projection of `Flow` — the palette needs identity, render labels, and
-// the interaction verb that drives its arrow direction, not the full
-// `signature` Json. `getCanvas` bundles the first `FLOW_PALETTE_PAGE_SIZE` per
-// in-scope proxy; the rest page in through `getFlowPalette`.
-export interface FlowPaletteItem {
-  id: string;
-  ownerNodeId: string;
-  kind: PrismaFlowKind;
-  key: string;
-  title: string;
-  interaction: PrismaFlowInteraction;
-}
-
-export interface FlowPalette {
-  flows: FlowPaletteItem[];
-  // `true` when the owner has more active Flows than the bundled page — the
-  // inspector pages the remainder in via `getFlowPalette`.
-  hasMore: boolean;
-}
-
-// First page of a boundary proxy's Flow palette bundled into `getCanvas`. The
-// worst case (a 200-operation OpenAPI spec) ships 50 here and the rest behind
-// `hasMore` — the bundled read stays O(boundary proxies on this scope), never
-// O(project) (master plan perf posture).
-export const FLOW_PALETTE_PAGE_SIZE = 50;
-
-// Bound on the ancestry walk shared by the breadcrumb and boundary-derivation
-// CTEs. The graph is acyclic — `moveNode` owns cycle prevention (ADR-0024,
+// Bound on the breadcrumb ancestry walk. The graph is acyclic — `moveNode`
+// owns cycle prevention (ADR-0024,
 // rejecting any reparent whose new parent sits in the moving subtree) — so the
 // cap is not the only defense against unbounded recursion; it ALSO bounds
 // legitimate nesting. Rather than silently truncate a trail (or a proxy set)
@@ -294,127 +166,43 @@ export const FLOW_PALETTE_PAGE_SIZE = 50;
 // Canvas.
 const ANCESTRY_DEPTH_CAP = 256;
 
-// Raw shape of one row from the boundary-derivation query. `palette` is a
-// Postgres `json` column (parsed to a JS array by the pg adapter) holding up to
-// FLOW_PALETTE_PAGE_SIZE + 1 items so the caller can compute `hasMore`.
-interface BoundaryProxyRow {
-  node_id: string;
-  title: string;
-  kind: PrismaNodeKind;
-  is_direct: boolean;
-  outer_edge_id: string | null;
-  palette: FlowPaletteItem[];
-}
-
 /**
- * Derives the boundary proxies and their first-page Flow palettes for a scope in
- * ONE recursive-CTE round trip (ADR-0012 / #13 / #14). Walks the ancestor chain
- * from `canvasNodeId` to the root; for each ancestor `a` it pulls the Edges on
- * `a`'s parent Canvas incident to `a` and takes the OTHER endpoint as a boundary
- * proxy. `is_direct` (depth 0) marks the scope's own externals — routable here,
- * carrying the single incident outer Edge id (ADR-0023) — vs inherited ones
- * (#14). Each proxy's palette is a
- * correlated `json_agg` of its first FLOW_PALETTE_PAGE_SIZE + 1 active Flows (+1
- * reveals `hasMore`). The root scope has no ancestors, so it has no proxies.
+ * Materializes a Canvas for a scope in a single round trip (ADR-0001): its
+ * interior Components and the Connections among them, plus the breadcrumb trail.
+ * Addressed by the capability `slug` (the read grant, ADR-0002), so it works
+ * without a session.
  *
- * CALLER MUST HAVE AUTHORIZED `projectId` — this helper takes no Actor and does
- * NO authorization of its own. It is a private read-side projection; the
- * slug→project bind in `getCanvas` is the gate (ADR-0002). A future caller (a
- * Slice-4 polarity reconciler, an admin/MCP read) that invokes it without first
- * resolving and authorizing the project would walk ancestry across whatever
- * `projectId` it is handed. Keep it private to this module.
- */
-async function deriveBoundaryProxies(
-  db: Db,
-  projectId: string,
-  canvasNodeId: string | null,
-): Promise<BoundaryProxyRow[]> {
-  if (canvasNodeId === null) {
-    return [];
-  }
-  return db.$queryRaw<BoundaryProxyRow[]>`
-    WITH RECURSIVE ancestry AS (
-      SELECT n.id, n."parentId", 0 AS depth
-      FROM "Node" n
-      WHERE n.id = ${canvasNodeId}
-        AND n."projectId" = ${projectId}
-        AND n."deletedAt" IS NULL
-      UNION ALL
-      SELECT p.id, p."parentId", a.depth + 1
-      FROM "Node" p
-      JOIN ancestry a ON p.id = a."parentId"
-      WHERE p."projectId" = ${projectId}
-        AND p."deletedAt" IS NULL
-        AND a.depth < ${ANCESTRY_DEPTH_CAP}
-    )
-    SELECT
-      proxy.id AS node_id,
-      proxy.title AS title,
-      proxy.kind AS kind,
-      BOOL_OR(a.depth = 0) AS is_direct,
-      MIN(CASE WHEN a.depth = 0 THEN e.id END) AS outer_edge_id,
-      (
-        SELECT COALESCE(
-          json_agg(
-            json_build_object(
-              'id', pf.id,
-              'ownerNodeId', pf."ownerNodeId",
-              'kind', pf.kind,
-              'key', pf.key,
-              'title', pf.title,
-              'interaction', pf.interaction
-            )
-            ORDER BY pf."createdAt"
-          ),
-          '[]'::json
-        )
-        FROM (
-          SELECT f.id, f."ownerNodeId", f.kind, f.key, f.title,
-                 f.interaction, f."createdAt"
-          FROM "Flow" f
-          WHERE f."ownerNodeId" = proxy.id AND f."deletedAt" IS NULL
-          ORDER BY f."createdAt" ASC
-          LIMIT ${FLOW_PALETTE_PAGE_SIZE + 1}
-        ) pf
-      ) AS palette
-    FROM ancestry a
-    JOIN "Edge" e
-      ON e."canvasNodeId" IS NOT DISTINCT FROM a."parentId"
-      AND e."deletedAt" IS NULL
-      AND (e."sourceId" = a.id OR e."targetId" = a.id)
-    JOIN "Node" proxy
-      ON proxy.id = CASE
-        WHEN e."sourceId" = a.id THEN e."targetId"
-        ELSE e."sourceId"
-      END
-      AND proxy."deletedAt" IS NULL
-    WHERE proxy.id NOT IN (SELECT id FROM ancestry)
-    GROUP BY proxy.id, proxy.title, proxy.kind
-    ORDER BY BOOL_OR(a.depth = 0) DESC, proxy.title ASC`;
-}
-
-/**
- * Reads everything one Canvas scope needs in a single round trip (ADR-0001):
- * interior Components + Connections, the per-Edge Flow aggregation, the boundary
- * proxies and their first-page palettes, and the breadcrumb trail.
+ * `interiorNodes` are the Nodes whose `parentId` is the scope. `interiorEdges`
+ * are the Edges with BOTH endpoints on this Canvas — a single relation-filtered
+ * query (`source.parentId === scope AND target.parentId === scope`), since an
+ * Edge no longer stores its scope (ADR-0028). A cross-scope Edge (endpoints on
+ * different Canvases) appears in NEITHER Canvas's interior set here; rendering it
+ * at the right altitude — the redefined boundary proxy — is #63. This slice
+ * renders only same-Canvas Connections, as plain lines.
+ *
+ * `breadcrumbs` is the ordered ancestor chain (root → current scope, included)
+ * computed in a SINGLE recursive CTE, never a per-level walk (ADR-0006). The
+ * root scope (`canvasNodeId === null`) has no ancestors and returns `[]`. A
+ * non-null scope that resolves to no live Node in this Project (missing /
+ * soft-deleted / cross-project) is a not-found — detected by an empty breadcrumb
+ * trail, NOT by an empty interior (an empty interior is a legitimate leaf
+ * Component).
+ *
+ * NOTE: the breadcrumb query is raw SQL. Postgres folds unquoted identifiers to
+ * lowercase, so every model/column name is double-quoted PascalCase; the scope
+ * id and project id are bound parameters, never string-interpolated (ADR-0006).
  *
  * Slug-readable (ADR-0002): the capability slug IS the read grant, so `actor` is
  * not consulted — it is accepted only to match the readable-procedure signature
- * shape (`db, actor, input`) shared with `getFlowsForNode` / `getFlowPalette`,
- * and is plumbed for a future owner-gated field. The slug→project bind below is
- * the authorization gate every raw query (including `deriveBoundaryProxies`)
- * relies on.
+ * shape (`db, actor, input`). The slug→project bind below is the gate.
  */
 export async function getCanvas(
   db: Db,
   _actor: Actor | null,
   input: GetCanvasInput,
 ): Promise<{
-  interiorNodes: CanvasInteriorNode[];
+  interiorNodes: Node[];
   interiorEdges: Edge[];
-  edgeFlows: EdgeFlowsEntry[];
-  boundaryProxies: BoundaryProxyEntry[];
-  flowPalettes: Record<string, FlowPalette>;
   breadcrumbs: { id: string; title: string; kind: NodeKind }[];
 }> {
   const { slug, canvasNodeId } = getCanvasInput.parse(input);
@@ -427,141 +215,54 @@ export async function getCanvas(
     throw new NotFoundError();
   }
 
-  // All four reads run in one `Promise.all` — no per-Edge waterfall, no
-  // dependency on `interiorEdges` resolving first (the Flow aggregations
-  // filter directly on projectId + canvasNodeId via JOIN to Edge). One
-  // round-trip's depth (ADR-0001 / ADR-0006).
-  //
-  // The two FlowRoute aggregations are raw SQL because:
-  //   1. `orphan` requires joining FlowRoute to Flow INCLUDING soft-deleted
-  //      Flow rows — Prisma's `findMany` with relations defaults to
-  //      filtering `deletedAt: null`, which would erase the orphan signal.
-  //   2. `IS NOT DISTINCT FROM` is needed for `canvasNodeId` because the
-  //      root Canvas's scope is null — a plain `=` against null is falsy
-  //      and root-Canvas edges would be silently filtered out. Same trap
-  //      `idx_edge_dedup`'s `NULLS NOT DISTINCT` documents (ADR-0010).
-  const [
-    interiorNodes,
-    interiorEdges,
-    breadcrumbs,
-    routeRows,
-    totalRows,
-    boundaryRows,
-  ] = await Promise.all([
-      db.node.findMany({
-        where: { projectId: project.id, parentId: canvasNodeId, deletedAt: null },
-        orderBy: { createdAt: "asc" },
-        // Active Flow count per Node — drives the "N flows" pill on the
-        // Component body. `where: { deletedAt: null }` on the relation count
-        // excludes soft-deleted Flows, so the pill reflects what the user
-        // sees in the Flow palette (ADR-0011).
-        include: {
-          _count: { select: { flows: { where: { deletedAt: null } } } },
-        },
-      }),
-      db.edge.findMany({
-        where: { projectId: project.id, canvasNodeId, deletedAt: null },
-        orderBy: { createdAt: "asc" },
-      }),
-      // The breadcrumb trail walks `parentId` from the scope up to the root
-      // in one recursive CTE (ADR-0006). At the root scope there are no
-      // ancestors, so we skip the query entirely. The `ANCESTRY_DEPTH_CAP`
-      // bound is belt-and-suspenders against cycle-prevention regressions
-      // (`moveNode` owns prevention today, ADR-0024) and a real depth cap; a
-      // walk that reaches it is detected below and throws rather than
-      // returning a silently-truncated trail.
-      canvasNodeId === null
-        ? Promise.resolve<{ id: string; title: string; kind: NodeKind }[]>([])
-        : db.$queryRaw<{ id: string; title: string; kind: NodeKind }[]>`
-            WITH RECURSIVE ancestry AS (
-              SELECT n.id, n.title, n.kind, n."parentId", 0 AS depth
-              FROM "Node" n
-              WHERE n.id = ${canvasNodeId}
-                AND n."projectId" = ${project.id}
-                AND n."deletedAt" IS NULL
-              UNION ALL
-              SELECT p.id, p.title, p.kind, p."parentId", a.depth + 1
-              FROM "Node" p
-              JOIN ancestry a ON p.id = a."parentId"
-              WHERE p."projectId" = ${project.id}
-                AND p."deletedAt" IS NULL
-                AND a.depth < ${ANCESTRY_DEPTH_CAP}
-            )
-            SELECT id, title, kind FROM ancestry ORDER BY depth DESC`,
-      // Route aggregation: routed + orphan + byKind per outer Edge on this
-      // Canvas. JOIN to Flow keeps soft-deleted rows so orphan detection
-      // works; `is_orphan` flags them. byKind is the kind of every active
-      // route (orphan rows excluded — their Flow's kind is on a dead row,
-      // displaying it would mislead the user about what's live).
-      db.$queryRaw<
-        {
-          edge_id: string;
-          flow_kind: PrismaFlowKind;
-          is_orphan: boolean;
-          n: bigint;
-          arrow_at_source: bigint;
-          arrow_at_target: bigint;
-        }[]
-      >`
-        SELECT
-          fr."outerEdgeId" AS edge_id,
-          f.kind AS flow_kind,
-          (f."deletedAt" IS NOT NULL) AS is_orphan,
-          COUNT(*)::bigint AS n,
-          -- Arrow direction per live routed Flow, derived from (owner,
-          -- interaction). Mirrors flowArrowEndpoints in src/lib/flow-direction
-          -- (the canonical rule): REQUEST/SUBSCRIBE point at the owner,
-          -- PUSH points away, DUPLEX both. Summed here, folded across kinds
-          -- per edge in JS; only the non-orphan rows contribute (ADR-0023).
-          SUM(CASE WHEN
-            (f."ownerNodeId" = e."sourceId" AND f.interaction IN ('REQUEST', 'SUBSCRIBE', 'DUPLEX'))
-            OR (f."ownerNodeId" = e."targetId" AND f.interaction IN ('PUSH', 'DUPLEX'))
-          THEN 1 ELSE 0 END)::bigint AS arrow_at_source,
-          SUM(CASE WHEN
-            (f."ownerNodeId" = e."sourceId" AND f.interaction IN ('PUSH', 'DUPLEX'))
-            OR (f."ownerNodeId" = e."targetId" AND f.interaction IN ('REQUEST', 'SUBSCRIBE', 'DUPLEX'))
-          THEN 1 ELSE 0 END)::bigint AS arrow_at_target
-        FROM "FlowRoute" fr
-        JOIN "Edge" e ON e.id = fr."outerEdgeId"
-        JOIN "Flow" f ON f.id = fr."flowId"
-        WHERE e."projectId" = ${project.id}
-          AND e."canvasNodeId" IS NOT DISTINCT FROM ${canvasNodeId}
-          AND e."deletedAt" IS NULL
-          AND fr."deletedAt" IS NULL
-        GROUP BY fr."outerEdgeId", f.kind, (f."deletedAt" IS NOT NULL)`,
-      // Total per Edge: distinct active Flows whose owner is either
-      // endpoint of the Edge. Loose definition — no polarity filter, Slice
-      // 4 tightens (ADR-0013). DISTINCT because a single Flow could
-      // structurally be owned by both endpoints if a self-link were
-      // allowed; today self-links are forbidden (ADR-0005) but DISTINCT
-      // keeps the count honest under future relaxations.
-      db.$queryRaw<{ edge_id: string; n: bigint }[]>`
-        SELECT
-          e.id AS edge_id,
-          COUNT(DISTINCT f.id)::bigint AS n
-        FROM "Edge" e
-        JOIN "Flow" f
-          ON f."ownerNodeId" IN (e."sourceId", e."targetId")
-        WHERE e."projectId" = ${project.id}
-          AND e."canvasNodeId" IS NOT DISTINCT FROM ${canvasNodeId}
-          AND e."deletedAt" IS NULL
-          AND f."deletedAt" IS NULL
-        GROUP BY e.id`,
-      // Boundary proxies + their Flow palettes for this scope (M3 / #13 +
-      // Slice 3 / ADR-0012), in ONE statement so the single-round-trip read
-      // holds (ADR-0001). Extracted to `deriveBoundaryProxies` (which carries
-      // the authorization contract); the slug→project bind above is its gate.
-      deriveBoundaryProxies(db, project.id, canvasNodeId),
-    ]);
+  // The three reads run in one `Promise.all` — no waterfall, no dependency on
+  // `interiorNodes` resolving first. `interiorEdges` filters on the endpoints'
+  // `parentId` via a relation filter (both endpoints on this scope), so it
+  // needs no stored scope and no interior-id set computed first (ADR-0001).
+  const [interiorNodes, interiorEdges, breadcrumbs] = await Promise.all([
+    db.node.findMany({
+      where: { projectId: project.id, parentId: canvasNodeId, deletedAt: null },
+      orderBy: { createdAt: "asc" },
+    }),
+    db.edge.findMany({
+      where: {
+        projectId: project.id,
+        deletedAt: null,
+        source: { parentId: canvasNodeId, deletedAt: null },
+        target: { parentId: canvasNodeId, deletedAt: null },
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+    // The breadcrumb trail walks `parentId` from the scope up to the root in
+    // one recursive CTE (ADR-0006). At the root scope there are no ancestors,
+    // so skip the query. `ANCESTRY_DEPTH_CAP` is belt-and-suspenders against a
+    // cycle-prevention regression (`moveNode` owns prevention, ADR-0024) and a
+    // real depth cap; a walk that reaches it is detected below and throws
+    // rather than returning a silently-truncated trail.
+    canvasNodeId === null
+      ? Promise.resolve<{ id: string; title: string; kind: NodeKind }[]>([])
+      : db.$queryRaw<{ id: string; title: string; kind: NodeKind }[]>`
+          WITH RECURSIVE ancestry AS (
+            SELECT n.id, n.title, n.kind, n."parentId", 0 AS depth
+            FROM "Node" n
+            WHERE n.id = ${canvasNodeId}
+              AND n."projectId" = ${project.id}
+              AND n."deletedAt" IS NULL
+            UNION ALL
+            SELECT p.id, p.title, p.kind, p."parentId", a.depth + 1
+            FROM "Node" p
+            JOIN ancestry a ON p.id = a."parentId"
+            WHERE p."projectId" = ${project.id}
+              AND p."deletedAt" IS NULL
+              AND a.depth < ${ANCESTRY_DEPTH_CAP}
+          )
+          SELECT id, title, kind FROM ancestry ORDER BY depth DESC`,
+  ]);
 
-  // A walk that reached the depth ceiling returns a silently-truncated trail
-  // (and proxy set). Surface it as a typed error rather than handing back a
-  // quietly-incomplete Canvas — see `ANCESTRY_DEPTH_CAP`. The recursive CTE
-  // emits depths 0..CAP, so a full walk is CAP + 1 rows; anything beyond means
-  // the ceiling clipped it. (The graph is a tree today, so this is unreachable
-  // short of pathological nesting; it becomes live cycle-defense once reparent
-  // lands. Defensive guard — not pinned by a contrived deep-chain test, per the
-  // ADR-0014 precedent / Philosophy #6.)
+  // A walk that reached the depth ceiling returns a silently-truncated trail.
+  // Surface it as a typed error rather than handing back a quietly-incomplete
+  // Canvas — see `ANCESTRY_DEPTH_CAP`. The recursive CTE emits depths 0..CAP, so
+  // a full walk is CAP + 1 rows; anything beyond means the ceiling clipped it.
   if (breadcrumbs.length > ANCESTRY_DEPTH_CAP) {
     throw new ValidationError(
       "This Canvas is nested too deeply to display.",
@@ -577,110 +278,7 @@ export async function getCanvas(
     throw new NotFoundError();
   }
 
-  // Merge the two aggregations keyed by edge_id. Every interior Edge gets
-  // an entry (zero-valued when neither aggregation produced a row), so the
-  // client never needs to defend against a missing key.
-  const edgeFlowsByEdge = new Map<string, EdgeFlowsEntry>();
-  for (const edge of interiorEdges) {
-    edgeFlowsByEdge.set(edge.id, {
-      edgeId: edge.id,
-      total: 0,
-      routed: 0,
-      unrouted: 0,
-      orphan: 0,
-      byKind: {},
-      arrowAtSource: 0,
-      arrowAtTarget: 0,
-    });
-  }
-  for (const row of routeRows) {
-    const entry = edgeFlowsByEdge.get(row.edge_id);
-    if (!entry) continue;
-    const count = Number(row.n);
-    if (row.is_orphan) {
-      entry.orphan += count;
-    } else {
-      entry.routed += count;
-      entry.byKind[row.flow_kind] = (entry.byKind[row.flow_kind] ?? 0) + count;
-      // Arrowheads count only live routed Flows; an orphan's Flow is gone, so
-      // its (dead) interaction must not steer the rendered direction (ADR-0023).
-      entry.arrowAtSource += Number(row.arrow_at_source);
-      entry.arrowAtTarget += Number(row.arrow_at_target);
-    }
-  }
-  for (const row of totalRows) {
-    const entry = edgeFlowsByEdge.get(row.edge_id);
-    if (!entry) continue;
-    entry.total = Number(row.n);
-  }
-  for (const entry of edgeFlowsByEdge.values()) {
-    // `unrouted` is `total - routed`, floored at 0 — a Flow whose route was
-    // soft-deleted but whose owner is still an endpoint stays counted in
-    // `total` and stays "unrouted" once `routed` drops. Orphan does NOT
-    // count against `total` (the Flow itself is gone) so it doesn't push
-    // `unrouted` negative.
-    //
-    // The floor never actually fires today: `routeFlow` requires the Flow's
-    // owner to be an endpoint, so every routed live Flow is also counted in
-    // `total` (routed <= total always). It guards a case a later slice
-    // introduces — a routed Flow whose owner is NO LONGER an endpoint (Slice
-    // 3 inner-edge routing, or a future reparent/move) — so don't read it as
-    // dead defense and remove it.
-    entry.unrouted = Math.max(0, entry.total - entry.routed);
-  }
-  const edgeFlows = interiorEdges.map(
-    (e) => edgeFlowsByEdge.get(e.id) ?? {
-      edgeId: e.id,
-      total: 0,
-      routed: 0,
-      unrouted: 0,
-      orphan: 0,
-      byKind: {},
-      arrowAtSource: 0,
-      arrowAtTarget: 0,
-    },
-  );
-
-  // Split the one boundary query into the two payload fields: the proxy list
-  // (#13/#14) and the per-proxy palette map (Slice 3). The query bundled
-  // FLOW_PALETTE_PAGE_SIZE + 1 Flows per proxy, so an over-long page reveals
-  // `hasMore` and is trimmed to the page size; the rest page in via
-  // `getFlowPalette`.
-  const boundaryProxies: BoundaryProxyEntry[] = [];
-  const flowPalettes: Record<string, FlowPalette> = {};
-  for (const row of boundaryRows) {
-    boundaryProxies.push({
-      nodeId: row.node_id,
-      title: row.title,
-      kind: row.kind,
-      origin: row.is_direct ? "direct" : "inherited",
-      outerEdgeId: row.outer_edge_id,
-    });
-    const items = row.palette ?? [];
-    const hasMore = items.length > FLOW_PALETTE_PAGE_SIZE;
-    flowPalettes[row.node_id] = {
-      flows: (hasMore ? items.slice(0, FLOW_PALETTE_PAGE_SIZE) : items).map(
-        (f) => ({
-          id: f.id,
-          ownerNodeId: f.ownerNodeId,
-          kind: f.kind,
-          key: f.key,
-          title: f.title,
-          interaction: f.interaction,
-        }),
-      ),
-      hasMore,
-    };
-  }
-
-  return {
-    interiorNodes,
-    interiorEdges,
-    edgeFlows,
-    boundaryProxies,
-    flowPalettes,
-    breadcrumbs,
-  };
+  return { interiorNodes, interiorEdges, breadcrumbs };
 }
 
 /**
@@ -728,8 +326,8 @@ export async function updateNode(
  * `input`.
  *
  * Kind is cosmetic (CONTEXT.md "Component kind"; ADR-0018): this is a single
- * `kind` write with NO cascade — no Edge, Flow, or FlowRoute is touched, because
- * none of them depend on kind. Any `kind` is accepted regardless of the parent's
+ * `kind` write with NO cascade — no Edge or Spec is touched, because none of
+ * them depend on kind. Any `kind` is accepted regardless of the parent's
  * kind: affinity ranks the picker, it does not constrain the write (ADR-0019).
  */
 export async function updateNodeKind(
@@ -798,44 +396,26 @@ export async function updateNodeDocumentation(
  * from the actor, never `input` (ADR-0001). The MCP `move_component` tool is
  * the canonical caller; there is no web/tRPC counterpart yet.
  *
- * Structural but deliberately NON-cascading (ADR-0024) — two rejects keep the
- * graph honest:
+ * Structural but deliberately NON-cascading — ONE reject keeps the graph honest:
  *
- * 1. CYCLE → {@link ValidationError}. The new parent must not be the Node
- *    itself or any of its descendants. We compute the subtree of `node` (the
- *    recursive `parentId` walk `deleteNode` uses) and reject when `parentId`
- *    falls inside it — depth-0 self-parent and any deeper ancestor-onto-
- *    descendant case in one shot. BAD_REQUEST, not CONFLICT: the request is
- *    malformed for THIS node; no state change makes it valid.
+ * CYCLE → {@link ValidationError}. The new parent must not be the Node itself or
+ * any of its descendants. We compute the subtree of `node` (the recursive
+ * `parentId` walk `deleteNode` uses) and reject when `parentId` falls inside it —
+ * depth-0 self-parent and any deeper ancestor-onto-descendant case in one shot.
+ * BAD_REQUEST: the request is malformed for THIS node; no state change makes it
+ * valid.
  *
- * 2. ORPHANING incident Connections → {@link ConflictError} with
- *    `details.conflictingEdgeIds`. The same-Canvas invariant (ADR-0005) held
- *    BEFORE the move, so the Component's incident Edges all sit on the old
- *    Canvas (`canvasNodeId = oldParentId`). Moving the Component leaves them
- *    dangling. Rather than silently rescope or sever (philosophy #6 — never
- *    "turn off the rule to pass"), reject and tell the agent to disconnect
- *    first. The structured details are the AI-readable self-correction
- *    channel (ADR-0010 named pattern, the same posture `connectNodes` /
- *    `restoreEdge` use).
- *
- * Cross-scope FlowRoutes are SAFE under move today (ADR-0024 "Considered: a
- * refinement FlowRoute"). `routeFlow` constrains the boundary endpoint to be
- * an endpoint of the outer Edge, and `connectNodes` keeps outer Edges
- * same-Canvas; together those force the boundary endpoint and the inner
- * Edge's `canvasNodeId` scope to share a parent — so whenever the inner
- * Edge's scope rides into the moving subtree, the boundary endpoint rides
- * with it. The route stays self-consistent and no falsification check is
- * needed at this layer. If a future writer loosens these constraints (e.g.
- * deeper refinement nesting), this is where the additional reject lands.
+ * There is NO orphan-reject (retired with ADR-0028). The old reject existed only
+ * because the same-Canvas invariant (ADR-0005) pinned a Component's incident
+ * Edges to its Canvas, so a reparent would strand them. Connections may now span
+ * scopes, so a reparented Component's incident Connections simply become
+ * cross-scope — there is nothing to orphan, and no incident-edge check is needed.
  *
  * Idempotent: a move to the current parent is a no-op (returns the node
- * unchanged). Atomicity: this function makes multiple reads plus one write,
- * so the caller MUST wrap it in `db.$transaction` (the MCP tool handler
- * does) — a concurrent `connectNodes` could otherwise commit an incident
- * Edge between the orphan check and the parentId write.
+ * unchanged). Atomicity: this function makes multiple reads plus one write, so
+ * the caller MUST wrap it in `db.$transaction` (the MCP tool handler does).
  *
- * See ADR-0024 (the reject decision and the cross-scope analysis) and
- * ADR-0005 (the same-Canvas invariant the rejects preserve).
+ * See ADR-0024 (the cycle reject; its orphan reject is superseded by ADR-0028).
  */
 export async function moveNode(
   db: Db,
@@ -924,34 +504,10 @@ export async function moveNode(
     );
   }
 
-  // (2) ORPHANING incident Connections: every active Edge with the moving
-  // node as an endpoint lives on the old Canvas (same-Canvas invariant held
-  // before the move; ADR-0005). Reject so the agent disconnects first;
-  // `conflictingEdgeIds` is the AI-readable channel.
-  const incidentEdges = await db.edge.findMany({
-    where: {
-      projectId: node.projectId,
-      deletedAt: null,
-      OR: [{ sourceId: node.id }, { targetId: node.id }],
-    },
-    select: { id: true },
-  });
-  if (incidentEdges.length > 0) {
-    const count = incidentEdges.length;
-    throw new ConflictError(
-      `Can't move this Component: ${count} active Connection${count === 1 ? "" : "s"} still attach${count === 1 ? "es" : ""} it to its current Canvas. Disconnect the Connection${count === 1 ? "" : "s"} first, then move.`,
-      { conflictingEdgeIds: incidentEdges.map((e) => e.id) },
-    );
-  }
-
-  // Subtree travels by identity — only the moved Node's `parentId` changes;
-  // descendants keep their `parentId`, interior Edges keep their
-  // `canvasNodeId`. Ordinary Edges respect same-Canvas (ADR-0005), so no
-  // descendant Edge crosses the subtree boundary. Cross-scope FlowRoutes are
-  // self-consistent under move (see the docstring): `routeFlow` already
-  // pins the boundary endpoint to a sibling of the inner-Edge scope, so
-  // whenever the inner scope rides into the subtree, the boundary endpoint
-  // does too.
+  // Only the moved Node's `parentId` changes; its descendants and its incident
+  // Connections travel by identity. An incident Connection that now spans the
+  // new scope boundary is simply a cross-scope Connection — valid under
+  // ADR-0028, no rescope or reject needed.
   return db.node.update({
     where: { id: node.id },
     data: { parentId },
@@ -1042,12 +598,12 @@ export async function assertNoOrphanedChildren(
 
 /**
  * Deletes a Component via a cascading soft-delete: the target Node, its entire
- * subtree (every Node descending through `parentId`), every incident or
- * interior Connection, AND every owned Flow + owned FlowSpec on any Node in
- * the subtree are flagged `deletedAt` in ONE atomic operation, all stamped
- * with one fresh `deletionId` so the whole set can be undone as a unit
- * (`restoreNode`; ADR-0008 + ADR-0011). The safety net that matters because
- * AI agents mutate the graph (CONTEXT.md "Soft-delete + undo").
+ * subtree (every Node descending through `parentId` — including any spec-derived
+ * child Components, which are ordinary children), every incident or interior
+ * Connection, and the owned Spec are flagged `deletedAt` in ONE atomic
+ * operation, all stamped with one fresh `deletionId` so the whole set can be
+ * undone as a unit (`restoreNode`; ADR-0008 + ADR-0030). The safety net that
+ * matters because AI agents mutate the graph (CONTEXT.md "Soft-delete + undo").
  *
  * Addressed by the Node `id`; loaded, its Project resolved, and authorized
  * owner-only through `access.assertCanWrite` BEFORE the subtree is gathered
@@ -1057,22 +613,20 @@ export async function assertNoOrphanedChildren(
  * The subtree is gathered in a SINGLE recursive CTE descending `parentId` — the
  * mirror of `getCanvas`'s ascending breadcrumb walk — never a per-level loop
  * (ADR-0006, whose raw-SQL discipline this reuses: double-quoted PascalCase
- * identifiers, bound params, a `depth < 256` cap, `deletedAt IS NULL` on both
- * arms). Filtering `deletedAt IS NULL` on the recursive step is safe because no
- * live Node ever sits under a soft-deleted ancestor (a cascade sweeps the whole
- * subtree, and `createNode` rejects a soft-deleted parent), so the walk never
- * needs to pass THROUGH a deleted Node to reach a live descendant.
+ * identifiers, bound params, `deletedAt IS NULL` on both arms). Filtering
+ * `deletedAt IS NULL` on the recursive step is safe because no live Node ever
+ * sits under a soft-deleted ancestor (a cascade sweeps the whole subtree, and
+ * `createNode` rejects a soft-deleted parent), so the walk never needs to pass
+ * THROUGH a deleted Node to reach a live descendant.
  *
- * The Edge sweep is `sourceId ∈ S OR targetId ∈ S OR canvasNodeId ∈ S` (S = the
- * subtree), NEVER `canvasNodeId` alone: an "incident" Connection from the deleted
- * Component up to a SURVIVING sibling lives on the parent's Canvas
- * (`canvasNodeId ∉ S`) yet must still be swept, or it would dangle to a deleted
- * endpoint forever. ADR-0005 made all three Edge columns first-class precisely so
- * this cannot be reduced to scope. The Flow / FlowSpec sweeps are simpler — both
- * have only one FK into Node (`ownerNodeId`), so the union widens to Edge only.
- * All `updateMany`s filter `deletedAt: null`, so a Connection / Flow / FlowSpec
- * the user had already removed via its own lone delete is NOT re-stamped — and
- * so `restoreNode` never revives it.
+ * The Edge sweep is `sourceId ∈ S OR targetId ∈ S` (S = the subtree): a
+ * Connection incident to ANY swept Component — same-Canvas, cross-scope, or an
+ * "incident" one up to a surviving sibling — touches a swept endpoint and is
+ * caught. With scope no longer stored (ADR-0028), endpoint membership is the
+ * whole predicate. The Spec sweep is simpler — it has one FK into Node
+ * (`ownerNodeId`). All `updateMany`s filter `deletedAt: null`, so a Connection /
+ * Spec the user had already removed via its own lone delete is NOT re-stamped —
+ * and so `restoreNode` never revives it.
  *
  * Runs inside the caller's transaction (the router wraps it in
  * `db.$transaction`, like `updatePositions`), so the recursive read and every
@@ -1086,9 +640,7 @@ export async function deleteNode(
   deletionId: string;
   nodeIds: string[];
   edgeIds: string[];
-  flowIds: string[];
-  flowSpecIds: string[];
-  flowRouteIds: string[];
+  specIds: string[];
 }> {
   const { id } = deleteNodeInput.parse(input);
 
@@ -1136,17 +688,12 @@ export async function deleteNode(
   const deletionId = randomUUID();
   const deletedAt = new Date();
 
-  // The Edge sweep: any live Edge with an endpoint in the subtree OR drawn on a
-  // deleted Component's interior Canvas. Capture the ids first (for the
-  // optimistic-UI return), then stamp the same live set.
+  // The Edge sweep: any live Edge with an endpoint in the subtree. Capture the
+  // ids first (for the optimistic-UI return), then stamp the same live set.
   const edgeWhere = {
     projectId: node.projectId,
     deletedAt: null,
-    OR: [
-      { sourceId: { in: nodeIds } },
-      { targetId: { in: nodeIds } },
-      { canvasNodeId: { in: nodeIds } },
-    ],
+    OR: [{ sourceId: { in: nodeIds } }, { targetId: { in: nodeIds } }],
   };
   const sweptEdges = await db.edge.findMany({
     where: edgeWhere,
@@ -1154,56 +701,22 @@ export async function deleteNode(
   });
   const edgeIds = sweptEdges.map((edge) => edge.id);
 
-  // Flow / FlowSpec sweep (ADR-0011): owned by any Node in the subtree. Only
-  // one FK column to union over (`ownerNodeId`), unlike Edge's three. The
-  // `deletedAt: null` filter is load-bearing — a Flow already removed by a
-  // lone `deleteFlow` (which mints no `deletionId`) must NOT be re-stamped,
-  // or `restoreNode` would wrongly revive it as part of this batch.
-  const flowWhere = {
+  // Spec sweep (ADR-0030): the owned Spec (1:1) on any Node in the subtree. One
+  // FK column to union over (`ownerNodeId`), unlike Edge's two. The
+  // `deletedAt: null` filter is load-bearing — a Spec already removed must NOT
+  // be re-stamped, or `restoreNode` would wrongly revive it as part of this
+  // batch. (Spec-derived child Components are ordinary subtree Nodes and ride
+  // the Node sweep — no separate arm.)
+  const specWhere = {
     projectId: node.projectId,
     ownerNodeId: { in: nodeIds },
     deletedAt: null,
   };
-  const flowSpecWhere = {
-    projectId: node.projectId,
-    ownerNodeId: { in: nodeIds },
-    deletedAt: null,
-  };
-  const sweptFlows = await db.flow.findMany({
-    where: flowWhere,
+  const sweptSpecs = await db.spec.findMany({
+    where: specWhere,
     select: { id: true },
   });
-  const flowIds = sweptFlows.map((f) => f.id);
-  const sweptFlowSpecs = await db.flowSpec.findMany({
-    where: flowSpecWhere,
-    select: { id: true },
-  });
-  const flowSpecIds = sweptFlowSpecs.map((s) => s.id);
-
-  // FlowRoute sweep (Slice 2): any active route whose outerEdge or
-  // innerEdge sits in the swept Edge set, OR whose Flow sits in the swept
-  // Flow set. The innerEdgeId arm is forward-compat for Slice 3 — Slice 2
-  // never writes it but the sweep must include it so Slice 3 needs no
-  // retrofit. The flowId arm picks up routes whose owner-Node deletion
-  // takes the Flow itself, even if the route's outerEdge sits outside the
-  // subtree (an inbound API call from a surviving sibling, e.g.).
-  const flowRouteWhere = {
-    projectId: node.projectId,
-    deletedAt: null,
-    OR: [
-      { outerEdgeId: { in: edgeIds } },
-      { innerEdgeId: { in: edgeIds } },
-      { flowId: { in: flowIds } },
-    ],
-  };
-  const sweptRoutes =
-    edgeIds.length === 0 && flowIds.length === 0
-      ? []
-      : await db.flowRoute.findMany({
-          where: flowRouteWhere,
-          select: { id: true },
-        });
-  const flowRouteIds = sweptRoutes.map((r) => r.id);
+  const specIds = sweptSpecs.map((s) => s.id);
 
   await db.node.updateMany({
     where: { id: { in: nodeIds }, deletedAt: null },
@@ -1213,20 +726,10 @@ export async function deleteNode(
     where: edgeWhere,
     data: { deletedAt, deletionId },
   });
-  await db.flow.updateMany({
-    where: flowWhere,
+  await db.spec.updateMany({
+    where: specWhere,
     data: { deletedAt, deletionId },
   });
-  await db.flowSpec.updateMany({
-    where: flowSpecWhere,
-    data: { deletedAt, deletionId },
-  });
-  if (flowRouteIds.length > 0) {
-    await db.flowRoute.updateMany({
-      where: flowRouteWhere,
-      data: { deletedAt, deletionId },
-    });
-  }
 
   // Post-stamp guard (ADR-0008): the sequential cascade always gathers every live
   // descendant, so a live child still sitting directly under the freshly-stamped
@@ -1234,7 +737,7 @@ export async function deleteNode(
   // commit. Fail loud rather than leave a silent, unrecoverable orphan.
   await assertNoOrphanedChildren(db, nodeIds);
 
-  return { deletionId, nodeIds, edgeIds, flowIds, flowSpecIds, flowRouteIds };
+  return { deletionId, nodeIds, edgeIds, specIds };
 }
 
 /**
@@ -1254,7 +757,15 @@ export async function deleteNode(
  * Restore is "as-is": if an ancestor of this batch was independently deleted in
  * a LATER operation, the restored subtree is briefly unreachable via `getCanvas`
  * until that ancestor is also restored — honoring "restore exactly the affected
- * set and nothing outside it" literally. Runs inside the caller's transaction.
+ * set and nothing outside it" literally.
+ *
+ * MUST run inside the caller's transaction (the router wraps it in
+ * `db.$transaction`). All dedup pre-checks run before any `updateMany`, but the
+ * Edge revival can still lose a race to a concurrent writer and throw AFTER the
+ * Node revival has already committed its statement; correctness then rests on
+ * the transaction aborting and rolling the Node revival back. Outside a
+ * transaction that throw would leave Nodes revived with their Edges still
+ * tombstoned.
  */
 export async function restoreNode(
   db: Db,
@@ -1264,9 +775,7 @@ export async function restoreNode(
   deletionId: string;
   nodeIds: string[];
   edgeIds: string[];
-  flowIds: string[];
-  flowSpecIds: string[];
-  flowRouteIds: string[];
+  specIds: string[];
 }> {
   const { deletionId } = restoreNodeInput.parse(input);
 
@@ -1291,115 +800,61 @@ export async function restoreNode(
 
   const edges = await db.edge.findMany({
     where: { deletionId },
-    select: { id: true, canvasNodeId: true, sourceId: true, targetId: true },
+    select: {
+      id: true,
+      projectId: true,
+      sourceId: true,
+      targetId: true,
+      interaction: true,
+    },
   });
-  const stampedFlows = await db.flow.findMany({
-    where: { deletionId },
-    select: { id: true, ownerNodeId: true, key: true },
-  });
-  const stampedFlowSpecs = await db.flowSpec.findMany({
+  const stampedSpecs = await db.spec.findMany({
     where: { deletionId },
     select: { id: true, ownerNodeId: true },
   });
-  const stampedRoutes = await db.flowRoute.findMany({
-    where: { deletionId },
-    select: { id: true, outerEdgeId: true, flowId: true },
-  });
 
-  // Pre-check the `idx_edge_dedup` invariant (ADR-0010): any active row whose
-  // triple matches one we're about to revive would block the updateMany. Done
-  // BEFORE the updates because Postgres aborts the transaction on P2002 and
-  // we couldn't query for diagnostics from inside the catch.
-  //
-  // Reachable today only via direct DB manipulation — cascading-delete sweeps
-  // an edge alongside at least one of its endpoints, so re-drawing the same
-  // triple while soft-deleted always involves a fresh-id endpoint. The path
-  // becomes reachable in production when slice 3 of the flow-routed plan
-  // lands (`routeFlow` introduces cross-scope inner edges whose triples are
-  // independent of the cascading sweep); the regression test lands with #36.
+  // Pre-check the Edge de-dupe invariant (ADR-0010): any active row occupying a
+  // slot we're about to revive would block the updateMany. Each revived Edge
+  // contributes its interaction-appropriate predicate (association → unordered
+  // pair; directional → ordered triple + interaction). Done BEFORE the updates
+  // because Postgres aborts the transaction on P2002 and we couldn't query for
+  // diagnostics from inside the catch.
   if (edges.length > 0) {
     const conflicts = await db.edge.findMany({
       where: {
         deletedAt: null,
-        OR: edges.map(({ canvasNodeId, sourceId, targetId }) => ({
-          canvasNodeId,
-          sourceId,
-          targetId,
-        })),
+        OR: edges.map(({ projectId, sourceId, targetId, interaction }) =>
+          activeDuplicateWhere(projectId, sourceId, targetId, interaction),
+        ),
       },
       select: { id: true },
     });
     if (conflicts.length > 0) {
       const count = conflicts.length;
       throw new ConflictError(
-        `Can't undo this delete: ${count} Connection${count === 1 ? "" : "s"} cannot be restored because a new Connection now occupies the same source/target slot. Delete the conflicting Connection${count === 1 ? "" : "s"} and retry.`,
+        `Can't undo this delete: ${count} Connection${count === 1 ? "" : "s"} cannot be restored because a new Connection now occupies the same slot. Delete the conflicting Connection${count === 1 ? "" : "s"} and retry.`,
         { conflictingEdgeIds: conflicts.map((e) => e.id) },
       );
     }
   }
 
-  // Pre-check the `idx_flow_dedup` invariant (ADR-0010 + ADR-0011): a stamped
-  // Flow's (ownerNodeId, key) slot may now be occupied by a hand-authored
-  // Flow created since the delete. Same posture as the Edge pre-check above;
-  // surfaces a readable ConflictError with the conflicting Flow id(s) so the
-  // user can resolve and retry.
-  if (stampedFlows.length > 0) {
-    const conflicts = await db.flow.findMany({
+  // Spec is live-only 1:1 with its owner Node (partial index
+  // `idx_spec_owner_live`); restoring a stamped Spec collides if the user
+  // attached a fresh Spec to the same Node since the delete. Same readable-error
+  // posture as the Edge case.
+  if (stampedSpecs.length > 0) {
+    const conflicts = await db.spec.findMany({
       where: {
         deletedAt: null,
-        OR: stampedFlows.map(({ ownerNodeId, key }) => ({ ownerNodeId, key })),
+        ownerNodeId: { in: stampedSpecs.map((s) => s.ownerNodeId) },
       },
       select: { id: true },
     });
     if (conflicts.length > 0) {
       const count = conflicts.length;
       throw new ConflictError(
-        `Can't undo this delete: ${count} Flow${count === 1 ? "" : "s"} cannot be restored because a new Flow now occupies the same owner/key slot. Delete the conflicting Flow${count === 1 ? "" : "s"} and retry.`,
-        { conflictingFlowIds: conflicts.map((f) => f.id) },
-      );
-    }
-  }
-
-  // FlowSpec is 1:1 with its owner Node (`ownerNodeId @unique`); restoring a
-  // stamped FlowSpec collides if the user attached a fresh FlowSpec to the
-  // same Node since the delete. Same readable-error posture as the Flow case.
-  if (stampedFlowSpecs.length > 0) {
-    const conflicts = await db.flowSpec.findMany({
-      where: {
-        deletedAt: null,
-        ownerNodeId: { in: stampedFlowSpecs.map((s) => s.ownerNodeId) },
-      },
-      select: { id: true },
-    });
-    if (conflicts.length > 0) {
-      const count = conflicts.length;
-      throw new ConflictError(
-        `Can't undo this delete: ${count} FlowSpec${count === 1 ? "" : "s"} cannot be restored because a new FlowSpec now occupies the same Component. Delete the conflicting FlowSpec${count === 1 ? "" : "s"} and retry.`,
-        { conflictingFlowSpecIds: conflicts.map((s) => s.id) },
-      );
-    }
-  }
-
-  // Pre-check the `idx_flow_route_dedup` invariant (ADR-0010 + Slice 2): a
-  // stamped FlowRoute's (outerEdgeId, flowId) slot may now be occupied by a
-  // fresh route. Same readable-error posture as the Edge / Flow / FlowSpec
-  // pre-checks above.
-  if (stampedRoutes.length > 0) {
-    const conflicts = await db.flowRoute.findMany({
-      where: {
-        deletedAt: null,
-        OR: stampedRoutes.map(({ outerEdgeId, flowId }) => ({
-          outerEdgeId,
-          flowId,
-        })),
-      },
-      select: { id: true },
-    });
-    if (conflicts.length > 0) {
-      const count = conflicts.length;
-      throw new ConflictError(
-        `Can't undo this delete: ${count} routed Flow${count === 1 ? "" : "s"} cannot be restored because a new route now occupies the same Connection/Flow slot. Remove the conflicting route${count === 1 ? "" : "s"} and retry.`,
-        { conflictingFlowRouteIds: conflicts.map((r) => r.id) },
+        `Can't undo this delete: ${count} Spec${count === 1 ? "" : "s"} cannot be restored because a new Spec now occupies the same Component. Delete the conflicting Spec${count === 1 ? "" : "s"} and retry.`,
+        { conflictingSpecIds: conflicts.map((s) => s.id) },
       );
     }
   }
@@ -1426,43 +881,15 @@ export async function restoreNode(
     );
   }
 
-  try {
-    await db.flow.updateMany({
-      where: { deletionId },
-      data: { deletedAt: null, deletionId: null },
-    });
-  } catch (error) {
-    if (!isFlowDedupCollision(error)) throw error;
-    throw new ConflictError(
-      "Undo blocked by a concurrent write — retry to see what conflicts.",
-      { conflictingFlowIds: [] },
-    );
-  }
-
-  await db.flowSpec.updateMany({
+  await db.spec.updateMany({
     where: { deletionId },
     data: { deletedAt: null, deletionId: null },
   });
-
-  try {
-    await db.flowRoute.updateMany({
-      where: { deletionId },
-      data: { deletedAt: null, deletionId: null },
-    });
-  } catch (error) {
-    if (!isFlowRouteDedupCollision(error)) throw error;
-    throw new ConflictError(
-      "Undo blocked by a concurrent write — retry to see what conflicts.",
-      { conflictingFlowRouteIds: [] },
-    );
-  }
 
   return {
     deletionId,
     nodeIds: nodes.map((n) => n.id),
     edgeIds: edges.map((e) => e.id),
-    flowIds: stampedFlows.map((f) => f.id),
-    flowSpecIds: stampedFlowSpecs.map((s) => s.id),
-    flowRouteIds: stampedRoutes.map((r) => r.id),
+    specIds: stampedSpecs.map((s) => s.id),
   };
 }

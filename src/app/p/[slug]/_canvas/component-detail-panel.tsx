@@ -2,18 +2,10 @@
 
 import { ChevronDown, X } from "lucide-react";
 import dynamic from "next/dynamic";
-import { Suspense, useEffect, useState } from "react";
-import { toast } from "sonner";
+import { useEffect } from "react";
 
-import { FLOW_INTERACTION_DISPLAY } from "~/lib/flow-interaction-display";
 import { KIND_ICON, KIND_LABEL } from "~/lib/node-kinds";
-import { type FlowSpecKind, type NodeKind } from "~/lib/schemas";
-import {
-  SPEC_KIND_LABEL,
-  SPEC_KIND_PLACEHOLDER,
-  specKindsFor,
-} from "~/lib/spec-kinds";
-import { api } from "~/trpc/react";
+import { type NodeKind } from "~/lib/schemas";
 
 import { KindPickerPopover } from "./kind-palette";
 
@@ -41,33 +33,28 @@ export function prefetchDocsEditor(): void {
 
 /**
  * Slide-in detail surface for a selected Component, opened when the owner
- * single-selects a Component on the Canvas (Slice 1 of the flow-routed plan;
- * ADR-0011). Two sections in this slice:
+ * single-selects a Component on the Canvas. Two sections in this slice:
  *
- * 1. **Attach spec** — paste an OpenAPI document, server-side bounded parse,
- *    materialize Flow rows.
- * 2. **Flow palette (read-only)** — the active Flows the Component owns.
- * 3. **Documentation** — the Plate markdown editor (issues #11 / #12): a
+ * 1. **Kind** — the Component's kind row (owner: opens the kind palette).
+ * 2. **Documentation** — the Plate markdown editor (issues #11 / #12): a
  *    rendered view that toggles to an editable surface with debounced
  *    optimistic autosave.
  *
- * A future slice will add the "+ route" affordance on a selected Connection
- * (#35). The panel deliberately does NOT block the canvas (a sidebar, not a
- * modal) so the user can keep zooming / panning while it is open — performance
- * philosophy #1.
+ * The Spec paste field and the Flow palette were removed with the Flow model
+ * (#62); the spec → Component generation surface returns in #64. The panel
+ * deliberately does NOT block the canvas (a sidebar, not a modal) so the user
+ * can keep zooming / panning while it is open — performance philosophy #1.
  *
  * Dual-audience (#16): the owner sees the full edit surface; a capability
- * **viewer** (`readOnly`) sees the same panel with docs + the Flow palette but
- * NO write affordances — no Kind picker, no Attach-spec field, no docs Edit
- * toggle. `readOnly` is a required discriminator: the write callbacks
- * (`onChangeKind` / `onFlowCountChange` / `onCommitDocumentation`) are typed to
- * exist only in owner mode, so handing the viewer panel a mutation is a compile
- * error, never a leaked affordance. Read-only mode is presentation, not the
- * authorization boundary — every mutation is still denied at the service layer
- * (ADR-0002). Dismissed by deselect, Escape, or the close button.
+ * **viewer** (`readOnly`) sees the same panel with docs but NO write
+ * affordances — no Kind picker, no docs Edit toggle. `readOnly` is a required
+ * discriminator: the write callbacks (`onChangeKind` / `onCommitDocumentation`)
+ * are typed to exist only in owner mode, so handing the viewer panel a mutation
+ * is a compile error, never a leaked affordance. Read-only mode is presentation,
+ * not the authorization boundary — every mutation is still denied at the service
+ * layer (ADR-0002). Dismissed by deselect, Escape, or the close button.
  */
 type ComponentDetailPanelProps = {
-  slug: string;
   ownerNodeId: string;
   /** The selected Component's current kind, shown in the Kind row. */
   currentKind: NodeKind;
@@ -86,31 +73,18 @@ type ComponentDetailPanelProps = {
       readOnly: false;
       /** Optimistic change-kind commit; the mutation lives on the canvas. */
       onChangeKind: (ownerNodeId: string, kind: NodeKind) => void;
-      /**
-       * Called when the server returns a new flow count for the selected
-       * Component, so the canvas can update the React Flow store and the
-       * "N flows" pill on the same frame. The query-cache invalidation alone
-       * does NOT reach the RF store (the seed is fire-and-forget by design).
-       */
-      onFlowCountChange: (ownerNodeId: string, flowCount: number) => void;
       /** Debounced optimistic docs autosave; the mutation lives on the canvas. */
       onCommitDocumentation: (ownerNodeId: string, documentation: string) => void;
     }
   | {
-      /** Capability-viewer mode: read docs + Flow list, zero write affordances. */
+      /** Capability-viewer mode: read docs, zero write affordances. */
       readOnly: true;
     }
 );
 
 export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
-  const {
-    slug,
-    ownerNodeId,
-    currentKind,
-    parentKind,
-    initialDocumentation,
-    onClose,
-  } = props;
+  const { ownerNodeId, currentKind, parentKind, initialDocumentation, onClose } =
+    props;
   // Escape closes the panel from anywhere — the canvas keeps focus after the
   // single-select that opens the panel, so a handler on the panel root would
   // never fire from the user's most likely starting point.
@@ -146,29 +120,6 @@ export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
           onChangeKind={(kind) => props.onChangeKind(ownerNodeId, kind)}
         />
       )}
-
-      {!props.readOnly && (
-        <AttachSpecSection
-          key={`attach-spec-${ownerNodeId}`}
-          ownerNodeId={ownerNodeId}
-          currentKind={currentKind}
-          slug={slug}
-          onFlowCountChange={props.onFlowCountChange}
-        />
-      )}
-
-      <section className="flex flex-col gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
-          Flow palette
-        </h3>
-        <Suspense fallback={<p className="text-xs text-white/40">Loading…</p>}>
-          <FlowPalette
-            ownerNodeId={ownerNodeId}
-            slug={slug}
-            readOnly={props.readOnly}
-          />
-        </Suspense>
-      </section>
 
       <ComponentDocsEditor
         key={ownerNodeId}
@@ -249,158 +200,5 @@ function KindSection({
         )}
       />
     </section>
-  );
-}
-
-function AttachSpecSection({
-  ownerNodeId,
-  currentKind,
-  slug,
-  onFlowCountChange,
-}: {
-  ownerNodeId: string;
-  /** The Component's kind — selects which spec formats the picker offers. */
-  currentKind: NodeKind;
-  slug: string;
-  onFlowCountChange: (ownerNodeId: string, flowCount: number) => void;
-}) {
-  const utils = api.useUtils();
-  const specKinds = specKindsFor(currentKind);
-  const [kind, setKind] = useState<FlowSpecKind>(() => specKinds[0] ?? "CUSTOM");
-  const [source, setSource] = useState("");
-  const attach = api.architecture.attachFlowSpec.useMutation();
-
-  // Affinity is presentation-only and the component is remounted per
-  // `ownerNodeId`, but the owner can re-kind a Component while it stays
-  // selected — clamp to a valid option so the <select> never shows a stale kind.
-  const selectedKind = specKinds.includes(kind) ? kind : (specKinds[0] ?? kind);
-
-  async function onParse() {
-    const trimmed = source.trim();
-    if (trimmed.length === 0) {
-      toast.error("Paste a spec first.");
-      return;
-    }
-    try {
-      const result = await attach.mutateAsync({
-        ownerNodeId,
-        kind: selectedKind,
-        source: trimmed,
-      });
-      // Update the React Flow store + cache mirror so the "N flows" pill
-      // reflects the new count on the same frame. Then invalidate the
-      // palette so the list re-fetches. Parse failures still persist the
-      // FlowSpec (with `parseError`) and surface as a non-blocking toast.
-      onFlowCountChange(ownerNodeId, result.flowCount);
-      await utils.architecture.getFlowsForNode.invalidate({
-        ownerNodeId,
-        slug,
-      });
-      if (result.parseError !== null) {
-        toast.warning(`Spec saved with parse error: ${result.parseError}`);
-      } else {
-        toast.success(
-          `Parsed ${result.flowCount} flow${result.flowCount === 1 ? "" : "s"}.`,
-        );
-      }
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Couldn't attach the spec.",
-      );
-    }
-  }
-
-  // No structured spec makes sense for this kind (infra / structural) — omit
-  // the affordance entirely rather than offer an empty picker (ADR-0019).
-  if (specKinds.length === 0) return null;
-
-  return (
-    <section className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
-        Attach spec
-      </h3>
-      <label className="flex flex-col gap-1 text-xs text-white/60">
-        Kind
-        <select
-          className="nodrag rounded bg-white/10 px-2 py-1 text-sm text-white outline-none"
-          value={selectedKind}
-          onChange={(e) => setKind(e.target.value as FlowSpecKind)}
-          disabled={attach.isPending}
-        >
-          {specKinds.map((k) => (
-            <option key={k} value={k}>
-              {SPEC_KIND_LABEL[k]}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-white/60">
-        Source
-        <textarea
-          className="nodrag h-32 rounded bg-white/10 p-2 font-mono text-xs text-white outline-none"
-          placeholder={SPEC_KIND_PLACEHOLDER[selectedKind]}
-          value={source}
-          onChange={(e) => setSource(e.target.value)}
-          disabled={attach.isPending}
-        />
-      </label>
-      <button
-        type="button"
-        className="self-end rounded bg-[hsl(280,100%,70%)] px-3 py-1 text-sm font-medium text-white transition hover:bg-[hsl(280,100%,60%)] disabled:opacity-50"
-        onClick={() => void onParse()}
-        disabled={attach.isPending}
-      >
-        {attach.isPending ? "Parsing…" : "Parse"}
-      </button>
-    </section>
-  );
-}
-
-function FlowPalette({
-  ownerNodeId,
-  slug,
-  readOnly,
-}: {
-  ownerNodeId: string;
-  slug: string;
-  readOnly: boolean;
-}) {
-  const [flows] = api.architecture.getFlowsForNode.useSuspenseQuery({
-    ownerNodeId,
-    slug,
-  });
-
-  if (flows.length === 0) {
-    return (
-      <p className="text-xs text-white/40">
-        {readOnly
-          ? "No flows."
-          : "No flows yet. Paste a spec above to materialize them."}
-      </p>
-    );
-  }
-
-  return (
-    <ul className="flex flex-col gap-1">
-      {flows.map((flow) => (
-        <li
-          key={flow.id}
-          className="flex items-center gap-2 rounded bg-white/5 px-2 py-1"
-        >
-          <span
-            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${FLOW_INTERACTION_DISPLAY[flow.interaction].tone}`}
-            title={`${FLOW_INTERACTION_DISPLAY[flow.interaction].label} ${flow.kind}`}
-          >
-            {FLOW_INTERACTION_DISPLAY[flow.interaction].short}
-          </span>
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate text-sm">{flow.title}</span>
-            <span className="truncate text-[10px] text-white/40">
-              {flow.key}
-            </span>
-          </div>
-        </li>
-      ))}
-    </ul>
   );
 }

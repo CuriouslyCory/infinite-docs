@@ -8,8 +8,6 @@ import {
   type Connection,
   ConnectionMode,
   Controls,
-  type EdgeMarker,
-  MarkerType,
   Panel,
   ReactFlow,
   ReactFlowProvider,
@@ -22,27 +20,12 @@ import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 
 import { canConnect } from "~/lib/connection-rules";
-import { type FlowKind, type NodeKind } from "~/lib/schemas";
-import {
-  type CanvasBoundaryProxy,
-  type CanvasData,
-  type CanvasEdge,
-  type CanvasFlowPalette,
-  type CanvasNode,
-} from "~/lib/types";
+import { type NodeKind } from "~/lib/schemas";
+import { type CanvasData, type CanvasEdge, type CanvasNode } from "~/lib/types";
 import { api } from "~/trpc/react";
 
 import { AddComponent } from "./add-component";
 import { CopyMarkdownToolbar } from "./copy-markdown";
-import {
-  BoundaryGroupNodeView,
-  type BoundaryGroupNode,
-} from "./boundary-group-node";
-import {
-  BoundaryProxyNodeView,
-  flowIdFromHandle,
-  type BoundaryProxyNode,
-} from "./boundary-proxy-node";
 import {
   ComponentDetailPanel,
   prefetchDocsEditor,
@@ -58,10 +41,7 @@ import {
 import {
   ConnectionEdgeView,
   EditEdgeContext,
-  RouteFlowContext,
   type ConnectionEdge,
-  type ConnectionEdgeFlows,
-  type RouteFlowAction,
 } from "./connection-edge";
 
 /**
@@ -80,104 +60,17 @@ import {
  * same model — one mutation per gesture — writing the store and the cache mirror
  * together (via `patchCanvas`, which preserves sibling keys) and rolling both
  * back with a toast on failure.
+ *
+ * As of #62 every Connection renders as a plain line (its `interaction` defaults
+ * to `ASSOCIATION`); typed arrowheads and cross-scope rendering arrive in the
+ * next slices (#65 / #63).
  */
 
 // Module-level: React Flow re-mounts every node/edge (and warns) if `nodeTypes`
 // / `edgeTypes` is a fresh object each render. Defining them once is the key
 // React Flow perf guard.
-const nodeTypes = {
-  component: ComponentNodeView,
-  "boundary-proxy": BoundaryProxyNodeView,
-  "boundary-group": BoundaryGroupNodeView,
-};
+const nodeTypes = { component: ComponentNodeView };
 const edgeTypes = { connection: ConnectionEdgeView };
-
-// The Canvas holds three node kinds: interactive Components (draggable,
-// persisted), read-only boundary proxies (derived, never persisted), and the
-// boundary-group container that bundles inherited proxies (also derived). All
-// live in the one React Flow `nodes` array.
-type CanvasRFNode = ComponentNode | BoundaryProxyNode | BoundaryGroupNode;
-
-// "Passive node" is the taxonomy term (CONTEXT.md, ADR-0016) for a derived,
-// read-only Canvas node — currently boundary-proxy and the boundary-group
-// container — excluded from the detail panel, Descent, and hover-prefetch.
-// Param is the discriminated union so a stray non-Canvas node cannot be passed
-// and a new union member surfaces here when added.
-function isPassiveNode(node: CanvasRFNode): boolean {
-  return node.type === "boundary-proxy" || node.type === "boundary-group";
-}
-
-// Boundary proxies have no stored position (they are derived, #13). Lay them
-// out deterministically in a row above the interior Components so they read as
-// "the outside, up top" and fitView frames them with the content. Direct
-// (routable) proxies sort ahead of inherited ones (the query already orders
-// them that way), so the routable Ports cluster on the left; the boundary-group
-// container holding the inherited proxies sits in the column after them.
-const BOUNDARY_ROW_Y = -220;
-const BOUNDARY_COL_W = 260;
-
-function toBoundaryRFNode(
-  proxy: CanvasBoundaryProxy,
-  palette: CanvasFlowPalette | undefined,
-  index: number,
-): BoundaryProxyNode {
-  return {
-    id: proxy.nodeId,
-    type: "boundary-proxy",
-    position: { x: index * BOUNDARY_COL_W, y: BOUNDARY_ROW_Y },
-    draggable: false,
-    selectable: false,
-    deletable: false,
-    data: {
-      title: proxy.title,
-      kind: proxy.kind,
-      origin: proxy.origin,
-      outerEdgeId: proxy.outerEdgeId,
-      flows: palette?.flows ?? [],
-      hasMore: palette?.hasMore ?? false,
-    },
-  };
-}
-
-// Bundle the inherited proxies into one read-only container node (#14). Its id
-// is derived from the scope (not from any member), so it stays stable across
-// getCanvas refetches — React Flow reuses the node and preserves the user's
-// expand toggle even as the member set changes. Boundary proxies never exist at
-// the root scope (deriveBoundaryProxies returns none), but the `?? "root"`
-// keeps the id total. No palette/edge data: inherited proxies are not routable
-// here (ADR-0012), so the container needs only enough to list its members.
-function toBoundaryGroupRFNode(
-  inherited: CanvasBoundaryProxy[],
-  indexAfterDirect: number,
-  canvasNodeId: string | null,
-): BoundaryGroupNode {
-  return {
-    id: `boundary-group:${canvasNodeId ?? "root"}`,
-    type: "boundary-group",
-    position: { x: indexAfterDirect * BOUNDARY_COL_W, y: BOUNDARY_ROW_Y },
-    draggable: false,
-    selectable: false,
-    deletable: false,
-    data: {
-      members: inherited.map((p) => ({
-        nodeId: p.nodeId,
-        title: p.title,
-        kind: p.kind,
-      })),
-    },
-  };
-}
-
-// A Connection is undirected; its arrowheads are DERIVED from the Flows routed
-// on it (ADR-0023). `withEdgeFlows` sets `markerStart` (arrow at the source
-// endpoint) and/or `markerEnd` (arrow at the target endpoint) from each Edge's
-// `arrowAtSource`/`arrowAtTarget` counts. These are MODULE CONSTANTS (never
-// freshly built per render) so React Flow registers each marker once instead of
-// re-registering every frame (the same identity-stability guard the structural
-// marker carried). A freshly drawn Connection has no routed Flows, so it gets
-// neither marker — a plain undirected line until a Flow gives it direction.
-const MARKER_START: EdgeMarker = { type: MarkerType.ArrowClosed };
-const MARKER_END: EdgeMarker = { type: MarkerType.ArrowClosed };
 
 function toRFNode(n: CanvasNode): ComponentNode {
   return {
@@ -191,7 +84,6 @@ function toRFNode(n: CanvasNode): ComponentNode {
       title: n.title,
       kind: n.kind,
       optimistic: n.id.startsWith("temp_"),
-      flowCount: n._count.flows,
     },
   };
 }
@@ -202,56 +94,11 @@ function toRFEdge(e: CanvasEdge): ConnectionEdge {
     type: "connection",
     source: e.sourceId,
     target: e.targetId,
-    // No marker here — `withEdgeFlows` derives markerStart/markerEnd from the
-    // routed Flows (ADR-0023). A bare edge renders as an undirected line.
+    // No marker — every Connection renders as a plain line in this slice; the
+    // interaction-derived arrowheads are wired in #65 (ADR-0027).
     data: {
       label: e.label,
       optimistic: e.id.startsWith("temp_"),
-    },
-  };
-}
-
-/**
- * Hydrate a base RF edge with its `edgeFlows` aggregation (Slice 2) and the
- * endpoint metadata the "+ flow" popover needs. Kept as a free function (not
- * folded into `toRFEdge`) because the per-edge merge needs canvas-wide
- * `edgeFlows` + the source/target Component titles, and `toRFEdge` is also
- * used during optimistic edge reconciliation where only the edge itself is
- * known.
- */
-function withEdgeFlows(
-  edge: ConnectionEdge,
-  flowsByEdge: Map<string, ConnectionEdgeFlows>,
-  titleByNode: Map<string, string>,
-  slug: string,
-): ConnectionEdge {
-  const flows = flowsByEdge.get(edge.id);
-  // `edge.source` / `edge.target` are React Flow's foreign-key fields — same
-  // values as the underlying `sourceId` / `targetId`.
-  const sourceTitle = titleByNode.get(edge.source);
-  const targetTitle = titleByNode.get(edge.target);
-  // Derived arrowheads: an arrow at the source endpoint is a `markerStart`, at
-  // the target endpoint a `markerEnd` (ADR-0023). Module-constant marker objects
-  // keep React Flow from re-registering markers every frame. Undefined (no
-  // routed Flows that way) renders no arrowhead on that end.
-  return {
-    ...edge,
-    markerStart: (flows?.arrowAtSource ?? 0) > 0 ? MARKER_START : undefined,
-    markerEnd: (flows?.arrowAtTarget ?? 0) > 0 ? MARKER_END : undefined,
-    data: {
-      ...edge.data,
-      label: edge.data?.label ?? null,
-      edgeFlows: flows,
-      endpoints:
-        sourceTitle !== undefined && targetTitle !== undefined
-          ? {
-              slug,
-              sourceId: edge.source,
-              sourceTitle,
-              targetId: edge.target,
-              targetTitle,
-            }
-          : undefined,
     },
   };
 }
@@ -278,16 +125,15 @@ function optimisticCanvasNode(
     updatedAt: now,
     deletedAt: null,
     deletionId: null,
-    // A freshly-created Component owns no Flows yet (ADR-0011); the "N flows"
-    // pill renders only when the count is non-zero, so a 0 is correct here.
-    _count: { flows: 0 },
+    // Generated-component provenance is null for a hand-added Component (#64).
+    sourceSpecId: null,
+    specKey: null,
   };
 }
 
 function optimisticCanvasEdge(
   id: string,
   projectId: string,
-  canvasNodeId: string | null,
   sourceId: string,
   targetId: string,
 ): CanvasEdge {
@@ -295,9 +141,12 @@ function optimisticCanvasEdge(
   return {
     id,
     projectId,
-    canvasNodeId,
     sourceId,
     targetId,
+    // A freshly-drawn Connection is an ASSOCIATION (a plain line) until the user
+    // types it (#65). The optimistic shape must match the getCanvas edge row so
+    // remount reconciliation never flickers (ADR-0027).
+    interaction: "ASSOCIATION",
     label: null,
     createdAt: now,
     updatedAt: now,
@@ -325,26 +174,6 @@ function messageForDocsSaveFailure(error: unknown): string {
   return "Couldn't save documentation. Please try again.";
 }
 
-/**
- * Applies a +1/-1 delta to one Flow-kind bucket of an `edgeFlows` entry's
- * `byKind` map, keeping the optimistic mirror in the same shape the server
- * returns (zero-count kinds omitted, never negative).
- */
-function bumpByKind(
-  byKind: Partial<Record<FlowKind, number>>,
-  kind: FlowKind,
-  delta: number,
-): Partial<Record<FlowKind, number>> {
-  const next = { ...byKind };
-  const value = (next[kind] ?? 0) + delta;
-  if (value <= 0) {
-    delete next[kind];
-  } else {
-    next[kind] = value;
-  }
-  return next;
-}
-
 function CanvasInner({
   scope,
   slug,
@@ -360,16 +189,15 @@ function CanvasInner({
   const router = useRouter();
   // The root scope is the sentinel string "root" at the island boundary
   // (ADR-0004); every other scope IS a Node id — the parentId of this Canvas's
-  // Components and the canvasNodeId of its Connections.
+  // Components. (An Edge no longer stores a scope; ADR-0028.)
   const canvasNodeId = scope === "root" ? null : scope;
   // Stable across renders so it stays a single query key and a stable callback dep.
   const canvasInput = useMemo(
     () => ({ slug, canvasNodeId }),
     [slug, canvasNodeId],
   );
-  const [
-    { interiorNodes, interiorEdges, edgeFlows, boundaryProxies, flowPalettes, breadcrumbs },
-  ] = api.architecture.getCanvas.useSuspenseQuery(canvasInput);
+  const [{ interiorNodes, interiorEdges, breadcrumbs }] =
+    api.architecture.getCanvas.useSuspenseQuery(canvasInput);
 
   // The kind palette ranks its suggestions by the scope's own Component kind —
   // the parent of any Component added here (CONTEXT.md "Kind affinity"). The
@@ -381,61 +209,14 @@ function CanvasInner({
   // owns interaction state. The island is keyed by scope (./index), so a Descent
   // (a scope change) remounts and re-seeds rather than inheriting these.
   // Persistence flows through one batched/single mutation per gesture (below),
-  // with the query cache kept in lockstep so a remount re-seeds it. Boundary
-  // proxies seed alongside the Components: they are read-only and never the
-  // subject of a Component mutation (their ids never match a rename/delete/
-  // reconcile target), so they ride safely in the same store (#14).
-  //
-  // Direct proxies render individually (they are the routable work surface, #36);
-  // the inherited ones bundle into one boundary-group container so a deep Canvas
-  // is not buried under N un-routable stand-ins (#14). The container renders even
-  // for a single inherited proxy — one consistent affordance, and a refetch that
-  // flips the inherited count between 1 and 2 never reshuffles the surface.
-  const directProxies = boundaryProxies.filter((p) => p.origin === "direct");
-  const inheritedProxies = boundaryProxies.filter(
-    (p) => p.origin === "inherited",
+  // with the query cache kept in lockstep so a remount re-seeds it.
+  const [nodes, setNodes, onNodesChange] = useNodesState<ComponentNode>(
+    interiorNodes.map(toRFNode),
   );
-  const [nodes, setNodes, onNodesChange] = useNodesState<CanvasRFNode>([
-    ...interiorNodes.map(toRFNode),
-    ...directProxies.map((p, i) =>
-      toBoundaryRFNode(p, flowPalettes[p.nodeId], i),
-    ),
-    ...(inheritedProxies.length > 0
-      ? [
-          toBoundaryGroupRFNode(
-            inheritedProxies,
-            directProxies.length,
-            canvasNodeId,
-          ),
-        ]
-      : []),
-  ]);
-  // Initial edges seed: pure structural shape (no edgeFlows yet). The
-  // `edgesWithFlows` useMemo below hydrates the aggregation + endpoint
-  // metadata across rerenders.
   const [edges, setEdges, onEdgesChange] = useEdgesState<ConnectionEdge>(
     interiorEdges.map(toRFEdge),
   );
 
-  // Slice 2: merge the canvas-wide edgeFlows aggregation and the endpoint
-  // Component titles onto each edge's `data`, in one place so the per-edge
-  // pill + "+ flow" trigger never have to fish for canvas-level state. Keyed
-  // on `[edges, edgeFlows, interiorNodes]` — the React Flow `edges` state is
-  // included so a freshly-drawn optimistic edge picks up its `endpoints`
-  // metadata on the next frame (its `edgeFlows` stays undefined until the
-  // server response, at which point the cache mirror + invalidate refresh
-  // both arms).
-  const enrichedEdges = useMemo<ConnectionEdge[]>(() => {
-    const flowsByEdge = new Map<string, ConnectionEdgeFlows>(
-      (edgeFlows ?? []).map((ef) => [ef.edgeId, ef]),
-    );
-    const titleByNode = new Map<string, string>(
-      interiorNodes.map((n) => [n.id, n.title] as const),
-    );
-    return edges.map((e) =>
-      withEdgeFlows(e, flowsByEdge, titleByNode, slug),
-    );
-  }, [edges, edgeFlows, interiorNodes, slug]);
   const { screenToFlowPosition } = useReactFlow();
   const createNode = api.architecture.createNode.useMutation();
   // Destructured so the stable `mutateAsync` can be a dep of the context values
@@ -453,10 +234,6 @@ function CanvasInner({
     api.architecture.deleteNode.useMutation();
   const { mutateAsync: restoreComponent } =
     api.architecture.restoreNode.useMutation();
-  const { mutateAsync: routeFlow } =
-    api.architecture.routeFlow.useMutation();
-  const { mutateAsync: unrouteFlow } =
-    api.architecture.unrouteFlow.useMutation();
 
   // The query cache is the re-seed mirror. EVERY write goes through this merge
   // helper so a partial update can never drop a sibling key (e.g. node edits
@@ -467,16 +244,11 @@ function CanvasInner({
     (patch: (prev: CanvasData) => Partial<CanvasData>) => {
       utils.architecture.getCanvas.setData(canvasInput, (old) => {
         // The zero-value defaults are load-bearing — a partial update on a cold
-        // cache (e.g. `commitRouteFlow` fires before the query has resolved
-        // once) would otherwise patch against a base that lacks a key and drop
-        // it. Keep EVERY getCanvas key here (boundaryProxies / flowPalettes
-        // joined the payload in Slice 3).
+        // cache would otherwise patch against a base that lacks a key and drop
+        // it. Keep EVERY getCanvas key here.
         const base: CanvasData = old ?? {
           interiorNodes: [],
           interiorEdges: [],
-          edgeFlows: [],
-          boundaryProxies: [],
-          flowPalettes: {},
           breadcrumbs: [],
         };
         return { ...base, ...patch(base) };
@@ -523,17 +295,13 @@ function CanvasInner({
           posX: position.x,
           posY: position.y,
         });
-        // Reconcile temp → real id in both stores, atomically by id. The
-        // `createNode` service returns the bare Node row; a fresh Node owns
-        // zero Flows, so we hydrate `_count` to keep the CanvasNode shape
-        // intact (ADR-0011).
-        const realWithCount: CanvasNode = { ...real, _count: { flows: 0 } };
+        // Reconcile temp → real id in both stores, atomically by id.
         setNodes((ns) =>
-          ns.map((n) => (n.id === tempId ? toRFNode(realWithCount) : n)),
+          ns.map((n) => (n.id === tempId ? toRFNode(real) : n)),
         );
         patchCanvas((c) => ({
           interiorNodes: c.interiorNodes.map((n) =>
-            n.id === tempId ? realWithCount : n,
+            n.id === tempId ? real : n,
           ),
         }));
       } catch {
@@ -613,7 +381,7 @@ function CanvasInner({
   // one updateNodeKind mutation, both rolled back with a toast on failure. Same
   // conditional-rollback shape as `commitRename` (a newer change's optimistic
   // patch must not be clobbered by an older failing change's rollback). Kind is
-  // cosmetic, so no edge/flow state is touched (ADR-0018).
+  // cosmetic, so no edge state is touched (ADR-0018).
   const commitNodeKind = useCallback(
     (id: string, kind: NodeKind): void => {
       const prevKind = utils.architecture.getCanvas
@@ -723,11 +491,7 @@ function CanvasInner({
   // multi-select drag (onSelectionDragStop also routes here) commits together.
   // Rolls back store + cache and toasts on failure.
   const persistPositions = useCallback(
-    // Accepts the union React Flow hands `onNodeDragStop`; boundary proxies and
-    // the boundary-group container are `draggable: false` so they never appear
-    // here, and any that did would be skipped — they have no `interiorNodes`
-    // row to look up.
-    async (moved: CanvasRFNode[]) => {
+    async (moved: ComponentNode[]) => {
       const cached = utils.architecture.getCanvas.getData(canvasInput);
       const byId = new Map(
         cached?.interiorNodes.map((n) => [n.id, n] as const) ?? [],
@@ -790,163 +554,17 @@ function CanvasInner({
     [utils, canvasInput, projectId, updatePositions, setNodes, patchCanvas],
   );
 
-  // Shared optimistic body for a refinement route from a boundary-proxy palette
-  // (Slice 3 / ADR-0012). Draws the inner Edge optimistically (store + cache
-  // mirror), runs `resolveRoute` (the mutation(s) that create the real route),
-  // reconciles the temp id to the real inner Edge (converging silently when the
-  // inner Edge already exists — a shared pipe), and rolls back + toasts on any
-  // failure. `resolveRoute` is the variation point: a direct route fires one
-  // `routeFlow`; the reverse-Connection path (Slice 4 / ADR-0013) creates the
-  // reverse outer Edge first, then routes against it — both roll back together
-  // here on failure. The routed-count pill refreshes when the user navigates
-  // back up (a fresh getCanvas), so no cross-scope cache write is needed.
-  const runOptimisticInnerRoute = useCallback(
-    async (
-      source: string,
-      target: string,
-      resolveRoute: () => Promise<{
-        innerEdgeId: string | null;
-        outerEdgeId: string;
-      }>,
-    ): Promise<void> => {
-      const tempId = `temp_${crypto.randomUUID()}`;
-      setEdges((es) =>
-        addEdge(
-          {
-            id: tempId,
-            type: "connection",
-            source,
-            target,
-            // No marker — undirected until a Flow is routed (ADR-0023).
-            data: { label: null, optimistic: true },
-          },
-          es,
-        ),
-      );
-      patchCanvas((c) => ({
-        interiorEdges: [
-          ...c.interiorEdges,
-          optimisticCanvasEdge(tempId, projectId, canvasNodeId, source, target),
-        ],
-      }));
-
-      try {
-        const route = await resolveRoute();
-        const innerId = route.innerEdgeId;
-        // Reconcile the temp inner Edge to the real one. If the inner Edge
-        // already exists (a shared pipe other Flows converged on), just drop
-        // the temp — re-adding its id would duplicate a node in the store.
-        const real =
-          innerId === null
-            ? null
-            : optimisticCanvasEdge(
-                innerId,
-                projectId,
-                canvasNodeId,
-                source,
-                target,
-              );
-        setEdges((es) => {
-          const withoutTemp = es.filter((e) => e.id !== tempId);
-          if (!real || withoutTemp.some((e) => e.id === real.id)) {
-            return withoutTemp;
-          }
-          return [...withoutTemp, toRFEdge(real)];
-        });
-        patchCanvas((c) => {
-          const without = c.interiorEdges.filter((e) => e.id !== tempId);
-          if (!real || without.some((e) => e.id === real.id)) {
-            return { interiorEdges: without };
-          }
-          return { interiorEdges: [...without, real] };
-        });
-        // The Flow is now routed on `route.outerEdgeId` one scope up, so that
-        // Connection's "+ flow" popover (its unrouted filter) is stale. Refresh
-        // it; the routed-count pill itself refreshes on ascend.
-        void utils.architecture.getRoutedFlowIdsForEdge.invalidate({
-          outerEdgeId: route.outerEdgeId,
-          slug,
-        });
-      } catch {
-        setEdges((es) => es.filter((e) => e.id !== tempId));
-        patchCanvas((c) => ({
-          interiorEdges: c.interiorEdges.filter((e) => e.id !== tempId),
-        }));
-        toast.error("Couldn’t route the flow. Please try again.");
-      }
-    },
-    [utils, projectId, canvasNodeId, setEdges, patchCanvas, slug],
-  );
-
-  // Route a Flow from a boundary proxy's palette onto the Connection between
-  // this scope's Component and the proxy owner. A Connection is undirected, so
-  // ANY incident outer Edge carries the Flow regardless of its interaction verb
-  // — the verb decides which way the derived arrow points, not whether the route
-  // is legal (ADR-0023, retiring ADR-0013's polarity-matching + reverse-Connection
-  // offer). The service's touches-endpoint check is the backstop.
-  const routeFromPalette = useCallback(
-    async (params: {
-      flowId: string;
-      proxyNodeId: string;
-      source: string;
-      target: string;
-    }): Promise<void> => {
-      const { flowId, proxyNodeId, source, target } = params;
-      // Boundary proxies never exist at the root scope (deriveBoundaryProxies
-      // returns none), so a proxy drag implies a non-null current scope.
-      if (canvasNodeId === null) return;
-      // A still-optimistic child endpoint has no server id to bind yet.
-      if (source.startsWith("temp_") || target.startsWith("temp_")) {
-        toast.error("Finish adding that component before routing a flow to it.");
-        return;
-      }
-      const data = utils.architecture.getCanvas.getData(canvasInput);
-      const proxy = data?.boundaryProxies.find((p) => p.nodeId === proxyNodeId);
-      // The single incident outer Edge carries it — a Connection is undirected
-      // (ADR-0023).
-      const outerEdgeId = proxy?.outerEdgeId ?? null;
-      if (!outerEdgeId) {
-        toast.error("That flow can’t be routed here.");
-        return;
-      }
-
-      await runOptimisticInnerRoute(source, target, () =>
-        routeFlow({
-          flowId,
-          outerEdgeId,
-          sourceNodeId: source,
-          targetNodeId: target,
-        }),
-      );
-    },
-    [canvasNodeId, utils, canvasInput, runOptimisticInnerRoute, routeFlow],
-  );
-
   // Draw a Connection. Refuses a still-optimistic (temp_) endpoint (no real id
   // to persist yet), then pre-flights the pure topology rules — no self-link, no
   // duplicate — via `canConnect`, so the user gets instant feedback rather than a
   // doomed round trip (the service stays authoritative). Optimistic edge in store
   // + cache mirror, one connectNodes mutation, reconcile temp → real id, roll
-  // back + toast on failure (a CONFLICT/BAD_REQUEST rejection rolls back the same
-  // way).
+  // back + toast on failure. A freshly drawn Connection is an ASSOCIATION (#65
+  // adds the interaction picker).
   const handleConnect = useCallback(
     async (connection: Connection) => {
       const { source, target } = connection;
       if (!source || !target) return;
-
-      // Refinement route: one endpoint is a boundary-proxy palette item (its
-      // handle id encodes the Flow). Branch off to the cross-scope writer
-      // (Slice 3 / ADR-0012) — this is not a plain Component-to-Component draw.
-      const flowId =
-        flowIdFromHandle(connection.sourceHandle) ??
-        flowIdFromHandle(connection.targetHandle);
-      if (flowId) {
-        const proxyNodeId = flowIdFromHandle(connection.sourceHandle)
-          ? source
-          : target;
-        await routeFromPalette({ flowId, proxyNodeId, source, target });
-        return;
-      }
 
       if (source.startsWith("temp_") || target.startsWith("temp_")) {
         toast.error("Finish adding that component before connecting it.");
@@ -975,7 +593,6 @@ function CanvasInner({
             type: "connection",
             source,
             target,
-            // No marker — undirected until a Flow is routed (ADR-0023).
             data: { label: null, optimistic: true },
           },
           es,
@@ -984,14 +601,13 @@ function CanvasInner({
       patchCanvas((c) => ({
         interiorEdges: [
           ...c.interiorEdges,
-          optimisticCanvasEdge(tempId, projectId, canvasNodeId, source, target),
+          optimisticCanvasEdge(tempId, projectId, source, target),
         ],
       }));
 
       try {
         const real = await connectNodes.mutateAsync({
           projectId,
-          canvasNodeId,
           sourceId: source,
           targetId: target,
         });
@@ -1012,39 +628,26 @@ function CanvasInner({
     [
       utils,
       canvasInput,
-      canvasNodeId,
       setEdges,
       patchCanvas,
       projectId,
       connectNodes,
-      routeFromPalette,
     ],
   );
 
   // Remove a Connection (React Flow's Delete/Backspace). `onEdgesChange`
   // already dropped it from the store; here we mirror the removal into the
-  // cache and soft-delete it server-side. A still-optimistic edge was never
-  // persisted, so it just disappears. Failure re-adds the edge to both
-  // stores and toasts.
-  //
-  // Slice 2 cascade: when `deleteEdge` sweeps incident FlowRoutes it returns
-  // a `deletionId` and the swept route ids; we drop the per-edge `edgeFlows`
-  // entry optimistically alongside the edge. The cascade case has no undo
-  // affordance here yet — the delete path uses React Flow's keyboard delete,
-  // which has no toast slot; wiring a `restoreEdge` undo is a Slice 5
-  // affordance alongside the inspector.
+  // cache and soft-delete it server-side (a plain lone soft-delete — ADR-0030).
+  // A still-optimistic edge was never persisted, so it just disappears. Failure
+  // re-adds the edge to both stores and toasts.
   const handleEdgesDelete = useCallback(
     (deleted: ConnectionEdge[]) => {
       const cached = utils.architecture.getCanvas.getData(canvasInput);
       for (const edge of deleted) {
         if (edge.id.startsWith("temp_")) continue;
         const prev = cached?.interiorEdges.find((e) => e.id === edge.id);
-        const prevFlows = cached?.edgeFlows.find(
-          (ef) => ef.edgeId === edge.id,
-        );
         patchCanvas((c) => ({
           interiorEdges: c.interiorEdges.filter((e) => e.id !== edge.id),
-          edgeFlows: c.edgeFlows.filter((ef) => ef.edgeId !== edge.id),
         }));
         void removeEdge({ id: edge.id }).catch(() => {
           setEdges((es) =>
@@ -1053,7 +656,6 @@ function CanvasInner({
           if (prev) {
             patchCanvas((c) => ({
               interiorEdges: [...c.interiorEdges, prev],
-              edgeFlows: prevFlows ? [...c.edgeFlows, prevFlows] : c.edgeFlows,
             }));
           }
           toast.error("Couldn’t remove the connection. Please try again.");
@@ -1120,9 +722,8 @@ function CanvasInner({
   // Component-detail panel: opens when the owner single-selects a real (non-
   // temp_) Component. Sourced from React Flow's selection events rather than
   // from React Flow's internal selection state so a node added optimistically
-  // never auto-opens the panel before its server id arrives (ADR-0011 / Slice
-  // 1 detail panel scaffold). Cleared on pane click, scope change, or when
-  // the selected node is removed (`removeComponent` below).
+  // never auto-opens the panel before its server id arrives. Cleared on pane
+  // click, scope change, or when the selected node is removed.
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const closeDetailPanel = useCallback(() => setSelectedNodeId(null), []);
 
@@ -1205,8 +806,8 @@ function CanvasInner({
 
   // Edit a Connection's label: optimistic in store + cache mirror, one updateEdge
   // mutation, both rolled back with a toast on failure. Provided to the edges
-  // through context (below) so it stays one stable reference. (There is no
-  // direction to edit — the arrow is structural, output→input; ADR-0009.)
+  // through context (below) so it stays one stable reference. (A Connection's
+  // interaction is set at creation; the picker is #65.)
   const commitEdgeEdit = useCallback(
     (id: string, label: string | null): void => {
       const prev = utils.architecture.getCanvas
@@ -1233,187 +834,6 @@ function CanvasInner({
       });
     },
     [utils, canvasInput, setEdges, patchCanvas, editEdge],
-  );
-
-  // After the detail panel runs an attach + parse, the server's new flow
-  // count needs to land in BOTH the React Flow store (so the pill updates
-  // this frame on the same Component) and the cache mirror (so a remount
-  // re-seeds correctly). Cache invalidation alone doesn't reach the RF store
-  // — the seed is fire-and-forget by design (ADR-0004 island model). One
-  // stable callback the panel calls when the server responds.
-  const commitFlowCount = useCallback(
-    (id: string, flowCount: number) => {
-      setNodes((ns) =>
-        ns.map((n) =>
-          n.id === id && n.type === "component"
-            ? { ...n, data: { ...n.data, flowCount } }
-            : n,
-        ),
-      );
-      patchCanvas((c) => ({
-        interiorNodes: c.interiorNodes.map((n) =>
-          n.id === id ? { ...n, _count: { flows: flowCount } } : n,
-        ),
-      }));
-    },
-    [setNodes, patchCanvas],
-  );
-
-  // Route a Flow onto a Connection (Slice 2). Optimistic on the `edgeFlows`
-  // aggregation only — bump `routed`, decrement `unrouted`, and bump the
-  // arrow-direction counts by this Flow's deltas so the derived arrowhead
-  // appears THIS frame (the deltas come from the dispatcher, which computed them
-  // from the Flow's interaction via flowArrowEndpoints; ADR-0023). Fire
-  // `routeFlow`; on failure undo via an inverse delta (NOT a snapshot restore)
-  // so an overlapping in-flight route on the same edge isn't clobbered, then
-  // reconcile to server truth.
-  const commitRouteFlow = useCallback(
-    (
-      flowId: string,
-      outerEdgeId: string,
-      flowKind: FlowKind,
-      arrowAtSourceDelta: number,
-      arrowAtTargetDelta: number,
-    ): void => {
-      patchCanvas((c) => ({
-        edgeFlows: c.edgeFlows.map((ef) =>
-          ef.edgeId === outerEdgeId
-            ? {
-                ...ef,
-                routed: ef.routed + 1,
-                unrouted: Math.max(0, ef.unrouted - 1),
-                byKind: bumpByKind(ef.byKind, flowKind, 1),
-                arrowAtSource: ef.arrowAtSource + arrowAtSourceDelta,
-                arrowAtTarget: ef.arrowAtTarget + arrowAtTargetDelta,
-              }
-            : ef,
-        ),
-      }));
-
-      void routeFlow({ flowId, outerEdgeId })
-        .then(() => {
-          // Refresh the popover's unrouted filter on next open.
-          void utils.architecture.getRoutedFlowIdsForEdge.invalidate({
-            outerEdgeId,
-            slug,
-          });
-        })
-        .catch(() => {
-          // Inverse-delta rollback: undo only this op's own deltas against the
-          // current counts, so a concurrent route that succeeded mid-flight
-          // keeps its increment. Then reconcile to the authoritative counts —
-          // but only here, on the error path: a happy-path `getCanvas`
-          // refetch would cost a round-trip per route (Philosophy #1).
-          patchCanvas((c) => ({
-            edgeFlows: c.edgeFlows.map((ef) =>
-              ef.edgeId === outerEdgeId
-                ? {
-                    ...ef,
-                    routed: Math.max(0, ef.routed - 1),
-                    unrouted: ef.unrouted + 1,
-                    byKind: bumpByKind(ef.byKind, flowKind, -1),
-                    arrowAtSource: Math.max(
-                      0,
-                      ef.arrowAtSource - arrowAtSourceDelta,
-                    ),
-                    arrowAtTarget: Math.max(
-                      0,
-                      ef.arrowAtTarget - arrowAtTargetDelta,
-                    ),
-                  }
-                : ef,
-            ),
-          }));
-          void utils.architecture.getCanvas.invalidate(canvasInput);
-          toast.error("Couldn’t route the flow. Please try again.");
-        });
-    },
-    [utils, canvasInput, patchCanvas, routeFlow, slug],
-  );
-
-  // Remove a FlowRoute (Slice 2). Mirror of `commitRouteFlow`: dec routed,
-  // inc unrouted, rollback on failure. Slice 2 has no UI surface that fires
-  // unroute yet (Slice 5's inspector owns the unroute affordance) — but the
-  // dispatch path is shipped now so the context contract is complete; a
-  // future inspector composes on top with zero service-layer changes.
-  const commitUnrouteFlow = useCallback(
-    (
-      flowRouteId: string,
-      outerEdgeId: string,
-      flowKind: FlowKind,
-      arrowAtSourceDelta: number,
-      arrowAtTargetDelta: number,
-    ): void => {
-      patchCanvas((c) => ({
-        edgeFlows: c.edgeFlows.map((ef) =>
-          ef.edgeId === outerEdgeId
-            ? {
-                ...ef,
-                routed: Math.max(0, ef.routed - 1),
-                unrouted: ef.unrouted + 1,
-                byKind: bumpByKind(ef.byKind, flowKind, -1),
-                arrowAtSource: Math.max(0, ef.arrowAtSource - arrowAtSourceDelta),
-                arrowAtTarget: Math.max(0, ef.arrowAtTarget - arrowAtTargetDelta),
-              }
-            : ef,
-        ),
-      }));
-
-      void unrouteFlow({ flowRouteId })
-        .then(() => {
-          void utils.architecture.getRoutedFlowIdsForEdge.invalidate({
-            outerEdgeId,
-            slug,
-          });
-        })
-        .catch(() => {
-          // Inverse-delta rollback + error-path reconcile — see
-          // `commitRouteFlow` for the rationale.
-          patchCanvas((c) => ({
-            edgeFlows: c.edgeFlows.map((ef) =>
-              ef.edgeId === outerEdgeId
-                ? {
-                    ...ef,
-                    routed: ef.routed + 1,
-                    unrouted: Math.max(0, ef.unrouted - 1),
-                    byKind: bumpByKind(ef.byKind, flowKind, 1),
-                    arrowAtSource: ef.arrowAtSource + arrowAtSourceDelta,
-                    arrowAtTarget: ef.arrowAtTarget + arrowAtTargetDelta,
-                  }
-                : ef,
-            ),
-          }));
-          void utils.architecture.getCanvas.invalidate(canvasInput);
-          toast.error("Couldn’t remove the routing. Please try again.");
-        });
-    },
-    [utils, canvasInput, patchCanvas, unrouteFlow, slug],
-  );
-
-  // Single dispatch consumed by `RouteFlowContext`. Discriminated by `kind`
-  // — keeps the popover / inspector consumers honest about which op they
-  // mean and lets the canvas keep the rollback bookkeeping in one place.
-  const routeFlowDispatch = useCallback(
-    (action: RouteFlowAction) => {
-      if (action.kind === "route") {
-        commitRouteFlow(
-          action.flowId,
-          action.outerEdgeId,
-          action.flowKind,
-          action.arrowAtSourceDelta,
-          action.arrowAtTargetDelta,
-        );
-      } else {
-        commitUnrouteFlow(
-          action.flowRouteId,
-          action.outerEdgeId,
-          action.flowKind,
-          action.arrowAtSourceDelta,
-          action.arrowAtTargetDelta,
-        );
-      }
-    },
-    [commitRouteFlow, commitUnrouteFlow],
   );
 
   // Descent: open a Component's interior Canvas. One callback shared by the
@@ -1443,162 +863,148 @@ function CanvasInner({
   return (
     <RenameComponentContext.Provider value={commitRename}>
       <EditEdgeContext.Provider value={commitEdgeEdit}>
-        <RouteFlowContext.Provider value={routeFlowDispatch}>
-          <DescendComponentContext.Provider value={descend}>
-            <DeleteComponentContext.Provider value={removeComponent}>
-              <CanEditContext.Provider value={canEdit}>
-                <ReactFlow<CanvasRFNode, ConnectionEdge>
-                  nodes={nodes}
-                  edges={enrichedEdges}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onConnect={(c) => void handleConnect(c)}
-                  // Loose connection mode: a Connection can be drawn between any
-                  // two handles in either direction — Components are not
-                  // directional, so a Port has no input/output role and the drag
-                  // direction carries no meaning (direction is derived from the
-                  // Flows routed on the Connection; ADR-0023, retiring ADR-0009's
-                  // strict output→input rule).
-                  connectionMode={ConnectionMode.Loose}
-                  // Instant drag feedback: reject a self-link and a still-optimistic
-                  // (temp_) endpoint by snapping back. Duplicates are deliberately
-                  // allowed through (passing [] skips the duplicate rule) so
-                  // onConnect can surface a toast — blocking them here would snap a
-                  // duplicate back silently, with no explanation.
-                  isValidConnection={(c) => {
-                    const { source, target } = c;
-                    if (!source || !target) return false;
-                    if (
-                      source.startsWith("temp_") ||
-                      target.startsWith("temp_")
-                    ) {
-                      return false;
-                    }
-                    return canConnect({ source, target }, []).ok;
-                  }}
-                  onEdgesDelete={handleEdgesDelete}
-                  onNodeClick={(_event, node) => {
-                    // A `temp_…` Component has no server id yet; opening the
-                    // detail panel would query for a node the server cannot
-                    // find. Boundary proxies are read-only stand-ins — they
-                    // have no editable detail panel. Single-click selection
-                    // only for real Components — double-click still descends.
-                    if (node.id.startsWith("temp_")) return;
-                    if (isPassiveNode(node)) return;
-                    setSelectedNodeId(node.id);
-                  }}
-                  onPaneClick={() => setSelectedNodeId(null)}
-                  onNodeDoubleClick={(_event, node) => {
-                    // Boundary proxies and the boundary-group container are
-                    // read-only — they have no interior to descend into (descend
-                    // into the real Component instead).
-                    if (isPassiveNode(node)) return;
-                    descend(node.id);
-                  }}
-                  onNodeMouseEnter={(_event, node) => {
-                    // Make Descent feel instant: warm the interior Canvas payload (tRPC
-                    // cache, the same key the descended island reads) and the route shell.
-                    // Also warm the Plate docs-editor chunk so first selection of a
-                    // Component doesn't pay a "Loading editor…" flash (ADR-0015 §6).
-                    if (node.id.startsWith("temp_")) return;
-                    if (isPassiveNode(node)) return;
-                    void utils.architecture.getCanvas.prefetch({
-                      slug,
-                      canvasNodeId: node.id,
-                    });
-                    router.prefetch(`/p/${slug}/n/${node.id}`);
-                    // Viewers open the read-only docs panel too, so warm the
-                    // Plate chunk for everyone — no first-open flash (perf #1).
-                    prefetchDocsEditor();
-                  }}
-                  onNodeDragStop={(_event, _node, dragged) =>
-                    void persistPositions(dragged)
+        <DescendComponentContext.Provider value={descend}>
+          <DeleteComponentContext.Provider value={removeComponent}>
+            <CanEditContext.Provider value={canEdit}>
+              <ReactFlow<ComponentNode, ConnectionEdge>
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={(c) => void handleConnect(c)}
+                // Loose connection mode: a Connection can be drawn between any
+                // two handles in either direction — Components are not
+                // directional, so a Port has no input/output role and the drag
+                // direction carries no meaning here (a Connection's interaction
+                // is set separately; #65). The draw order is preserved on the
+                // Edge for the eventual arrowhead derivation (ADR-0027).
+                connectionMode={ConnectionMode.Loose}
+                // Instant drag feedback: reject a self-link and a still-optimistic
+                // (temp_) endpoint by snapping back. Duplicates are deliberately
+                // allowed through (passing [] skips the duplicate rule) so
+                // onConnect can surface a toast — blocking them here would snap a
+                // duplicate back silently, with no explanation.
+                isValidConnection={(c) => {
+                  const { source, target } = c;
+                  if (!source || !target) return false;
+                  if (
+                    source.startsWith("temp_") ||
+                    target.startsWith("temp_")
+                  ) {
+                    return false;
                   }
-                  onSelectionDragStop={(_event, dragged) =>
-                    void persistPositions(dragged)
-                  }
-                  nodeTypes={nodeTypes}
-                  edgeTypes={edgeTypes}
-                  nodesDraggable={canEdit}
-                  nodesConnectable={canEdit}
-                  deleteKeyCode={canEdit ? undefined : null}
-                  fitView
-                >
-                  <Background />
-                  <Controls />
-                  <Panel position="top-left" className="flex gap-2">
-                    {canEdit && (
-                      <AddComponent
-                        onAdd={addComponent}
-                        parentKind={parentKind}
-                        pending={createNode.isPending}
-                      />
-                    )}
-                    {/* Slug-readable: visible to any viewer, not gated on
-                        edit. Always exports the whole project (ADR-0017 /
-                        #15) — the scope-specific export lives on the
-                        breadcrumb bar. */}
-                    <CopyMarkdownToolbar slug={slug} />
-                  </Panel>
-                  {selectedNodeId !== null &&
-                    (canEdit ? (
-                      <Panel
-                        key={selectedNodeId}
-                        position="top-right"
-                        className="top-0! right-0! bottom-0! m-0! flex"
-                      >
-                        {/* Owner mode: full edit affordances wired to the
-                            canvas's mutations. Discriminated `readOnly: false`
-                            keeps write callbacks visible at compile time (#16). */}
-                        <ComponentDetailPanel
-                          readOnly={false}
-                          slug={slug}
-                          ownerNodeId={selectedNodeId}
-                          currentKind={selectedNode?.kind ?? "GENERIC"}
-                          parentKind={parentKind}
-                          initialDocumentation={
-                            selectedNode?.documentation ?? ""
-                          }
-                          onClose={closeDetailPanel}
-                          onChangeKind={commitNodeKind}
-                          onFlowCountChange={commitFlowCount}
-                          onCommitDocumentation={commitDocumentation}
-                        />
-                      </Panel>
-                    ) : (
-                      <Panel
-                        key={selectedNodeId}
-                        position="top-right"
-                        className="top-0! right-0! bottom-0! m-0! flex"
-                      >
-                        {/* Viewer mode: read-only docs + Flow list, zero write
-                            affordances. Discriminated `readOnly: true` omits
-                            mutations at compile time (#16). */}
-                        <ComponentDetailPanel
-                          readOnly={true}
-                          slug={slug}
-                          ownerNodeId={selectedNodeId}
-                          currentKind={selectedNode?.kind ?? "GENERIC"}
-                          parentKind={parentKind}
-                          initialDocumentation={
-                            selectedNode?.documentation ?? ""
-                          }
-                          onClose={closeDetailPanel}
-                        />
-                      </Panel>
-                    ))}
-                  {nodes.length === 0 && (
-                    <Panel position="top-center">
-                      <p className="mt-2 text-sm text-white/50">
-                        Empty canvas. Add a Component to start modeling.
-                      </p>
-                    </Panel>
+                  return canConnect({ source, target }, []).ok;
+                }}
+                onEdgesDelete={handleEdgesDelete}
+                onNodeClick={(_event, node) => {
+                  // A `temp_…` Component has no server id yet; opening the
+                  // detail panel would query for a node the server cannot
+                  // find. Single-click selection only for real Components —
+                  // double-click still descends.
+                  if (node.id.startsWith("temp_")) return;
+                  setSelectedNodeId(node.id);
+                }}
+                onPaneClick={() => setSelectedNodeId(null)}
+                onNodeDoubleClick={(_event, node) => descend(node.id)}
+                onNodeMouseEnter={(_event, node) => {
+                  // Make Descent feel instant: warm the interior Canvas payload (tRPC
+                  // cache, the same key the descended island reads) and the route shell.
+                  // Also warm the Plate docs-editor chunk so first selection of a
+                  // Component doesn't pay a "Loading editor…" flash (ADR-0015 §6).
+                  if (node.id.startsWith("temp_")) return;
+                  void utils.architecture.getCanvas.prefetch({
+                    slug,
+                    canvasNodeId: node.id,
+                  });
+                  router.prefetch(`/p/${slug}/n/${node.id}`);
+                  // Viewers open the read-only docs panel too, so warm the
+                  // Plate chunk for everyone — no first-open flash (perf #1).
+                  prefetchDocsEditor();
+                }}
+                onNodeDragStop={(_event, _node, dragged) =>
+                  void persistPositions(dragged)
+                }
+                onSelectionDragStop={(_event, dragged) =>
+                  void persistPositions(dragged)
+                }
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                nodesDraggable={canEdit}
+                nodesConnectable={canEdit}
+                deleteKeyCode={canEdit ? undefined : null}
+                fitView
+              >
+                <Background />
+                <Controls />
+                <Panel position="top-left" className="flex gap-2">
+                  {canEdit && (
+                    <AddComponent
+                      onAdd={addComponent}
+                      parentKind={parentKind}
+                      pending={createNode.isPending}
+                    />
                   )}
-                </ReactFlow>
-              </CanEditContext.Provider>
-            </DeleteComponentContext.Provider>
-          </DescendComponentContext.Provider>
-        </RouteFlowContext.Provider>
+                  {/* Slug-readable: visible to any viewer, not gated on
+                      edit. Always exports the whole project (ADR-0017 /
+                      #15) — the scope-specific export lives on the
+                      breadcrumb bar. */}
+                  <CopyMarkdownToolbar slug={slug} />
+                </Panel>
+                {selectedNodeId !== null &&
+                  (canEdit ? (
+                    <Panel
+                      key={selectedNodeId}
+                      position="top-right"
+                      className="top-0! right-0! bottom-0! m-0! flex"
+                    >
+                      {/* Owner mode: full edit affordances wired to the
+                          canvas's mutations. Discriminated `readOnly: false`
+                          keeps write callbacks visible at compile time (#16). */}
+                      <ComponentDetailPanel
+                        readOnly={false}
+                        ownerNodeId={selectedNodeId}
+                        currentKind={selectedNode?.kind ?? "GENERIC"}
+                        parentKind={parentKind}
+                        initialDocumentation={
+                          selectedNode?.documentation ?? ""
+                        }
+                        onClose={closeDetailPanel}
+                        onChangeKind={commitNodeKind}
+                        onCommitDocumentation={commitDocumentation}
+                      />
+                    </Panel>
+                  ) : (
+                    <Panel
+                      key={selectedNodeId}
+                      position="top-right"
+                      className="top-0! right-0! bottom-0! m-0! flex"
+                    >
+                      {/* Viewer mode: read-only docs, zero write affordances.
+                          Discriminated `readOnly: true` omits mutations at
+                          compile time (#16). */}
+                      <ComponentDetailPanel
+                        readOnly={true}
+                        ownerNodeId={selectedNodeId}
+                        currentKind={selectedNode?.kind ?? "GENERIC"}
+                        parentKind={parentKind}
+                        initialDocumentation={
+                          selectedNode?.documentation ?? ""
+                        }
+                        onClose={closeDetailPanel}
+                      />
+                    </Panel>
+                  ))}
+                {nodes.length === 0 && (
+                  <Panel position="top-center">
+                    <p className="mt-2 text-sm text-white/50">
+                      Empty canvas. Add a Component to start modeling.
+                    </p>
+                  </Panel>
+                )}
+              </ReactFlow>
+            </CanEditContext.Provider>
+          </DeleteComponentContext.Provider>
+        </DescendComponentContext.Provider>
       </EditEdgeContext.Provider>
     </RenameComponentContext.Provider>
   );

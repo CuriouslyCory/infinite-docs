@@ -79,28 +79,42 @@ function buildProjectInput(): SerializerInput {
         kind: "SERVICE",
         documentation: "",
       },
+      {
+        id: "n-analytics",
+        parentId: null,
+        title: "Analytics API",
+        kind: "EXTERNAL_API",
+        documentation: "",
+      },
     ],
     edges: [
       {
         id: "e-api-db",
-        canvasNodeId: null,
         sourceId: "n-api",
         targetId: "n-db",
         label: "reads from",
       },
       {
         id: "e-api-ext",
-        canvasNodeId: null,
         sourceId: "n-api",
         targetId: "n-ext",
         label: "calls",
       },
       {
         id: "e-auth-users",
-        canvasNodeId: "n-api",
         sourceId: "n-auth",
         targetId: "n-users",
         label: null,
+      },
+      // Descendant→external: incident to n-users (a child of the n-api subtree
+      // root), NOT to n-api itself. In the subtree export this surfaces n-analytics
+      // as an "inherited" boundary proxy (is_direct = false), the complement of
+      // the "direct" externals incident to the root.
+      {
+        id: "e-users-analytics",
+        sourceId: "n-users",
+        targetId: "n-analytics",
+        label: "tracks events",
       },
     ],
     boundaryProxies: [],
@@ -121,7 +135,12 @@ function buildSubtreeInput(): SerializerInput {
     nodes: root.nodes.filter((n) =>
       ["n-api", "n-auth", "n-users"].includes(n.id),
     ),
-    edges: root.edges.filter((e) => e.canvasNodeId === "n-api"),
+    // Internal Connections: both endpoints inside the subtree (ADR-0028).
+    edges: root.edges.filter(
+      (e) =>
+        ["n-api", "n-auth", "n-users"].includes(e.sourceId) &&
+        ["n-api", "n-auth", "n-users"].includes(e.targetId),
+    ),
     boundaryProxies: [
       {
         nodeId: "n-db",
@@ -134,6 +153,14 @@ function buildSubtreeInput(): SerializerInput {
         title: "Third Party API",
         kind: "EXTERNAL_API",
         origin: "direct",
+      },
+      // Reached only via n-users (a descendant), never the subtree root — so the
+      // service derives is_direct = false. Exercises the inherited boundary branch.
+      {
+        nodeId: "n-analytics",
+        title: "Analytics API",
+        kind: "EXTERNAL_API",
+        origin: "inherited",
       },
     ],
     mode: "full",
@@ -246,7 +273,6 @@ async function seedProject(): Promise<string> {
       data: {
         id: e.id,
         projectId: "p-test",
-        canvasNodeId: e.canvasNodeId,
         sourceId: e.sourceId,
         targetId: e.targetId,
         label: e.label,

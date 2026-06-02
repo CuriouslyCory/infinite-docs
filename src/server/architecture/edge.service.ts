@@ -1,13 +1,12 @@
-import { randomUUID } from "node:crypto";
-
-import { Prisma, type Edge } from "../../../generated/prisma/client";
+import {
+  type Edge,
+  type Interaction,
+  type Prisma,
+} from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
-import {
-  isEdgeDedupCollision,
-  isFlowRouteDedupCollision,
-} from "./prisma-errors";
+import { isEdgeDedupCollision } from "./prisma-errors";
 import {
   connectNodesInput,
   deleteEdgeInput,
@@ -20,26 +19,48 @@ import {
 } from "~/lib/schemas";
 
 /**
- * Draws a Connection (creates an Edge) between two Components on one Canvas.
+ * The active-duplicate predicate for a Connection's de-dupe slot. An
+ * `ASSOCIATION` de-dupes on the UNORDERED endpoint pair (A↔B and B↔A are one
+ * Association — `idx_edge_assoc_dedup`); a directional interaction de-dupes on
+ * the ORDERED `(sourceId, targetId, interaction)` tuple (`idx_edge_dedup`), so
+ * A→B REQUEST, A→B PUSH, and B→A REQUEST are three distinct Connections
+ * (ADR-0027/0028, ADR-0010). The service `findFirst` MUST mirror the index it
+ * is backstopping, or it falsely rejects a legitimate reverse-direction edge.
+ */
+export function activeDuplicateWhere(
+  projectId: string,
+  sourceId: string,
+  targetId: string,
+  interaction: Interaction,
+): Prisma.EdgeWhereInput {
+  if (interaction === "ASSOCIATION") {
+    return {
+      projectId,
+      deletedAt: null,
+      interaction: "ASSOCIATION",
+      OR: [
+        { sourceId, targetId },
+        { sourceId: targetId, targetId: sourceId },
+      ],
+    };
+  }
+  return { projectId, deletedAt: null, interaction, sourceId, targetId };
+}
+
+/**
+ * Draws a Connection (creates an Edge) between two Components — at any scope.
  *
- * The Canvas is the EXPLICIT `canvasNodeId` (null => the Project root) — it is
- * supplied, never inferred from the endpoints, so a future refinement
- * Connection can span scope levels without a model change (ADR-0005). Three
- * invariants are enforced here in the service; the de-dupe invariant
- * additionally has the partial unique index `idx_edge_dedup` as a TOCTOU
- * backstop (ADR-0010), surfaced as the same `ConflictError` shape on both
- * paths (`details.conflictingEdgeIds` names the active Edge that blocked the
- * write):
+ * A Connection is a directed, typed edge that may link any two Components,
+ * same-Canvas, cross-scope, or lineal (an ancestor and a descendant; a
+ * parent→child Connection expresses ingress; ADR-0028). It stores NO scope —
+ * scope is derived from endpoint ancestry at read time (#63). The only endpoint
+ * the service rejects is the true self-link (`sourceId === targetId`).
  *
- * 1. no self-Connection (`sourceId !== targetId`);
- * 2. same-Canvas — both endpoints' `parentId` equals `canvasNodeId`;
- * 3. no duplicate ACTIVE Edge sharing scope + the UNORDERED endpoint pair (A→B
- *    and B→A are the SAME Connection — direction is derived from routed Flows,
- *    not the column order; ADR-0023; the label never factors in; a soft-deleted
- *    Edge never blocks re-creation). Fast-path `findFirst` throws the readable
- *    conflict; the `idx_edge_dedup` expression index (over LEAST/GREATEST of the
- *    endpoints) catches the concurrent racer that slips past, both translated to
- *    the same error.
+ * The Connection carries its own `interaction` (default `ASSOCIATION`; ADR-0027).
+ * De-dupe is enforced here in the service, with the two partial unique indexes
+ * (`idx_edge_dedup` directional, `idx_edge_assoc_dedup` association) as a TOCTOU
+ * backstop (ADR-0010), both surfaced as the same `ConflictError` shape
+ * (`details.conflictingEdgeIds` names the active Edge that blocked the write).
  *
  * Owner-only: the Project is addressed by `projectId` (an internal handle,
  * never the capability slug — writes are never slug-granted, ADR-0002) and the
@@ -52,7 +73,7 @@ export async function connectNodes(
   actor: Actor,
   input: ConnectNodesInput,
 ): Promise<Edge> {
-  const { projectId, canvasNodeId, sourceId, targetId, label } =
+  const { projectId, sourceId, targetId, interaction, label } =
     connectNodesInput.parse(input);
 
   const project = await db.project.findFirst({
@@ -72,40 +93,29 @@ export async function connectNodes(
   // Both endpoints must be live Nodes in this owned Project. Scoping the lookup
   // to `projectId` closes cross-project smuggling (a foreign Node id can never
   // be an endpoint) and never reveals whether the id exists elsewhere — the
-  // same set-membership posture `updatePositions` uses for batch writes.
+  // same set-membership posture `updatePositions` uses for batch writes. Their
+  // scopes (`parentId`) are NOT constrained: cross-scope and lineal endpoints
+  // are accepted (ADR-0028).
   const endpoints = await db.node.findMany({
     where: {
       id: { in: [sourceId, targetId] },
       projectId: project.id,
       deletedAt: null,
     },
-    select: { id: true, parentId: true },
+    select: { id: true },
   });
-  const source = endpoints.find((n) => n.id === sourceId);
-  const target = endpoints.find((n) => n.id === targetId);
-  if (!source || !target) {
+  if (endpoints.length !== 2) {
     throw new NotFoundError();
   }
 
-  // Same-Canvas: confirm the explicit `canvasNodeId` matches where the endpoints
-  // actually live (null === null at the root). This also rejects a bogus scope
-  // that does not match either endpoint.
-  if (source.parentId !== canvasNodeId || target.parentId !== canvasNodeId) {
-    throw new ValidationError(
-      "Both Components must be on the Canvas the Connection is drawn on.",
-    );
-  }
-
+  const duplicateWhere = activeDuplicateWhere(
+    project.id,
+    sourceId,
+    targetId,
+    interaction,
+  );
   const duplicate = await db.edge.findFirst({
-    where: {
-      canvasNodeId,
-      deletedAt: null,
-      // Unordered: A→B and B→A are the same Connection (ADR-0023).
-      OR: [
-        { sourceId, targetId },
-        { sourceId: targetId, targetId: sourceId },
-      ],
-    },
+    where: duplicateWhere,
     select: { id: true, label: true },
   });
   if (duplicate) {
@@ -118,27 +128,19 @@ export async function connectNodes(
     return await db.edge.create({
       data: {
         projectId: project.id,
-        canvasNodeId,
         sourceId,
         targetId,
+        interaction,
         label,
       },
     });
   } catch (error) {
     if (!isEdgeDedupCollision(error)) throw error;
     // The fast-path `findFirst` missed a concurrent racer that committed
-    // first; the partial unique index caught it (ADR-0010). Load the racer
-    // (unordered — it may have been drawn the other way) so the catch path
-    // produces the same error shape as the fast path.
+    // first; a partial unique index caught it (ADR-0010). Re-read the racer in
+    // the same slot so the catch path produces the same error shape.
     const racer = await db.edge.findFirst({
-      where: {
-        canvasNodeId,
-        deletedAt: null,
-        OR: [
-          { sourceId, targetId },
-          { sourceId: targetId, targetId: sourceId },
-        ],
-      },
+      where: duplicateWhere,
       select: { id: true, label: true },
     });
     throw new ConflictError(duplicateConnectionMessage(racer?.label ?? null), {
@@ -161,10 +163,9 @@ function duplicateConnectionMessage(label: string | null): string {
  * for an existing row, and how a future MCP tool arrives: the service loads the
  * Edge, resolves its Project, and authorizes owner-only through
  * `access.assertCanWrite` (ADR-0001). Only `label` changes — `label: null`
- * clears it, `label: undefined` leaves it. There is no direction to edit — a
- * Connection is undirected; its arrowheads are derived from the Flows routed on
- * it, never stored (ADR-0023). `label` is UNTRUSTED user content, stored verbatim
- * (prompt-injection standing note, CONTEXT.md).
+ * clears it, `label: undefined` leaves it. A Connection's `interaction` is set
+ * at creation and (until the #65 picker) is not edited here. `label` is
+ * UNTRUSTED user content, stored verbatim (prompt-injection standing note).
  */
 export async function updateEdge(
   db: Db,
@@ -196,36 +197,20 @@ export async function updateEdge(
 
 /**
  * Removes a Connection via soft-delete (sets `deletedAt`) so the action stays
- * recoverable — the safety net that matters because AI agents mutate the
- * graph (CONTEXT.md "Soft-delete + undo"). Addressed by the Edge `id`;
- * loaded, its Project resolved, and authorized owner-only through
- * `access.assertCanWrite` (ADR-0001). Idempotent in spirit: an
- * already-deleted Edge reads as not-found.
+ * recoverable — the safety net that matters because AI agents mutate the graph
+ * (CONTEXT.md "Soft-delete + undo"). Addressed by the Edge `id`; loaded, its
+ * Project resolved, and authorized owner-only through `access.assertCanWrite`
+ * (ADR-0001). Idempotent in spirit: an already-deleted Edge reads as not-found.
  *
- * Cascade behavior (Slice 2 / ADR-0014 — extends ADR-0008's "lone delete"
- * carve-out): if at least one live FlowRoute references this Edge (as
- * `outerEdgeId` or `innerEdgeId`), the delete mints a fresh `deletionId` and
- * stamps it on the Edge, the swept FlowRoutes, and (Slice 3 / ADR-0012) any
- * inner Edge a swept FlowRoute carried that no SURVIVING active FlowRoute still
- * references — an inner Edge is a shared pipe, so it lives as long as another
- * route rides it. `restoreEdge` revives the whole batch as one unit. If no
- * FlowRoutes are incident, ADR-0008's lone-delete rule still holds — the Edge
- * soft-deletes with no `deletionId`.
- *
- * Returns the soft-deleted Edge plus the cascade metadata (`deletionId` and
- * `flowRouteIds`) so the optimistic UI can stage an undo affordance in the
- * same frame. Wrap callers in `db.$transaction` so the multi-write cascade
- * is atomic.
+ * `deleteEdge` is a plain LONE soft-delete (ADR-0008's carve-out, now the only
+ * path): it sets `deletedAt` on the one Edge and mints NO `deletionId` — there
+ * is no FlowRoute cascade to group (the Flow model is retired; ADR-0030).
  */
 export async function deleteEdge(
   db: Db,
   actor: Actor,
   input: DeleteEdgeInput,
-): Promise<{
-  edge: Edge;
-  deletionId: string | null;
-  flowRouteIds: string[];
-}> {
+): Promise<{ edge: Edge }> {
   const { id } = deleteEdgeInput.parse(input);
 
   const edge = await db.edge.findFirst({ where: { id, deletedAt: null } });
@@ -241,121 +226,26 @@ export async function deleteEdge(
   }
   assertCanWrite(actor, project);
 
-  // Gather incident FlowRoutes (live, by outer OR inner edge), with each one's
-  // inner Edge so we can decide which inner Edges the cascade should also
-  // sweep (ADR-0012's shared-pipe rule).
-  const incidentRoutes = await db.flowRoute.findMany({
-    where: {
-      OR: [{ outerEdgeId: edge.id }, { innerEdgeId: edge.id }],
-      deletedAt: null,
-    },
-    select: { id: true, innerEdgeId: true },
-  });
-  const flowRouteIds = incidentRoutes.map((r) => r.id);
-  const cascading = flowRouteIds.length > 0;
-  const deletedAt = new Date();
-
-  // No incident routes: ADR-0008's lone-delete rule applies — no `deletionId`
-  // minted. The dominant case stays unchanged from Slice 1.
-  if (!cascading) {
-    const updated = await db.edge.update({
-      where: { id: edge.id },
-      data: { deletedAt },
-    });
-    return { edge: updated, deletionId: null, flowRouteIds: [] };
-  }
-
-  // Inner Edges a swept FlowRoute carried, other than the Edge being deleted
-  // itself (when this delete targets an inner Edge, that Edge is already the
-  // subject of the delete). Each is swept only if no SURVIVING active
-  // FlowRoute — one not in this swept batch — still references it (the inner
-  // Edge is a shared pipe; ADR-0012).
-  const candidateInnerEdgeIds = [
-    ...new Set(
-      incidentRoutes
-        .map((r) => r.innerEdgeId)
-        .filter((iid): iid is string => iid !== null && iid !== edge.id),
-    ),
-  ];
-  const innerEdgeIdsToSweep: string[] = [];
-  if (candidateInnerEdgeIds.length > 0) {
-    // Lock the candidate inner Edge rows, then find in ONE round trip which
-    // still have a surviving active FlowRoute outside this swept batch. The
-    // lock serializes the survivor decision per inner Edge against a concurrent
-    // routeFlow / unrouteFlow (which take the same `FOR UPDATE` on these rows),
-    // so we cannot sweep an Edge a route is about to ride or a sibling delete is
-    // about to keep (ADR-0012 sweep race). `ORDER BY id` fixes the lock
-    // acquisition order, so two concurrent deleteEdge callers locking
-    // overlapping sets cannot cycle-deadlock. Inner Edge ids absent from the
-    // survivor groups are the ones safe to sweep.
-    await db.$queryRaw`SELECT id FROM "Edge" WHERE id IN (${Prisma.join(
-      candidateInnerEdgeIds,
-    )}) ORDER BY id FOR UPDATE`;
-    const survivorGroups = await db.flowRoute.groupBy({
-      by: ["innerEdgeId"],
-      where: {
-        innerEdgeId: { in: candidateInnerEdgeIds },
-        deletedAt: null,
-        id: { notIn: flowRouteIds },
-      },
-    });
-    const haveSurvivor = new Set(
-      survivorGroups
-        .map((g) => g.innerEdgeId)
-        .filter((id): id is string => id !== null),
-    );
-    for (const innerEdgeId of candidateInnerEdgeIds) {
-      if (!haveSurvivor.has(innerEdgeId)) {
-        innerEdgeIdsToSweep.push(innerEdgeId);
-      }
-    }
-  }
-
-  // Cascade: mint one fresh id, stamp the Edge, the swept FlowRoutes, and the
-  // now-unreferenced inner Edges. `restoreEdge` revives by this handle. The
-  // cascade is no longer "lone" in ADR-0008's sense — see ADR-0014.
-  //
-  // ATOMICITY: these writes must commit as a unit, but this function takes a
-  // bare `Db` — it is the CALLER's job to wrap the call in `db.$transaction`
-  // (the tRPC `deleteEdge` procedure does). A non-transactional caller that
-  // fails partway would orphan routes from a dead Edge. Prisma has no reliable
-  // "am I in a transaction?" probe, so this is enforced by contract
-  // (ADR-0014), not by an assertion here.
-  const deletionId = randomUUID();
   const updated = await db.edge.update({
     where: { id: edge.id },
-    data: { deletedAt, deletionId },
+    data: { deletedAt: new Date() },
   });
-  await db.flowRoute.updateMany({
-    where: { id: { in: flowRouteIds }, deletedAt: null },
-    data: { deletedAt, deletionId },
-  });
-  if (innerEdgeIdsToSweep.length > 0) {
-    await db.edge.updateMany({
-      where: { id: { in: innerEdgeIdsToSweep }, deletedAt: null },
-      data: { deletedAt, deletionId },
-    });
-  }
-  return { edge: updated, deletionId, flowRouteIds };
+  return { edge: updated };
 }
 
 /**
- * Undoes a cascading `deleteEdge`: restores EXACTLY the rows stamped with
- * the given `deletionId` — the Edge and every FlowRoute swept alongside it.
- * Both `deletedAt` and `deletionId` are cleared, so the batch handle is
- * consumed. An unknown / already-restored / lone-`deleteEdge` id (those mint
- * no `deletionId`) matches no rows and reads as not-found.
+ * Undoes a cascading `deleteNode` Edge sweep: restores EXACTLY the Edges stamped
+ * with the given `deletionId`. Both `deletedAt` and `deletionId` are cleared, so
+ * the batch handle is consumed. An unknown / already-restored / lone-`deleteEdge`
+ * id (those mint no `deletionId`) matches no rows and reads as not-found.
  *
  * Undo is a WRITE — owner-only via the stamped Edge's Project (ADR-0001 /
- * ADR-0002); a capability-URL viewer cannot undo. Pre-checks both de-dupe
- * invariants the revival must not violate — `idx_edge_dedup` on the Edge's
- * `(canvasNodeId, sourceId, targetId)` triple, and `idx_flow_route_dedup` on
- * each FlowRoute's `(outerEdgeId, flowId)` slot — and surfaces a readable
- * `ConflictError` BEFORE the updateMany so the user gets the conflicting
- * ids instead of a generic P2002.
- *
- * Runs inside the caller's transaction so the two updateMany sweeps commit
- * atomically.
+ * ADR-0002); a capability-URL viewer cannot undo. Pre-checks the de-dupe
+ * invariant the revival must not violate — for each revived Edge, its
+ * interaction-appropriate slot (`idx_edge_dedup` directional or
+ * `idx_edge_assoc_dedup` association) — and surfaces a readable `ConflictError`
+ * BEFORE the updateMany so the user gets the conflicting ids instead of a
+ * generic P2002. Runs inside the caller's transaction.
  */
 export async function restoreEdge(
   db: Db,
@@ -364,13 +254,18 @@ export async function restoreEdge(
 ): Promise<{
   deletionId: string;
   edgeIds: string[];
-  flowRouteIds: string[];
 }> {
   const { deletionId } = restoreEdgeInput.parse(input);
 
   const edges = await db.edge.findMany({
     where: { deletionId },
-    select: { id: true, projectId: true, canvasNodeId: true, sourceId: true, targetId: true },
+    select: {
+      id: true,
+      projectId: true,
+      sourceId: true,
+      targetId: true,
+      interaction: true,
+    },
   });
   const [firstEdge] = edges;
   if (!firstEdge) {
@@ -385,58 +280,27 @@ export async function restoreEdge(
   }
   assertCanWrite(actor, project);
 
-  const stampedRoutes = await db.flowRoute.findMany({
-    where: { deletionId },
-    select: { id: true, outerEdgeId: true, flowId: true },
+  // Pre-check the de-dupe invariant (ADR-0010): any active row occupying a slot
+  // we're about to revive would block the updateMany. Each revived Edge
+  // contributes its interaction-appropriate predicate (association → unordered
+  // pair; directional → ordered triple + interaction). Done BEFORE the update
+  // because Postgres aborts the transaction on P2002 and we couldn't query for
+  // diagnostics from inside the catch. Mirrors `restoreNode`'s pre-check shape.
+  const conflicts = await db.edge.findMany({
+    where: {
+      deletedAt: null,
+      OR: edges.map(({ projectId, sourceId, targetId, interaction }) =>
+        activeDuplicateWhere(projectId, sourceId, targetId, interaction),
+      ),
+    },
+    select: { id: true },
   });
-
-  // Pre-check the `idx_edge_dedup` invariant (ADR-0010): any active row whose
-  // UNORDERED pair + scope matches one we're about to revive would block the
-  // updateMany (ADR-0023 — A→B and B→A collide). Each revived Edge contributes
-  // both orderings. Done BEFORE the updates because Postgres aborts the
-  // transaction on P2002 and we couldn't query for diagnostics from inside the
-  // catch. Mirrors `restoreNode`'s pre-check shape.
-  if (edges.length > 0) {
-    const conflicts = await db.edge.findMany({
-      where: {
-        deletedAt: null,
-        OR: edges.flatMap(({ canvasNodeId, sourceId, targetId }) => [
-          { canvasNodeId, sourceId, targetId },
-          { canvasNodeId, sourceId: targetId, targetId: sourceId },
-        ]),
-      },
-      select: { id: true },
-    });
-    if (conflicts.length > 0) {
-      const count = conflicts.length;
-      throw new ConflictError(
-        `Can't undo this delete: ${count} Connection${count === 1 ? "" : "s"} cannot be restored because a new Connection now occupies the same source/target slot. Delete the conflicting Connection${count === 1 ? "" : "s"} and retry.`,
-        { conflictingEdgeIds: conflicts.map((e) => e.id) },
-      );
-    }
-  }
-
-  // Pre-check the `idx_flow_route_dedup` invariant: a stamped FlowRoute's
-  // (outerEdgeId, flowId) slot may now be occupied by a fresh route. Same
-  // posture as the Edge pre-check above.
-  if (stampedRoutes.length > 0) {
-    const conflicts = await db.flowRoute.findMany({
-      where: {
-        deletedAt: null,
-        OR: stampedRoutes.map(({ outerEdgeId, flowId }) => ({
-          outerEdgeId,
-          flowId,
-        })),
-      },
-      select: { id: true },
-    });
-    if (conflicts.length > 0) {
-      const count = conflicts.length;
-      throw new ConflictError(
-        `Can't undo this delete: ${count} routed Flow${count === 1 ? "" : "s"} cannot be restored because a new route now occupies the same Connection/Flow slot. Remove the conflicting route${count === 1 ? "" : "s"} and retry.`,
-        { conflictingFlowRouteIds: conflicts.map((r) => r.id) },
-      );
-    }
+  if (conflicts.length > 0) {
+    const count = conflicts.length;
+    throw new ConflictError(
+      `Can't undo this delete: ${count} Connection${count === 1 ? "" : "s"} cannot be restored because a new Connection now occupies the same slot. Delete the conflicting Connection${count === 1 ? "" : "s"} and retry.`,
+      { conflictingEdgeIds: conflicts.map((e) => e.id) },
+    );
   }
 
   try {
@@ -452,22 +316,8 @@ export async function restoreEdge(
     );
   }
 
-  try {
-    await db.flowRoute.updateMany({
-      where: { deletionId },
-      data: { deletedAt: null, deletionId: null },
-    });
-  } catch (error) {
-    if (!isFlowRouteDedupCollision(error)) throw error;
-    throw new ConflictError(
-      "Undo blocked by a concurrent write — retry to see what conflicts.",
-      { conflictingFlowRouteIds: [] },
-    );
-  }
-
   return {
     deletionId,
     edgeIds: edges.map((e) => e.id),
-    flowRouteIds: stampedRoutes.map((r) => r.id),
   };
 }

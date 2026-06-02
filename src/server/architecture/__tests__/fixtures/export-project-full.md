@@ -1,6 +1,6 @@
 # Test System
 
-> 5 Components · 3 Connections
+> 6 Components · 4 Connections
 
 ## Components
 
@@ -15,6 +15,10 @@ This service exposes the public API.
 ##### Authentication
 
 Tokens are JWT-based.
+
+### Analytics API {#n-analytics}
+- kind: External API
+- path: Analytics API
 
 ### Postgres {#n-db}
 - kind: Database
@@ -34,6 +38,7 @@ Tokens are JWT-based.
 
 ## Connections
 
-- API Gateway → Postgres — reads from (canvas: Project root)
-- API Gateway → Third Party API — calls (canvas: Project root)
-- Auth Module → Users Module (canvas: API Gateway)
+- API Gateway → Postgres — reads from
+- API Gateway → Third Party API — calls
+- Auth Module → Users Module
+- Users Module → Analytics API — tracks events
