@@ -738,3 +738,20 @@ export const applySpecInput = z.object({
   dropped: z.array(specDroppedResolution).max(5000).default([]),
 });
 export type ApplySpecInput = z.input<typeof applySpecInput>;
+
+/**
+ * Typed output of the `apply_spec` MCP tool (#67). Mirrors `ApplySpecResult`
+ * from `~/server/architecture/spec.service.ts` so the MCP catalog's
+ * `outputSchema` (SDK 1.26.0) carries the same wire shape the service
+ * returns. Drives `structuredContent` on the response — the agent reads a
+ * typed object, not a JSON-encoded message blob (ADR-0026 §6 seam reused).
+ */
+export const applySpecOutput = z.object({
+  specId: z.string().min(1),
+  ownerNodeId: z.string().min(1),
+  created: z.number().int().nonnegative(),
+  overwritten: z.number().int().nonnegative(),
+  detached: z.number().int().nonnegative(),
+  deleted: z.number().int().nonnegative(),
+});
+export type ApplySpecOutput = z.infer<typeof applySpecOutput>;

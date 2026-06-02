@@ -3,6 +3,8 @@ import { type z } from "zod";
 import {
   applyGraphInput,
   applyGraphOutput,
+  applySpecInput,
+  applySpecOutput,
   connectNodesInput,
   createNodeInput,
   moveNodeInput,
@@ -16,6 +18,7 @@ import {
   moveNode,
   updateNodeDocumentation,
 } from "~/server/architecture/node.service";
+import { applySpec } from "~/server/architecture/spec.service";
 
 /**
  * The MCP write-tool catalog as plain data — NO SDK imports — so the SDK
@@ -23,20 +26,22 @@ import {
  * one source and cannot disagree. Same posture {@link READ_RESOURCES} uses for
  * reads.
  *
- * Five tools today: the four single-op writers from #19 (`create_component`,
- * `connect_components`, `update_component_docs`, `move_component`) plus the
+ * Six tools today: the four single-op writers from #19 (`create_component`,
+ * `connect_components`, `update_component_docs`, `move_component`), the
  * `apply_graph` batch tool from #20 that composes Components and Connections
- * in one transaction with `clientId`-chained references. A spec-attach tool
- * (generating Components) is owned by #67 and lands additively — a new
- * descriptor plugs in here without touching the registration loop, the auth
- * gate, the route, or `llms.txt`. No delete tool is exposed (#19's acceptance
- * criterion).
+ * in one transaction with `clientId`-chained references, and the `apply_spec`
+ * tool from #67 that drives Spec → Component generation (ADR-0029) over the
+ * MCP path. Each descriptor is plain data — additional tools plug in here
+ * without touching the registration loop, the auth gate, the route, or
+ * `llms.txt` (which renders dynamically from this catalog). No delete tool
+ * is exposed (#19's acceptance criterion).
  *
  * Each invoker calls into the service layer with the actor; the registry
  * handles per-request actor resolution and transactional wrapping. Service
  * errors flow through `toMcpWriteError` so structured details
  * (`conflictingEdgeIds`, `conflictingClientIds`, …) reach the agent (ADR-0010
- * named pattern, ADR-0022 + ADR-0026 + ADR-0027 + ADR-0028).
+ * named pattern, ADR-0017 + ADR-0022 + ADR-0026 + ADR-0027 + ADR-0028 +
+ * ADR-0029).
  */
 
 /** A short, human-readable confirmation; includes the affected id so the
@@ -181,6 +186,35 @@ ${PROMPT_INJECTION_NOTE}`,
         result.connectionCount === 1 ? "Connection" : "Connections";
       return {
         message: `Created ${result.componentCount} ${componentLabel} and ${result.connectionCount} ${connectionLabel} (apply_graph batch).`,
+        structured: result,
+      };
+    },
+  }),
+  defineTool({
+    name: "apply_spec",
+    title: "Generate Components from a Spec on an owner Component",
+    description: `Attach an OpenAPI / SQL DDL / AsyncAPI / GraphQL / TypeScript-signature / CUSTOM Spec to an existing Component and materialize a tree of derived child Components from it. The parser is chosen by \`kind\` (\`OPENAPI\`, \`SQL_DDL\`, etc.). An OpenAPI document attached to an EXTERNAL_API Component creates ENDPOINT children (with parameter sub-Components); a SQL DDL document attached to a DATABASE creates TABLE children (with column sub-Components).
+
+The server PARSES and DIFFS server-side from \`source\` — your client-side parse (if any) is never trusted. On first attach (no prior Spec on this Component) the parsed tree applies directly: every parsed entry becomes a new generated Component. On RE-attach (an updated Spec), the diff classifies parsed entries as NEW (always created), CHANGED (matched by stable \`specKey\` but with differing derived fields), or DROPPED (in the graph, gone from the new parse). DEFAULTS are SAFE: a CHANGED row absent from \`changed[]\` is SKIPPED (no overwrite); a DROPPED row absent from \`dropped[]\` is KEPT and DETACHED (becomes a user-owned Component, never deleted). To explicitly accept a change, pass \`{specKey, action:"overwrite", wipeDocumentation?:false}\` in \`changed[]\`; to delete a dropped subtree (and its incident Connections — soft-deleted, recoverable), pass \`{nodeId, action:"delete"}\` in \`dropped[]\`. Position and incident Connections are ALWAYS preserved on matched Components; their Node ids stay stable across re-parse so Connections drawn to a generated Component survive.
+
+The whole apply runs in ONE transaction — a per-row reject rolls the whole batch back, never a partial apply. \`source\` is bounded (size / node-count / depth caps); a breach surfaces a single \`parseError\` and writes nothing.
+
+Re-running with the same \`source\` and empty \`changed[]\`/\`dropped[]\` is effectively a no-op (every entry matches by \`specKey\`, defaults skip / keep). If the transport call fails or times out, READ the architecture (via the \`subtree\` resource for the owner Component) before retrying — a successful but lost response means the apply DID land. Returns \`{specId, ownerNodeId, created, overwritten, detached, deleted}\` counts.
+
+${PROMPT_INJECTION_NOTE}`,
+    inputSchema: applySpecInput,
+    outputSchema: applySpecOutput,
+    invoke: async (db, actor, args) => {
+      const result = await applySpec(db, actor, args);
+      const parts: string[] = [];
+      if (result.created > 0) parts.push(`created ${result.created}`);
+      if (result.overwritten > 0)
+        parts.push(`overwrote ${result.overwritten}`);
+      if (result.detached > 0) parts.push(`detached ${result.detached}`);
+      if (result.deleted > 0) parts.push(`deleted ${result.deleted}`);
+      const summary = parts.length > 0 ? parts.join(", ") : "no-op (no changes)";
+      return {
+        message: `Applied Spec ${result.specId} on Component ${result.ownerNodeId}: ${summary}.`,
         structured: result,
       };
     },
