@@ -143,17 +143,18 @@ derived from `(interaction, source, target)` — a WebSocket is ONE Connection (
 cross-scope and lineal endpoints are accepted (ADR-0028, retiring the same-Canvas invariant of
 ADR-0005). *(Drawing, labeling, and removing a Connection are realized now — see **Edge** for the
 self-link, cross-scope/lineal, and no-duplicate-active rules. A Connection's `interaction` is set
-at creation (`connectNodes`) and defaults to `ASSOCIATION`. **Arrowhead rendering from
-`interaction` lands in a later slice (#65); cross-scope rendering — the redefined boundary proxy —
-lands in #63.** As of #62 every Connection still renders as a plain line regardless of
-`interaction`.)*
+at creation (`connectNodes`) and defaults to `ASSOCIATION`. **Cross-scope read** — surfacing the
+Connections relevant to a scope with each end resolved to a real Component or a **boundary proxy**
+— is realized now via **getCanvas** (#63 / ADR-0031). **Arrowhead rendering from `interaction`,
+and the client rendering of cross-scope Connections, land in a later slice (#65)**; until then the
+client draws only same-Canvas Connections, as plain lines.)*
 
 ### Edge
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
 `targetId` (both **Nodes**), an `interaction` (`Interaction`, default `ASSOCIATION`), an optional
 `label`, and a soft-delete column (`deletedAt`). **An Edge stores no scope** — there is no
 `canvasNodeId` column; an Edge's scope is *derived from its endpoints' ancestry* at read time
-(the derivation lands in #63), so an Edge may freely span scope levels. `sourceId`/`targetId`
+(the **getCanvas** derivation, ADR-0031), so an Edge may freely span scope levels. `sourceId`/`targetId`
 preserve **draw order**, and arrowheads are derived from `(interaction, source, target)` at
 render time (#65); the pair is not a stored `direction` field. Two invariants hold and are
 enforced **in the service, not the database** (ADR-0028, retiring ADR-0005's same-Canvas
@@ -176,8 +177,11 @@ Never surfaced to users by this name. *(The `Edge` model with `interaction`, `co
 (cross-scope + typed) / `updateEdge` / `deleteEdge`, and the **getCanvas** `interiorEdges` read
 are realized now; Connection removal as part of a Component delete is undoable now (see **Deletion
 id**). `deleteEdge` is a plain lone soft-delete (no cascade — the FlowRoute cascade is gone). The
-two partial unique indexes land via the #62 migration (ADR-0010 pattern). Full cross-scope
-rendering of an Edge whose endpoints span scopes lands in #63.)*
+two partial unique indexes land via the #62 migration (ADR-0010 pattern). The cross-scope **read**
+of an Edge whose endpoints span scopes is realized now via **getCanvas**, which resolves each
+endpoint to its on-scope representative or a **boundary proxy** of the off-scope end, derived from
+endpoint ancestry (ADR-0031); cross-scope client rendering and the interaction-derived arrowheads
+land in #65.)*
 
 ### Port
 A Component's connection point — the user-facing name for a React Flow **handle**.
@@ -215,34 +219,42 @@ A **derived view, not a stored entity.** The Canvas of a Component `N` is
 longer stores its scope (`canvasNodeId` is dropped; ADR-0028), so the same-Canvas Connections fall
 out of endpoint ancestry, not a stored column. The Project root has its own top-level Canvas (the
 Nodes with `parentId = null`). Because it is derived, a Canvas is never written directly — you
-mutate Nodes and Edges, and the Canvas falls out. *(The Node half of the derivation is realized now
-via **getCanvas**, and the same-Canvas Edge half is realized now too (both endpoints' `parentId =
-N`); reading a non-root scope is realized now via **getCanvas**, and user-facing navigation into it
-is realized now via **Descent**. Rendering an Edge whose endpoints span Canvases — cross-scope — is
-#63.)*
+mutate Nodes and Edges, and the Canvas falls out. The full derived Canvas of `N` is
+`{ Nodes where parentId = N } ∪ { Edges resolved to this scope } ∪ { boundary-proxy stand-ins for
+the off-scope end of each Edge crossing this scope }`, where an Edge resolves via its endpoints'
+ancestry (ADR-0031). *(The Node half of the derivation is realized now via **getCanvas**, and the
+Edge half — same-Canvas, altitude, and cross-scope — is realized now too; reading a non-root scope
+is realized now via **getCanvas**, and user-facing navigation into it is realized now via
+**Descent**. Client rendering of the cross-scope Edges and proxies lands in #65.)*
 
 ### getCanvas
 The single service read that materializes a **Canvas** for a given **Canvas
 scope** in one round trip. Its result is
-`{ interiorNodes, interiorEdges, breadcrumbs }` (the cross-scope shape — re-derived
-boundary proxies and the rest — is redefined in #63),
+`{ interiorNodes, interiorEdges, boundaryProxies, breadcrumbs }`,
 derived without a per-level query walk. Because a Canvas is a *derived view*,
 `getCanvas` returns the **Nodes** and **Edges** that fall out of the scope —
 it is the read half of the Component/Node split, so its result is named in
 **Node**/**Edge** terms in code and tests even though the feature is described
-to users as "the interior **Components**". `getCanvas` no longer aggregates Flows
-(the `edgeFlows` / `boundaryProxies` / `flowPalettes` fields are gone with the
-Flow model). It returns the interior **Nodes** and the **Edges** whose BOTH
-endpoints sit on the scope (a single relation-filtered query — `source.parentId
-=== scope AND target.parentId === scope` — since an Edge stores no scope, ADR-0028);
-rendering Edges whose endpoints span scopes — the redefined **boundary proxy** and
-the per-Edge interaction-derived arrows — is #63. *(Realized now — `getCanvas`
-returns `interiorNodes`, `interiorEdges`, and `breadcrumbs` for a scope. A non-null
-scope that resolves to no live Node in the Project is a not-found. See ADR-0001 for
-the single-round-trip service contract, ADR-0004 for how the payload reaches the
-client island, ADR-0006 for the single recursive breadcrumb query. The cross-scope
-read shape — Edges spanning scopes, the redefined boundary proxy — is #63 /
-ADR-0031.)*
+to users as "the interior **Components**". `interiorNodes` are the Nodes whose
+`parentId` is the scope. Each `interiorEdges` row is `{ id, sourceId, targetId,
+sourceRepr, targetRepr, interaction, label }`, where `sourceRepr` / `targetRepr`
+resolve each endpoint to its **on-scope representative** — the real Node when the
+endpoint is interior, an ancestor for the altitude view, or a **boundary proxy**'s
+synthetic id when the endpoint is off-scope. Each `boundaryProxies` row is
+`{ nodeId, title, kind, realEndpointId, edgeId }`, **one per crossing Edge** (never
+de-duped per far Node). The whole edge-and-proxy derivation is ONE recursive
+ancestry CTE — for scope `S` and Edge `E=(A,B)`, with `rep(N,S)` the ancestor of
+`N` whose parent is `S`: both reps present and distinct → an interior edge; exactly
+one present → an interior edge to a boundary proxy of the off-scope end; both equal
+or neither present → not rendered (no stored Edge scope; ADR-0028, ADR-0031). *(Realized
+now — `getCanvas` returns `interiorNodes`, `interiorEdges`, `boundaryProxies`, and
+`breadcrumbs` for a scope. A non-null scope that resolves to no live Node in the
+Project is a not-found; a connection-ancestry walk clipped by the depth cap is a
+loud `ValidationError`, distinct from the breadcrumb-truncation one. See ADR-0001
+for the single-round-trip service contract, ADR-0004 for how the payload reaches the
+client island, ADR-0006 for the recursive-CTE / raw-SQL discipline both derived
+reads share, and ADR-0031 for the cross-scope derivation. Client rendering of the
+cross-scope Edges, the proxies, and the interaction-derived arrows lands in #65.)*
 
 ### Canvas scope
 Which **Canvas** an operation is acting on. A Canvas has **no id of its own** (it
@@ -284,33 +296,34 @@ interior **Canvas** at the **Project route** `/p/[slug]/n/[nodeId]`, with hover 
 descent feels instant. See ADR-0007.)*
 
 ### Boundary proxy
-A read-only stand-in for an external system that a Component connects to on its *parent* Canvas,
-projected inward so that dependency context is not lost on the way down. Boundary proxies are
-**derived and inherited transitively** through the subtree (`boundary(H) = directBoundary(H) ∪
-boundary(H.parent)`) — they are not independently editable Components, and no rows are persisted
-for them. A proxy's **origin** distinguishes the two halves of that union: **direct** (an
-external the *current* scope's Component connects to on its own parent Canvas) versus
-**inherited** (projected down from an ancestor). The distinction drives the **collapse/group**
-UX — inherited proxies fold away into a single **boundary group** (see entry) to keep deep
-Canvases uncluttered — and gates refinement: only a direct proxy is **routable** here (it carries
-the outer Connection a palette drag refines), because the cross-scope `routeFlow` writer binds an
-outer Edge incident to the current scope.
-*(The same-Canvas-era derivation and its refinement drag are retired with the Flow model (#62);
-the boundary proxy is **redefined** as the far-end stand-in for a cross-scope Connection in #63 /
-ADR-0031, where its #62-accurate definition and rendering are written. Until then no boundary
-proxy renders. The conceptual definition above is left for #63 to rewrite.)*
+The on-canvas read-only stand-in for the **off-scope endpoint** of a **Connection** that crosses
+this scope. When **getCanvas** surfaces an Edge with exactly one endpoint resolving onto the scope
+(see **getCanvas**'s `rep(N,S)` rule), the other end renders as a boundary proxy of the real far
+endpoint — the real Node it stands in for is carried as `realEndpointId`. Boundary proxies are
+**derived per crossing edge**, never inherited or projected transitively: a Component reached as
+the far endpoint of three crossing Connections produces three `boundaryProxies` rows that share
+`realEndpointId` but each carry a distinct synthetic `nodeId` (`proxy_<edgeId>`), so it stays
+addressable by the edge that produced it and React Flow keys never collide. They persist no rows
+of their own. Each row is `{ nodeId, title, kind, realEndpointId, edgeId }` — **no `origin`, no
+`direct`/`inherited` partition, no transitive walk** (that whole framing died with the Flow model;
+ADR-0031 supersedes the boundary halves of ADR-0012/0016). A boundary proxy is a **passive node**
+(no Component-detail panel, no Descent, no hover-prefetch). The code term is **boundary-proxy**.
+Never frame it as an "external" or "inherited" node — the system has no external Nodes, only
+off-scope ones. *(The cross-scope read is realized now via **getCanvas** (#63 / ADR-0031); client
+rendering of the proxy and the arrowheads on its incident Connection lands in #65.)*
 
 ### Boundary endpoint
 Retired (#62): with no cross-scope **FlowRoute** and no `routeFlow` writer, there is no "one
 endpoint allowed to violate same-Canvas" concept — *all* endpoints may now span scope (ADR-0028).
-The far-end stand-in that replaces it is the **boundary proxy**, redefined in #63 / ADR-0031.
+The far-end stand-in that replaces it is the **boundary proxy** (ADR-0031).
 
 ### Boundary group
-Retired (#62): the client no longer renders an inherited-proxy group; cross-scope rendering is
-redesigned in #63 / ADR-0031. Historical: ADR-0016.
+Retired (#62): the client no longer renders an inherited-proxy group; with ADR-0031 a **boundary
+proxy** stands in *per crossing edge*, with no client-side grouping to collapse into. Historical:
+ADR-0016.
 
 ### Passive node
-A derived, read-only React Flow node on a **Canvas** — the **boundary proxy** (redefined in #63) —
+A derived, read-only React Flow node on a **Canvas** — the **boundary proxy** —
 excluded from the three interactive surfaces a **Component** participates in: the
 **Component-detail panel** (no editable record exists), **Descent** (no interior **Canvas scope**
 to open into), and hover-prefetch (nothing to warm). Passive nodes carry no **Node** row, are
@@ -320,8 +333,9 @@ by sprinkling fresh guards through the click / double-click / hover paths (ADR-0
 **passive** — not "read-only" (which is overloaded with the capability-URL viewer surface,
 owner-edit vs viewer-read) and not "non-interactive" (which over-claims — passive nodes still
 expand and collapse their own internals; they are inert *with respect to the Canvas's interactive
-surfaces*, not globally inert). *(#62 removed the boundary-group passive kind; #63 re-populates the
-passive set when it rebuilds boundary-proxy rendering.)*
+surfaces*, not globally inert). *(The **boundary proxy** is the sole passive kind today, re-derived
+by **getCanvas** per crossing edge (#63 / ADR-0031); its client rendering as a passive node lands
+in #65. Additional passive kinds compose by extension via the same discriminator, ADR-0016.)*
 
 ### Project
 The root container of one architecture graph. Owned by a single user (`ownerId`) and addressed

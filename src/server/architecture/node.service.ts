@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  type Edge,
   type Node,
   type NodeKind as PrismaNodeKind,
 } from "../../../generated/prisma/client";
@@ -23,6 +22,7 @@ import {
   type CreateNodeInput,
   type DeleteNodeInput,
   type GetCanvasInput,
+  type Interaction,
   type MoveNodeInput,
   type NodeKind,
   type RestoreNodeInput,
@@ -167,18 +167,89 @@ export async function createNode(
 const ANCESTRY_DEPTH_CAP = 256;
 
 /**
+ * A single Connection as the Canvas read returns it: the stored Edge fields plus
+ * the two derived `*Repr` ids that resolve each endpoint onto THIS scope. For a
+ * same-Canvas Connection `sourceRepr === sourceId` and `targetRepr === targetId`;
+ * for the altitude view both reprs are ancestor Nodes of the real endpoints; for
+ * a cross-scope Connection the off-scope end's repr is the synthetic id of its
+ * boundary proxy (see {@link CanvasBoundaryProxy}). The reprs are a per-scope
+ * read-time projection, never stored on the Edge (ADR-0031).
+ */
+export interface CanvasInteriorEdge {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  sourceRepr: string;
+  targetRepr: string;
+  interaction: Interaction;
+  label: string | null;
+}
+
+/**
+ * A read-only stand-in for the off-scope endpoint of a Connection that crosses
+ * this scope (CONTEXT.md "Boundary proxy"; ADR-0031). One row PER crossing edge —
+ * a Component reached as the far endpoint of three crossing Connections yields
+ * three proxies that share `realEndpointId` but each carry a distinct synthetic
+ * `nodeId` (`proxy_<edgeId>`), so React Flow keys never collide and a proxy stays
+ * addressable by the edge that produced it. Persists no row of its own; the
+ * client renders it as a passive node (#65).
+ */
+export interface CanvasBoundaryProxy {
+  nodeId: string;
+  title: string;
+  kind: NodeKind;
+  realEndpointId: string;
+  edgeId: string;
+}
+
+// One row per active Connection whose endpoint ancestry makes it relevant to the
+// scope, as the cross-scope derivation CTE emits it — before the service splits
+// it into an interior edge ± a boundary proxy. `source_rep` / `target_rep` are
+// the on-scope representative Node ids (null when that endpoint is off-scope);
+// `truncated` flags an ancestry walk clipped by `ANCESTRY_DEPTH_CAP`. The
+// `*_title` / `*_kind` columns carry the real far endpoint's display fields so a
+// proxy can be built without a second query.
+interface CrossScopeEdgeRow {
+  id: string;
+  source_id: string;
+  target_id: string;
+  interaction: Interaction;
+  label: string | null;
+  source_title: string;
+  source_kind: NodeKind;
+  target_title: string;
+  target_kind: NodeKind;
+  source_rep: string | null;
+  target_rep: string | null;
+  truncated: boolean;
+}
+
+/**
  * Materializes a Canvas for a scope in a single round trip (ADR-0001): its
- * interior Components and the Connections among them, plus the breadcrumb trail.
- * Addressed by the capability `slug` (the read grant, ADR-0002), so it works
- * without a session.
+ * interior Components, the Connections relevant to the scope (each endpoint
+ * resolved to a real Node or a boundary proxy), the boundary proxies those
+ * cross-scope Connections need, and the breadcrumb trail. Addressed by the
+ * capability `slug` (the read grant, ADR-0002), so it works without a session.
  *
- * `interiorNodes` are the Nodes whose `parentId` is the scope. `interiorEdges`
- * are the Edges with BOTH endpoints on this Canvas — a single relation-filtered
- * query (`source.parentId === scope AND target.parentId === scope`), since an
- * Edge no longer stores its scope (ADR-0028). A cross-scope Edge (endpoints on
- * different Canvases) appears in NEITHER Canvas's interior set here; rendering it
- * at the right altitude — the redefined boundary proxy — is #63. This slice
- * renders only same-Canvas Connections, as plain lines.
+ * `interiorNodes` are the Nodes whose `parentId` is the scope.
+ *
+ * `interiorEdges` and `boundaryProxies` are DERIVED from endpoint ancestry, never
+ * a stored Edge scope (an Edge dropped `canvasNodeId` in #62, ADR-0028). For
+ * scope `S` and Edge `E=(A,B)`, let `rep(N,S)` be the ancestor of `N` whose
+ * parent is `S` (so `rep(N,S) === N` when `N.parentId === S`; absent when `S` is
+ * not on `N`'s ancestor chain). With `a = rep(A,S)`, `b = rep(B,S)` (ADR-0031):
+ *   - both present, `a≠b` → an `interiorEdges` row between real Nodes `a`,`b`
+ *     (same-Canvas when the reprs equal the endpoints; the altitude view when
+ *     they are ancestors).
+ *   - exactly one present → an `interiorEdges` row from the on-scope real Node to
+ *     a `boundaryProxies` stand-in for the off-scope endpoint (lineal/ingress
+ *     included: a parent→child Connection on the parent's interior Canvas is
+ *     real-child ↔ proxy-of-parent).
+ *   - both present and `a==b`, or neither present → not rendered on `S`.
+ * The whole derivation is ONE recursive CTE — the ancestry walk runs for both
+ * endpoints of every active Edge in the Project at once, never a per-edge or
+ * per-level query (ADR-0006) — joined into the concurrent `Promise.all`, so the
+ * read stays a single round trip.
  *
  * `breadcrumbs` is the ordered ancestor chain (root → current scope, included)
  * computed in a SINGLE recursive CTE, never a per-level walk (ADR-0006). The
@@ -188,7 +259,12 @@ const ANCESTRY_DEPTH_CAP = 256;
  * trail, NOT by an empty interior (an empty interior is a legitimate leaf
  * Component).
  *
- * NOTE: the breadcrumb query is raw SQL. Postgres folds unquoted identifiers to
+ * Loud truncation, never silent (ADR-0006, ADR-0031): a breadcrumb walk OR a
+ * connection-ancestry walk that reaches `ANCESTRY_DEPTH_CAP` throws a typed error
+ * rather than returning a quietly-incomplete Canvas. The two carry DISTINCT
+ * messages so the cause is unambiguous.
+ *
+ * NOTE: both derived reads are raw SQL. Postgres folds unquoted identifiers to
  * lowercase, so every model/column name is double-quoted PascalCase; the scope
  * id and project id are bound parameters, never string-interpolated (ADR-0006).
  *
@@ -202,7 +278,8 @@ export async function getCanvas(
   input: GetCanvasInput,
 ): Promise<{
   interiorNodes: Node[];
-  interiorEdges: Edge[];
+  interiorEdges: CanvasInteriorEdge[];
+  boundaryProxies: CanvasBoundaryProxy[];
   breadcrumbs: { id: string; title: string; kind: NodeKind }[];
 }> {
   const { slug, canvasNodeId } = getCanvasInput.parse(input);
@@ -216,23 +293,110 @@ export async function getCanvas(
   }
 
   // The three reads run in one `Promise.all` — no waterfall, no dependency on
-  // `interiorNodes` resolving first. `interiorEdges` filters on the endpoints'
-  // `parentId` via a relation filter (both endpoints on this scope), so it
-  // needs no stored scope and no interior-id set computed first (ADR-0001).
-  const [interiorNodes, interiorEdges, breadcrumbs] = await Promise.all([
+  // `interiorNodes` resolving first (ADR-0001). The interior Nodes fall out of a
+  // flat `parentId` filter; the cross-scope edge derivation and the breadcrumb
+  // trail are each ONE recursive CTE over endpoint / scope ancestry.
+  const [interiorNodes, crossScopeRows, breadcrumbs] = await Promise.all([
     db.node.findMany({
       where: { projectId: project.id, parentId: canvasNodeId, deletedAt: null },
       orderBy: { createdAt: "asc" },
     }),
-    db.edge.findMany({
-      where: {
-        projectId: project.id,
-        deletedAt: null,
-        source: { parentId: canvasNodeId, deletedAt: null },
-        target: { parentId: canvasNodeId, deletedAt: null },
-      },
-      orderBy: { createdAt: "asc" },
-    }),
+    // For every active Connection in the Project, walk BOTH endpoints' `parentId`
+    // ancestry toward the scope, emitting the on-scope representative of each end
+    // (`*_rep`, null when that end is off-scope). `live_edges` keeps only the
+    // Connections whose both endpoints are live (a soft-deleted endpoint hides
+    // the Connection — the same posture the prior interior-edges relation filter
+    // had). The recursive arm climbs only while the current node's parent is
+    // still distinct from the scope (so it STOPS at the representative) and under
+    // the depth cap; a clip sets `truncated`. The final filter drops the
+    // "both reps equal" collapse and the "neither present" case in SQL, leaving
+    // exactly the interior + cross-scope rows the service partitions below.
+    db.$queryRaw<CrossScopeEdgeRow[]>`
+      WITH RECURSIVE live_edges AS (
+        SELECT
+          e.id                AS edge_id,
+          e."sourceId"        AS source_id,
+          e."targetId"        AS target_id,
+          e.interaction::text AS interaction,
+          e.label             AS label,
+          e."createdAt"       AS created_at,
+          sn.title            AS source_title,
+          sn.kind::text       AS source_kind,
+          sn."parentId"       AS source_parent,
+          tn.title            AS target_title,
+          tn.kind::text       AS target_kind,
+          tn."parentId"       AS target_parent
+        FROM "Edge" e
+        JOIN "Node" sn ON sn.id = e."sourceId" AND sn."deletedAt" IS NULL
+        JOIN "Node" tn ON tn.id = e."targetId" AND tn."deletedAt" IS NULL
+        WHERE e."projectId" = ${project.id}
+          AND e."deletedAt" IS NULL
+      ),
+      endpoint_walk AS (
+        SELECT edge_id, side, cur_id, cur_parent, depth
+        FROM (
+          SELECT le.edge_id AS edge_id, 'source' AS side,
+                 le.source_id AS cur_id, le.source_parent AS cur_parent,
+                 0 AS depth
+          FROM live_edges le
+          UNION ALL
+          SELECT le.edge_id, 'target', le.target_id, le.target_parent, 0
+          FROM live_edges le
+        ) anchors
+        UNION ALL
+        SELECT w.edge_id, w.side, p.id, p."parentId", w.depth + 1
+        FROM endpoint_walk w
+        JOIN "Node" p
+          ON p.id = w.cur_parent
+          AND p."projectId" = ${project.id}
+          AND p."deletedAt" IS NULL
+        WHERE w.cur_parent IS DISTINCT FROM ${canvasNodeId}::text
+          AND w.depth < ${ANCESTRY_DEPTH_CAP}
+      ),
+      walk_summary AS (
+        SELECT
+          edge_id,
+          side,
+          MAX(CASE WHEN cur_parent IS NOT DISTINCT FROM ${canvasNodeId}::text
+                   THEN cur_id END) AS rep_id,
+          bool_or(
+            depth >= ${ANCESTRY_DEPTH_CAP}
+            AND cur_parent IS NOT NULL
+            AND cur_parent IS DISTINCT FROM ${canvasNodeId}::text
+          ) AS truncated
+        FROM endpoint_walk
+        GROUP BY edge_id, side
+      )
+      SELECT
+        le.edge_id      AS id,
+        le.source_id    AS source_id,
+        le.target_id    AS target_id,
+        le.interaction  AS interaction,
+        le.label        AS label,
+        le.source_title AS source_title,
+        le.source_kind  AS source_kind,
+        le.target_title AS target_title,
+        le.target_kind  AS target_kind,
+        ws_s.rep_id     AS source_rep,
+        ws_t.rep_id     AS target_rep,
+        (COALESCE(ws_s.truncated, false) OR COALESCE(ws_t.truncated, false))
+                        AS truncated
+      FROM live_edges le
+      LEFT JOIN walk_summary ws_s
+        ON ws_s.edge_id = le.edge_id AND ws_s.side = 'source'
+      LEFT JOIN walk_summary ws_t
+        ON ws_t.edge_id = le.edge_id AND ws_t.side = 'target'
+      WHERE
+        (COALESCE(ws_s.truncated, false) OR COALESCE(ws_t.truncated, false))
+        OR (
+          (ws_s.rep_id IS NOT NULL OR ws_t.rep_id IS NOT NULL)
+          AND (
+            ws_s.rep_id IS NULL
+            OR ws_t.rep_id IS NULL
+            OR ws_s.rep_id <> ws_t.rep_id
+          )
+        )
+      ORDER BY le.created_at ASC, le.edge_id ASC`,
     // The breadcrumb trail walks `parentId` from the scope up to the root in
     // one recursive CTE (ADR-0006). At the root scope there are no ancestors,
     // so skip the query. `ANCESTRY_DEPTH_CAP` is belt-and-suspenders against a
@@ -264,9 +428,7 @@ export async function getCanvas(
   // Canvas — see `ANCESTRY_DEPTH_CAP`. The recursive CTE emits depths 0..CAP, so
   // a full walk is CAP + 1 rows; anything beyond means the ceiling clipped it.
   if (breadcrumbs.length > ANCESTRY_DEPTH_CAP) {
-    throw new ValidationError(
-      "This Canvas is nested too deeply to display.",
-    );
+    throw new ValidationError("This Canvas is nested too deeply to display.");
   }
 
   // A non-null scope with no breadcrumbs never resolved to a live Node in
@@ -278,7 +440,71 @@ export async function getCanvas(
     throw new NotFoundError();
   }
 
-  return { interiorNodes, interiorEdges, breadcrumbs };
+  // A connection-ancestry walk clipped at the ceiling leaves a rep silently
+  // absent, which would drop a Connection from the Canvas. Surface it loudly,
+  // the boundary-proxy analogue of the breadcrumb truncation above (ADR-0031).
+  // A DISTINCT message keeps the two causes unambiguous.
+  if (crossScopeRows.some((row) => row.truncated)) {
+    throw new ValidationError(
+      "A Connection reaches a Component nested too deeply to display.",
+    );
+  }
+
+  // Partition each surviving row into an interior edge (both ends on-scope) or an
+  // interior edge plus a boundary proxy for the one off-scope end. The SQL filter
+  // already dropped the collapse and not-rendered cases, so every row here has at
+  // least one representative; the per-edge synthetic proxy id is `proxy_<edgeId>`
+  // (ADR-0031).
+  const interiorEdges: CanvasInteriorEdge[] = [];
+  const boundaryProxies: CanvasBoundaryProxy[] = [];
+  for (const row of crossScopeRows) {
+    const base = {
+      id: row.id,
+      sourceId: row.source_id,
+      targetId: row.target_id,
+      interaction: row.interaction,
+      label: row.label,
+    };
+    if (row.source_rep !== null && row.target_rep !== null) {
+      interiorEdges.push({
+        ...base,
+        sourceRepr: row.source_rep,
+        targetRepr: row.target_rep,
+      });
+    } else if (row.source_rep !== null) {
+      // Target is off-scope → its boundary proxy stands in on this Canvas.
+      const proxyNodeId = `proxy_${row.id}`;
+      boundaryProxies.push({
+        nodeId: proxyNodeId,
+        title: row.target_title,
+        kind: row.target_kind,
+        realEndpointId: row.target_id,
+        edgeId: row.id,
+      });
+      interiorEdges.push({
+        ...base,
+        sourceRepr: row.source_rep,
+        targetRepr: proxyNodeId,
+      });
+    } else if (row.target_rep !== null) {
+      // Source is off-scope → its boundary proxy stands in on this Canvas.
+      const proxyNodeId = `proxy_${row.id}`;
+      boundaryProxies.push({
+        nodeId: proxyNodeId,
+        title: row.source_title,
+        kind: row.source_kind,
+        realEndpointId: row.source_id,
+        edgeId: row.id,
+      });
+      interiorEdges.push({
+        ...base,
+        sourceRepr: proxyNodeId,
+        targetRepr: row.target_rep,
+      });
+    }
+  }
+
+  return { interiorNodes, interiorEdges, boundaryProxies, breadcrumbs };
 }
 
 /**
