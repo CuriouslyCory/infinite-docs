@@ -45,12 +45,8 @@ export function AttachSpecSection({
 
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-white/60">
-        <FileCode2
-          size={12}
-          aria-hidden
-          className="text-[hsl(280,100%,80%)]"
-        />
+      <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wide text-white/60 uppercase">
+        <FileCode2 size={12} aria-hidden className="text-[hsl(280,100%,80%)]" />
         Attach spec
       </h3>
       <label className="flex flex-col gap-1 text-xs text-white/60">
@@ -86,8 +82,8 @@ export function AttachSpecSection({
       </label>
       <div className="flex items-center justify-between text-[10px] text-white/40">
         <span>
-          {byteLength.toLocaleString()} / {MAX_SPEC_SOURCE_BYTES.toLocaleString()}{" "}
-          bytes
+          {byteLength.toLocaleString()} /{" "}
+          {MAX_SPEC_SOURCE_BYTES.toLocaleString()} bytes
         </span>
         {overCap && (
           <span className="text-amber-300">

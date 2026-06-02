@@ -14,7 +14,11 @@ beforeEach(async () => {
 async function seedOwner() {
   const user = await testDb.user.create({ data: { name: "Owner" } });
   const actor: Actor = { userId: user.id, via: "session" };
-  const project = await createProject(testDb, { userId: user.id }, { title: "P" });
+  const project = await createProject(
+    testDb,
+    { userId: user.id },
+    { title: "P" },
+  );
   const owner = await createNode(testDb, actor, {
     projectId: project.id,
     kind: "EXTERNAL_API",

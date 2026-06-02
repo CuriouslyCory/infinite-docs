@@ -9,11 +9,20 @@ import {
 } from "@xyflow/react";
 import { createContext, useContext, useRef, useState } from "react";
 
+import {
+  INTERACTION_HINT,
+  INTERACTION_LABEL,
+  INTERACTION_ORDER,
+} from "~/lib/interactions";
+import { type Interaction } from "~/lib/schemas";
+
 import { CanEditContext } from "./component-node";
 
 export type ConnectionEdgeData = {
   /** Untrusted user content — rendered as plain text, never markup. */
   label: string | null;
+  /** The Connection's interaction — drives the derived arrowheads (ADR-0027). */
+  interaction: Interaction;
   /** True while a freshly-drawn Connection awaits its server id (a `temp_…` id). */
   optimistic?: boolean;
 };
@@ -32,12 +41,24 @@ export const EditEdgeContext = createContext<
 >(() => undefined);
 
 /**
- * The Connection edge type for the Canvas — renders the Edge path with an
- * editable label at the midpoint. Registered under the `edgeTypes` key
- * `connection`. As of #62 every Connection renders as a plain line regardless of
- * its `interaction`; the interaction-derived arrowheads (`markerStart` /
- * `markerEnd`) are wired in #65 (ADR-0027). React Flow forwards whatever markers
- * the edge object carries, so the passthrough below is forward-compatible.
+ * The Canvas island supplies the interaction upgrade through this context — the
+ * same discipline `EditEdgeContext` uses for the label, kept as its own context
+ * (one concern per context, mirroring the rename/delete/descent split). The
+ * default is inert. The picker upgrades the interaction of an EXISTING Connection;
+ * draw order is never touched, so the arrow points the way it was drawn (ADR-0027).
+ */
+export const SetEdgeInteractionContext = createContext<
+  (id: string, interaction: Interaction) => void
+>(() => undefined);
+
+/**
+ * The Connection edge type for the Canvas — renders the Edge path (with the
+ * interaction-derived arrowheads) plus, at the midpoint, the editable label and —
+ * when selected and editable — the interaction picker. Registered under the
+ * `edgeTypes` key `connection`. The arrowheads (`markerStart` / `markerEnd`) are
+ * computed in the island's `toRFEdge` from the canonical `arrowEnds` helper
+ * (ADR-0027) and forwarded straight through `BaseEdge`; this component never
+ * derives a marker itself.
  *
  * Client-only: domain types come from `~/lib` (never `~/server` or the generated
  * Prisma client), so the server graph stays out of the browser bundle (ADR-0004).
@@ -59,7 +80,10 @@ export function ConnectionEdgeView({
 }: EdgeProps<ConnectionEdge>) {
   // React Flow types an edge's `data` as optional; every edge we create carries
   // it, so normalize once to a concrete value rather than guarding each read.
-  const d: ConnectionEdgeData = data ?? { label: null };
+  const d: ConnectionEdgeData = data ?? {
+    label: null,
+    interaction: "ASSOCIATION",
+  };
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -69,6 +93,7 @@ export function ConnectionEdgeView({
     targetPosition,
   });
   const onEdit = useContext(EditEdgeContext);
+  const onSetInteraction = useContext(SetEdgeInteractionContext);
   const canEditCanvas = useContext(CanEditContext);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(d.label ?? "");
@@ -172,6 +197,42 @@ export function ConnectionEdgeView({
                 )
               )}
             </div>
+            {/* Interaction picker — an inline segmented control offered only on a
+                selected, editable Connection (viewers see arrowheads but no
+                picker). Selecting a value upgrades the Connection's interaction
+                in place; draw order is preserved, so a directional value points
+                the arrow the way it was drawn (ADR-0027). Labelled "Interaction",
+                never "type". */}
+            {isSelected && canEdit && (
+              <div
+                role="group"
+                aria-label="Interaction"
+                className="flex items-center gap-0.5 rounded bg-[#1f2138] p-0.5 shadow"
+              >
+                {INTERACTION_ORDER.map((value) => {
+                  const active = d.interaction === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={active}
+                      title={INTERACTION_HINT[value]}
+                      className={`rounded px-1.5 py-0.5 text-xs transition ${
+                        active
+                          ? "bg-white/20 text-white"
+                          : "text-white/60 hover:text-white"
+                      }`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!active) onSetInteraction(id, value);
+                      }}
+                    >
+                      {INTERACTION_LABEL[value]}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </EdgeLabelRenderer>
       )}

@@ -15,6 +15,7 @@ import {
   deleteEdge,
   restoreEdge,
   updateEdge,
+  updateEdgeInteraction,
 } from "../edge.service";
 import { createNode, getCanvas } from "../node.service";
 import { createProject } from "../project.service";
@@ -503,6 +504,119 @@ describe("updateEdge", () => {
 
     await expect(
       updateEdge(testDb, actor, { id: "nope", label: "x" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("updateEdgeInteraction", () => {
+  async function seedAssociation() {
+    const seeded = await seedTwoRootNodes();
+    const edge = await connectNodes(testDb, seeded.actor, {
+      projectId: seeded.project.id,
+      sourceId: seeded.a.id,
+      targetId: seeded.b.id,
+    });
+    return { ...seeded, edge };
+  }
+
+  it("upgrades an ASSOCIATION to a directional interaction without rewriting draw order", async () => {
+    const { actor, a, b, edge } = await seedAssociation();
+
+    const updated = await updateEdgeInteraction(testDb, actor, {
+      id: edge.id,
+      interaction: "REQUEST",
+    });
+
+    expect(updated.interaction).toBe("REQUEST");
+    // Draw order preserved so the arrow points the way it was drawn (ADR-0027).
+    expect(updated.sourceId).toBe(a.id);
+    expect(updated.targetId).toBe(b.id);
+    const persisted = await testDb.edge.findUnique({ where: { id: edge.id } });
+    expect(persisted?.interaction).toBe("REQUEST");
+  });
+
+  it("is a no-op when the interaction is unchanged", async () => {
+    const { actor, edge } = await seedAssociation();
+
+    const updated = await updateEdgeInteraction(testDb, actor, {
+      id: edge.id,
+      interaction: "ASSOCIATION",
+    });
+
+    expect(updated.interaction).toBe("ASSOCIATION");
+  });
+
+  it("rejects an upgrade that collides with an existing directional Connection", async () => {
+    const { actor, project, a, b, edge } = await seedAssociation();
+    // A pre-existing A→B REQUEST holds the directional slot the upgrade targets.
+    const blocker = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+      interaction: "REQUEST",
+    });
+
+    const error = await updateEdgeInteraction(testDb, actor, {
+      id: edge.id,
+      interaction: "REQUEST",
+    }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictError);
+    // The conflict names the blocking Connection, not the edge being upgraded —
+    // the AI-readable channel a duplicate write must carry (ADR-0010).
+    expect((error as ConflictError).details).toEqual({
+      conflictingEdgeIds: [blocker.id],
+    });
+    const persisted = await testDb.edge.findUnique({ where: { id: edge.id } });
+    expect(persisted?.interaction).toBe("ASSOCIATION");
+  });
+
+  it("allows a directional upgrade when only the REVERSE directional slot is taken", async () => {
+    // Directional de-dupe is on the ORDERED triple (source, target, interaction).
+    // A B→A REQUEST occupies slot (B,A,REQUEST); upgrading the A↔B association to
+    // REQUEST targets the DISTINCT slot (A,B,REQUEST), so it must succeed — and
+    // keep its drawn order so the arrow points A→B (ADR-0027/0028).
+    const { actor, project, a, b, edge } = await seedAssociation();
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: b.id,
+      targetId: a.id,
+      interaction: "REQUEST",
+    });
+
+    const updated = await updateEdgeInteraction(testDb, actor, {
+      id: edge.id,
+      interaction: "REQUEST",
+    });
+
+    expect(updated.interaction).toBe("REQUEST");
+    expect(updated.sourceId).toBe(a.id);
+    expect(updated.targetId).toBe(b.id);
+  });
+
+  it("rejects a non-owner upgrading a Connection", async () => {
+    const { edge } = await seedAssociation();
+    const intruder: Actor = { userId: "intruder" };
+
+    await expect(
+      updateEdgeInteraction(testDb, intruder, {
+        id: edge.id,
+        interaction: "DUPLEX",
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    const persisted = await testDb.edge.findUnique({ where: { id: edge.id } });
+    expect(persisted?.interaction).toBe("ASSOCIATION");
+  });
+
+  it("reports not-found for an unknown Edge", async () => {
+    const { actor } = await seedTwoRootNodes();
+
+    await expect(
+      updateEdgeInteraction(testDb, actor, {
+        id: "nope",
+        interaction: "REQUEST",
+      }),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 });

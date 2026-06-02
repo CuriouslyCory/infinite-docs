@@ -8,6 +8,7 @@ import {
   type Connection,
   ConnectionMode,
   Controls,
+  MarkerType,
   Panel,
   ReactFlow,
   ReactFlowProvider,
@@ -19,12 +20,22 @@ import { useRouter } from "next/navigation";
 import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 
+import { arrowEnds } from "~/lib/connection-direction";
 import { canConnect } from "~/lib/connection-rules";
 import { type Interaction, type NodeKind, type SpecKind } from "~/lib/schemas";
-import { type CanvasData, type CanvasEdge, type CanvasNode } from "~/lib/types";
+import {
+  type CanvasBoundaryProxy,
+  type CanvasData,
+  type CanvasEdge,
+  type CanvasNode,
+} from "~/lib/types";
 import { api, type RouterOutputs } from "~/trpc/react";
 
 import { AddComponent } from "./add-component";
+import {
+  BoundaryProxyNodeView,
+  type BoundaryProxyNode,
+} from "./boundary-proxy";
 import { CopyMarkdownToolbar } from "./copy-markdown";
 import {
   ComponentDetailPanel,
@@ -45,6 +56,7 @@ import {
 import {
   ConnectionEdgeView,
   EditEdgeContext,
+  SetEdgeInteractionContext,
   type ConnectionEdge,
 } from "./connection-edge";
 
@@ -66,17 +78,42 @@ import {
  * back with a toast on failure.
  *
  * The cross-scope read shape (`boundaryProxies`, per-edge `sourceRepr` /
- * `targetRepr`) is derived by `getCanvas` as of #63 (ADR-0031); this island does
- * not yet consume those fields, so every Connection still renders as a plain line
- * between its same-Canvas endpoints. Typed arrowheads and the client rendering of
- * cross-scope Connections / boundary proxies arrive in #65.
+ * `targetRepr`) is derived by `getCanvas` as of #63 (ADR-0031). This island
+ * consumes it (#65): Connections attach to each endpoint's on-scope
+ * representative (a real Component or a boundary proxy), arrowheads derive from
+ * the interaction via the canonical `arrowEnds` helper (ADR-0027), and each
+ * off-scope endpoint renders as a read-only boundary-proxy passive node.
  */
 
 // Module-level: React Flow re-mounts every node/edge (and warns) if `nodeTypes`
 // / `edgeTypes` is a fresh object each render. Defining them once is the key
 // React Flow perf guard.
-const nodeTypes = { component: ComponentNodeView };
+const nodeTypes = {
+  component: ComponentNodeView,
+  "boundary-proxy": BoundaryProxyNodeView,
+};
 const edgeTypes = { connection: ConnectionEdgeView };
+
+/**
+ * The discriminated union of every React Flow node the Canvas renders: the
+ * interactive Component and the passive boundary proxy. Typing the `ReactFlow`
+ * element and `isPassiveNode` to this union is the extension point for new passive
+ * kinds — a new member forces `isPassiveNode` to acknowledge it (ADR-0016).
+ */
+type CanvasRFNode = ComponentNode | BoundaryProxyNode;
+
+/**
+ * The single discriminator that excludes a node from every interactive pointer
+ * handler (detail panel, Descent, hover-prefetch). A passive node carries no
+ * `Node` row and is inert with respect to the Canvas's interactive surfaces
+ * (ADR-0016, as amended by ADR-0031 — the boundary proxy is the sole passive kind;
+ * the transitive boundary-group is retired). The three handlers below call this in
+ * identical shape (`if (isPassiveNode(node)) return;`), so passive extensions stay
+ * out of the interactive paths without sprinkling fresh inline guards.
+ */
+function isPassiveNode(node: CanvasRFNode): boolean {
+  return node.type === "boundary-proxy";
+}
 
 function toRFNode(n: CanvasNode): ComponentNode {
   return {
@@ -94,17 +131,58 @@ function toRFNode(n: CanvasNode): ComponentNode {
   };
 }
 
+// React Flow's `MarkerType.ArrowClosed`, applied to whichever end the canonical
+// `arrowEnds` helper says bears an arrow. The marker mapping lives HERE (the
+// island), never in `~/lib` (keeps `@xyflow/react` out of the shared helper,
+// ADR-0004) and never inline in the edge component (one place owns it, ADR-0027).
+const ARROW_MARKER = { type: MarkerType.ArrowClosed } as const;
+
+// A Connection attaches to each endpoint's on-scope REPRESENTATIVE — the real
+// Component when on-scope, an ancestor for the altitude view, or a boundary
+// proxy's synthetic id for an off-scope end (ADR-0031) — never the raw endpoint
+// id, which may not have a node on this Canvas. Arrowheads derive from the
+// interaction via `arrowEnds`; draw order is honored by binding `atSource` to
+// `markerStart` (the source end) and `atTarget` to `markerEnd` (ADR-0027).
 function toRFEdge(e: CanvasEdge): ConnectionEdge {
+  const ends = arrowEnds(e.interaction);
   return {
     id: e.id,
     type: "connection",
-    source: e.sourceId,
-    target: e.targetId,
-    // No marker — every Connection renders as a plain line in this slice; the
-    // interaction-derived arrowheads are wired in #65 (ADR-0027).
+    source: e.sourceRepr,
+    target: e.targetRepr,
+    markerStart: ends.atSource ? ARROW_MARKER : undefined,
+    markerEnd: ends.atTarget ? ARROW_MARKER : undefined,
     data: {
       label: e.label,
+      interaction: e.interaction,
       optimistic: e.id.startsWith("temp_"),
+    },
+  };
+}
+
+// A boundary proxy renders as a passive, read-only stand-in for the off-scope
+// endpoint of a cross-scope Connection (ADR-0031). `lineal` is true when the real
+// endpoint is an ANCESTOR of this scope (it appears on the breadcrumb trail) — the
+// ingress case the proxy must label distinctly so it doesn't read as "the host
+// inside itself". Non-draggable / non-selectable / non-connectable: passive.
+function toProxyRFNode(
+  p: CanvasBoundaryProxy,
+  breadcrumbIds: ReadonlySet<string>,
+  position: { x: number; y: number },
+): BoundaryProxyNode {
+  return {
+    id: p.nodeId,
+    type: "boundary-proxy",
+    position,
+    draggable: false,
+    selectable: false,
+    connectable: false,
+    deletable: false,
+    data: {
+      title: p.title,
+      kind: p.kind,
+      realEndpointId: p.realEndpointId,
+      lineal: breadcrumbIds.has(p.realEndpointId),
     },
   };
 }
@@ -201,6 +279,23 @@ function messageForDocsSaveFailure(error: unknown): string {
   return "Couldn't save documentation. Please try again.";
 }
 
+/**
+ * Picks the toast message for a failed `updateEdgeInteraction`. A `CONFLICT`
+ * means the target directional slot is already taken by another Connection
+ * between the same Components (the de-dupe key includes `interaction`; ADR-0027) —
+ * surface that distinctly so the user learns WHY the upgrade was refused instead
+ * of a generic "try again".
+ */
+function messageForInteractionFailure(error: unknown): string {
+  if (error && typeof error === "object" && "data" in error) {
+    const data = (error as { data?: { code?: string } }).data;
+    if (data?.code === "CONFLICT") {
+      return "That interaction already exists between these components.";
+    }
+  }
+  return "Couldn’t change the interaction. Please try again.";
+}
+
 function CanvasInner({
   scope,
   slug,
@@ -223,7 +318,7 @@ function CanvasInner({
     () => ({ slug, canvasNodeId }),
     [slug, canvasNodeId],
   );
-  const [{ interiorNodes, interiorEdges, breadcrumbs }] =
+  const [{ interiorNodes, interiorEdges, boundaryProxies, breadcrumbs }] =
     api.architecture.getCanvas.useSuspenseQuery(canvasInput);
 
   // The kind palette ranks its suggestions by the scope's own Component kind —
@@ -232,14 +327,28 @@ function CanvasInner({
   // keys the root affinity.
   const parentKind = breadcrumbs.at(-1)?.kind ?? null;
 
+  // The scope's ancestor ids — a boundary proxy whose real endpoint is one of
+  // them is a lineal/ingress proxy (it stands in for an ancestor on that
+  // ancestor's own interior Canvas) and must be labelled distinctly (ADR-0031).
+  // Stable across renders so seeding and undo recompute the same flag.
+  const breadcrumbIds = useMemo(
+    () => new Set(breadcrumbs.map((b) => b.id)),
+    [breadcrumbs],
+  );
+
   // Seed React Flow's store ONCE from the hydrated query; thereafter the store
   // owns interaction state. The island is keyed by scope (./index), so a Descent
   // (a scope change) remounts and re-seeds rather than inheriting these.
   // Persistence flows through one batched/single mutation per gesture (below),
-  // with the query cache kept in lockstep so a remount re-seeds it.
-  const [nodes, setNodes, onNodesChange] = useNodesState<ComponentNode>(
-    interiorNodes.map(toRFNode),
-  );
+  // with the query cache kept in lockstep so a remount re-seeds it. Boundary
+  // proxies (which carry no stored position) seed onto a vertical rail off the
+  // left edge so they read as off-scope stand-ins rather than free Components.
+  const [nodes, setNodes, onNodesChange] = useNodesState<CanvasRFNode>([
+    ...interiorNodes.map(toRFNode),
+    ...boundaryProxies.map((p, i) =>
+      toProxyRFNode(p, breadcrumbIds, { x: -280, y: i * 72 }),
+    ),
+  ]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<ConnectionEdge>(
     interiorEdges.map(toRFEdge),
   );
@@ -256,6 +365,8 @@ function CanvasInner({
   const updatePositions = api.architecture.updatePositions.useMutation();
   const connectNodes = api.architecture.connectNodes.useMutation();
   const { mutateAsync: editEdge } = api.architecture.updateEdge.useMutation();
+  const { mutateAsync: setEdgeInteraction } =
+    api.architecture.updateEdgeInteraction.useMutation();
   const { mutateAsync: removeEdge } = api.architecture.deleteEdge.useMutation();
   const { mutateAsync: deleteComponent } =
     api.architecture.deleteNode.useMutation();
@@ -518,7 +629,7 @@ function CanvasInner({
   // multi-select drag (onSelectionDragStop also routes here) commits together.
   // Rolls back store + cache and toasts on failure.
   const persistPositions = useCallback(
-    async (moved: ComponentNode[]) => {
+    async (moved: CanvasRFNode[]) => {
       const cached = utils.architecture.getCanvas.getData(canvasInput);
       const byId = new Map(
         cached?.interiorNodes.map((n) => [n.id, n] as const) ?? [],
@@ -613,17 +724,11 @@ function CanvasInner({
       }
 
       const tempId = `temp_${crypto.randomUUID()}`;
+      // Build the optimistic RF edge through `toRFEdge` so its markers + data
+      // (interaction ASSOCIATION → no arrows) match the reconciled shape exactly,
+      // and a same-Canvas draw's reprs equal its endpoint ids (ADR-0031).
       setEdges((es) =>
-        addEdge(
-          {
-            id: tempId,
-            type: "connection",
-            source,
-            target,
-            data: { label: null, optimistic: true },
-          },
-          es,
-        ),
+        addEdge(toRFEdge(optimisticCanvasEdge(tempId, source, target)), es),
       );
       patchCanvas((c) => ({
         interiorEdges: [
@@ -697,6 +802,7 @@ function CanvasInner({
       deletionId: string,
       node: CanvasNode | undefined,
       incidentEdges: CanvasEdge[],
+      incidentProxies: CanvasBoundaryProxy[],
     ): void => {
       if (node) {
         setNodes((ns) =>
@@ -708,6 +814,33 @@ function CanvasInner({
             : [...c.interiorNodes, node],
         }));
       }
+      // Re-add the boundary proxies the delete removed alongside their incident
+      // cross-scope Connections, so the far-end stand-ins reappear (ADR-0031).
+      setNodes((ns) => {
+        const present = new Set(ns.map((n) => n.id));
+        const add = incidentProxies.filter((p) => !present.has(p.nodeId));
+        // Append below any proxies still on the rail so a re-added stand-in never
+        // lands on top of an existing one.
+        const railBase = ns.filter((n) => n.type === "boundary-proxy").length;
+        return add.length
+          ? [
+              ...ns,
+              ...add.map((p, i) =>
+                toProxyRFNode(p, breadcrumbIds, {
+                  x: -280,
+                  y: (railBase + i) * 72,
+                }),
+              ),
+            ]
+          : ns;
+      });
+      patchCanvas((c) => {
+        const present = new Set(c.boundaryProxies.map((p) => p.nodeId));
+        const add = incidentProxies.filter((p) => !present.has(p.nodeId));
+        return add.length
+          ? { boundaryProxies: [...c.boundaryProxies, ...add] }
+          : {};
+      });
       setEdges((es) => {
         const present = new Set(es.map((e) => e.id));
         const add = incidentEdges.filter((e) => !present.has(e.id));
@@ -731,14 +864,19 @@ function CanvasInner({
             }));
           }
           const ids = new Set(incidentEdges.map((e) => e.id));
+          const proxyIds = new Set(incidentProxies.map((p) => p.nodeId));
+          setNodes((ns) => ns.filter((n) => !proxyIds.has(n.id)));
           setEdges((es) => es.filter((e) => !ids.has(e.id)));
           patchCanvas((c) => ({
             interiorEdges: c.interiorEdges.filter((e) => !ids.has(e.id)),
+            boundaryProxies: c.boundaryProxies.filter(
+              (p) => !proxyIds.has(p.nodeId),
+            ),
           }));
           toast.error("Couldn’t undo. Please try again.");
         });
     },
-    [setNodes, setEdges, patchCanvas, restoreComponent, utils],
+    [setNodes, setEdges, patchCanvas, restoreComponent, utils, breadcrumbIds],
   );
 
   // Component-detail panel: opens when the owner single-selects a real (non-
@@ -823,7 +961,8 @@ function CanvasInner({
                   },
                   onError: (error) => {
                     toast.error(
-                      error.message || "Couldn’t attach the spec. Please try again.",
+                      error.message ||
+                        "Couldn’t attach the spec. Please try again.",
                     );
                   },
                   onSettled: () => setActivePreviewOwnerId(null),
@@ -834,13 +973,18 @@ function CanvasInner({
             // The modal takes over the pending/error surface from here.
             setActivePreviewOwnerId(null);
             setSpecPreview(result);
-            setPendingPreview({ ownerNodeId, kind: input.kind, source: input.source });
+            setPendingPreview({
+              ownerNodeId,
+              kind: input.kind,
+              source: input.source,
+            });
           },
           onError: (error) => {
             setSpecPreviewError({
               ownerNodeId,
               message:
-                error.message || "Couldn’t preview this spec. Please try again.",
+                error.message ||
+                "Couldn’t preview this spec. Please try again.",
             });
             setActivePreviewOwnerId(null);
           },
@@ -903,19 +1047,36 @@ function CanvasInner({
       if (id.startsWith("temp_")) return; // no real id to soft-delete yet
       const cached = utils.architecture.getCanvas.getData(canvasInput);
       const node = cached?.interiorNodes.find((n) => n.id === id);
+      // Incident-on-canvas edges are those whose on-scope REPRESENTATIVE is the
+      // deleted node — covering same-Canvas, altitude (id is a deeper endpoint's
+      // ancestor rep), and cross-scope near-end edges uniformly. Matching on the
+      // raw `sourceId`/`targetId` would miss the altitude case (ADR-0031). For a
+      // same-Canvas edge `sourceRepr === sourceId`, so this is strictly a superset.
       const incidentEdges =
         cached?.interiorEdges.filter(
-          (e) => e.sourceId === id || e.targetId === id,
+          (e) => e.sourceRepr === id || e.targetRepr === id,
         ) ?? [];
+      // The boundary proxies belonging to those incident cross-scope edges — they
+      // must vanish with the edge, or a far-end stand-in floats with no partner.
+      const incidentEdgeIds = new Set(incidentEdges.map((e) => e.id));
+      const incidentProxies =
+        cached?.boundaryProxies.filter((p) => incidentEdgeIds.has(p.edgeId)) ??
+        [];
+      const incidentProxyIds = new Set(incidentProxies.map((p) => p.nodeId));
 
       if (selectedNodeId === id) closeDetailPanel();
 
-      setNodes((ns) => ns.filter((n) => n.id !== id));
+      setNodes((ns) =>
+        ns.filter((n) => n.id !== id && !incidentProxyIds.has(n.id)),
+      );
       setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
       patchCanvas((c) => ({
         interiorNodes: c.interiorNodes.filter((n) => n.id !== id),
         interiorEdges: c.interiorEdges.filter(
-          (e) => e.sourceId !== id && e.targetId !== id,
+          (e) => e.sourceRepr !== id && e.targetRepr !== id,
+        ),
+        boundaryProxies: c.boundaryProxies.filter(
+          (p) => !incidentEdgeIds.has(p.edgeId),
         ),
       }));
 
@@ -926,7 +1087,12 @@ function CanvasInner({
             action: {
               label: "Undo",
               onClick: () =>
-                undoRemoveComponent(deletionId, node, incidentEdges),
+                undoRemoveComponent(
+                  deletionId,
+                  node,
+                  incidentEdges,
+                  incidentProxies,
+                ),
             },
           });
         })
@@ -941,17 +1107,50 @@ function CanvasInner({
                 : [...c.interiorNodes, node],
             }));
           }
+          setNodes((ns) => {
+            const present = new Set(ns.map((n) => n.id));
+            const add = incidentProxies.filter((p) => !present.has(p.nodeId));
+            // Append below any proxies still on the rail so a re-added stand-in
+            // never lands on top of an existing one.
+            const railBase = ns.filter(
+              (n) => n.type === "boundary-proxy",
+            ).length;
+            return add.length
+              ? [
+                  ...ns,
+                  ...add.map((p, i) =>
+                    toProxyRFNode(p, breadcrumbIds, {
+                      x: -280,
+                      y: (railBase + i) * 72,
+                    }),
+                  ),
+                ]
+              : ns;
+          });
           setEdges((es) => {
             const present = new Set(es.map((e) => e.id));
             const add = incidentEdges.filter((e) => !present.has(e.id));
             return add.length ? [...es, ...add.map(toRFEdge)] : es;
           });
           patchCanvas((c) => {
-            const present = new Set(c.interiorEdges.map((e) => e.id));
-            const add = incidentEdges.filter((e) => !present.has(e.id));
-            return add.length
-              ? { interiorEdges: [...c.interiorEdges, ...add] }
-              : {};
+            const presentEdges = new Set(c.interiorEdges.map((e) => e.id));
+            const addEdges = incidentEdges.filter(
+              (e) => !presentEdges.has(e.id),
+            );
+            const presentProxies = new Set(
+              c.boundaryProxies.map((p) => p.nodeId),
+            );
+            const addProxies = incidentProxies.filter(
+              (p) => !presentProxies.has(p.nodeId),
+            );
+            return {
+              ...(addEdges.length
+                ? { interiorEdges: [...c.interiorEdges, ...addEdges] }
+                : {}),
+              ...(addProxies.length
+                ? { boundaryProxies: [...c.boundaryProxies, ...addProxies] }
+                : {}),
+            };
           });
           toast.error("Couldn’t delete the component. Please try again.");
         });
@@ -966,39 +1165,95 @@ function CanvasInner({
       undoRemoveComponent,
       selectedNodeId,
       closeDetailPanel,
+      breadcrumbIds,
     ],
   );
 
   // Edit a Connection's label: optimistic in store + cache mirror, one updateEdge
   // mutation, both rolled back with a toast on failure. Provided to the edges
-  // through context (below) so it stays one stable reference. (A Connection's
-  // interaction is set at creation; the picker is #65.)
+  // through context (below) so it stays one stable reference. A label edit never
+  // collides (label is in no de-dupe key), so this stays a plain update — the
+  // interaction picker (which CAN collide) is `commitEdgeInteraction` below.
   const commitEdgeEdit = useCallback(
     (id: string, label: string | null): void => {
       const prev = utils.architecture.getCanvas
         .getData(canvasInput)
         ?.interiorEdges.find((e) => e.id === id);
+      if (!prev) return;
 
-      setEdges((es) =>
-        es.map((e) => (e.id === id ? { ...e, data: { ...e.data, label } } : e)),
-      );
+      const next: CanvasEdge = { ...prev, label };
+      setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(next) : e)));
       patchCanvas((c) => ({
-        interiorEdges: c.interiorEdges.map((e) =>
-          e.id === id ? { ...e, label } : e,
-        ),
+        interiorEdges: c.interiorEdges.map((e) => (e.id === id ? next : e)),
       }));
 
       void editEdge({ id, label }).catch(() => {
-        if (prev) {
-          setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(prev) : e)));
-          patchCanvas((c) => ({
-            interiorEdges: c.interiorEdges.map((e) => (e.id === id ? prev : e)),
-          }));
-        }
         toast.error("Couldn’t save the connection. Please try again.");
+        const current = utils.architecture.getCanvas
+          .getData(canvasInput)
+          ?.interiorEdges.find((e) => e.id === id);
+        // Roll back ONLY the label, and only if the cache still shows what this
+        // edit wrote — restore against the CURRENT row (not the captured `prev`)
+        // so a concurrent interaction change that succeeded in the interim is
+        // preserved rather than clobbered by a stale full-object restore.
+        if (current?.label !== label) return;
+        const reverted: CanvasEdge = { ...current, label: prev.label };
+        setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(reverted) : e)));
+        patchCanvas((c) => ({
+          interiorEdges: c.interiorEdges.map((e) =>
+            e.id === id ? reverted : e,
+          ),
+        }));
       });
     },
     [utils, canvasInput, setEdges, patchCanvas, editEdge],
+  );
+
+  // Upgrade a Connection's interaction from the picker on the selected edge (#65).
+  // Optimistic in store + cache mirror — and because the arrowheads live on the RF
+  // edge object (not `data`), the optimistic edge is rebuilt through `toRFEdge` so
+  // the markers flip THIS frame, not after the round trip. One
+  // updateEdgeInteraction mutation; CONDITIONAL rollback (a newer change's
+  // optimistic patch must not be clobbered by an older failing one, the same shape
+  // commitRename carries) + a conflict-aware toast: upgrading into a directional
+  // slot another Connection already holds returns a CONFLICT (ADR-0027), surfaced
+  // distinctly so the user learns WHY rather than seeing a generic retry.
+  const commitEdgeInteraction = useCallback(
+    (id: string, interaction: Interaction): void => {
+      const prev = utils.architecture.getCanvas
+        .getData(canvasInput)
+        ?.interiorEdges.find((e) => e.id === id);
+      if (!prev || prev.interaction === interaction) return;
+
+      const next: CanvasEdge = { ...prev, interaction };
+      setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(next) : e)));
+      patchCanvas((c) => ({
+        interiorEdges: c.interiorEdges.map((e) => (e.id === id ? next : e)),
+      }));
+
+      void setEdgeInteraction({ id, interaction }).catch((error: unknown) => {
+        toast.error(messageForInteractionFailure(error));
+        const current = utils.architecture.getCanvas
+          .getData(canvasInput)
+          ?.interiorEdges.find((e) => e.id === id);
+        // Roll back ONLY the interaction, and only if the cache still shows what
+        // THIS change wrote — restore against the CURRENT row so a concurrent
+        // label edit that succeeded in the interim survives (the field-scoped
+        // analogue of `commitEdgeEdit`'s rollback).
+        if (current?.interaction !== interaction) return;
+        const reverted: CanvasEdge = {
+          ...current,
+          interaction: prev.interaction,
+        };
+        setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(reverted) : e)));
+        patchCanvas((c) => ({
+          interiorEdges: c.interiorEdges.map((e) =>
+            e.id === id ? reverted : e,
+          ),
+        }));
+      });
+    },
+    [utils, canvasInput, setEdges, patchCanvas, setEdgeInteraction],
   );
 
   // Descent: open a Component's interior Canvas. One callback shared by the
@@ -1028,153 +1283,170 @@ function CanvasInner({
   return (
     <RenameComponentContext.Provider value={commitRename}>
       <EditEdgeContext.Provider value={commitEdgeEdit}>
-        <DescendComponentContext.Provider value={descend}>
-          <DeleteComponentContext.Provider value={removeComponent}>
-            <CanEditContext.Provider value={canEdit}>
-              <ReactFlow<ComponentNode, ConnectionEdge>
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={(c) => void handleConnect(c)}
-                // Loose connection mode: a Connection can be drawn between any
-                // two handles in either direction — Components are not
-                // directional, so a Port has no input/output role and the drag
-                // direction carries no meaning here (a Connection's interaction
-                // is set separately; #65). The draw order is preserved on the
-                // Edge for the eventual arrowhead derivation (ADR-0027).
-                connectionMode={ConnectionMode.Loose}
-                // Instant drag feedback: reject a self-link and a still-optimistic
-                // (temp_) endpoint by snapping back. Duplicates are deliberately
-                // allowed through (passing [] skips the duplicate rule) so
-                // onConnect can surface a toast — blocking them here would snap a
-                // duplicate back silently, with no explanation.
-                isValidConnection={(c) => {
-                  const { source, target } = c;
-                  if (!source || !target) return false;
-                  if (
-                    source.startsWith("temp_") ||
-                    target.startsWith("temp_")
-                  ) {
-                    return false;
+        <SetEdgeInteractionContext.Provider value={commitEdgeInteraction}>
+          <DescendComponentContext.Provider value={descend}>
+            <DeleteComponentContext.Provider value={removeComponent}>
+              <CanEditContext.Provider value={canEdit}>
+                <ReactFlow<CanvasRFNode, ConnectionEdge>
+                  nodes={nodes}
+                  edges={edges}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onConnect={(c) => void handleConnect(c)}
+                  // Loose connection mode: a Connection can be drawn between any
+                  // two handles in either direction — Components are not
+                  // directional, so a Port has no input/output role and the drag
+                  // direction carries no meaning here (a Connection's interaction
+                  // is set separately; #65). The draw order is preserved on the
+                  // Edge for the eventual arrowhead derivation (ADR-0027).
+                  connectionMode={ConnectionMode.Loose}
+                  // Instant drag feedback: reject a self-link and a still-optimistic
+                  // (temp_) endpoint by snapping back. Duplicates are deliberately
+                  // allowed through (passing [] skips the duplicate rule) so
+                  // onConnect can surface a toast — blocking them here would snap a
+                  // duplicate back silently, with no explanation.
+                  isValidConnection={(c) => {
+                    const { source, target } = c;
+                    if (!source || !target) return false;
+                    if (
+                      source.startsWith("temp_") ||
+                      target.startsWith("temp_")
+                    ) {
+                      return false;
+                    }
+                    return canConnect({ source, target }, []).ok;
+                  }}
+                  onEdgesDelete={handleEdgesDelete}
+                  onNodeClick={(_event, node) => {
+                    // Passive nodes (boundary proxies) have no editable record —
+                    // never open the detail panel for them (ADR-0016).
+                    if (isPassiveNode(node)) return;
+                    // A `temp_…` Component has no server id yet; opening the
+                    // detail panel would query for a node the server cannot
+                    // find. Single-click selection only for real Components —
+                    // double-click still descends.
+                    if (node.id.startsWith("temp_")) return;
+                    setSelectedNodeId(node.id);
+                  }}
+                  onPaneClick={() => setSelectedNodeId(null)}
+                  onNodeDoubleClick={(_event, node) => {
+                    // A boundary proxy descends through its own "go to real"
+                    // affordance (to the off-scope endpoint), not the generic
+                    // double-click (ADR-0016).
+                    if (isPassiveNode(node)) return;
+                    descend(node.id);
+                  }}
+                  onNodeMouseEnter={(_event, node) => {
+                    // Make Descent feel instant: warm the interior Canvas payload (tRPC
+                    // cache, the same key the descended island reads) and the route shell.
+                    // Also warm the Plate docs-editor chunk so first selection of a
+                    // Component doesn't pay a "Loading editor…" flash (ADR-0015 §6).
+                    // Passive nodes have no interior to warm (ADR-0016).
+                    if (isPassiveNode(node)) return;
+                    if (node.id.startsWith("temp_")) return;
+                    void utils.architecture.getCanvas.prefetch({
+                      slug,
+                      canvasNodeId: node.id,
+                    });
+                    router.prefetch(`/p/${slug}/n/${node.id}`);
+                    // Viewers open the read-only docs panel too, so warm the
+                    // Plate chunk for everyone — no first-open flash (perf #1).
+                    prefetchDocsEditor();
+                  }}
+                  onNodeDragStop={(_event, _node, dragged) =>
+                    void persistPositions(dragged)
                   }
-                  return canConnect({ source, target }, []).ok;
-                }}
-                onEdgesDelete={handleEdgesDelete}
-                onNodeClick={(_event, node) => {
-                  // A `temp_…` Component has no server id yet; opening the
-                  // detail panel would query for a node the server cannot
-                  // find. Single-click selection only for real Components —
-                  // double-click still descends.
-                  if (node.id.startsWith("temp_")) return;
-                  setSelectedNodeId(node.id);
-                }}
-                onPaneClick={() => setSelectedNodeId(null)}
-                onNodeDoubleClick={(_event, node) => descend(node.id)}
-                onNodeMouseEnter={(_event, node) => {
-                  // Make Descent feel instant: warm the interior Canvas payload (tRPC
-                  // cache, the same key the descended island reads) and the route shell.
-                  // Also warm the Plate docs-editor chunk so first selection of a
-                  // Component doesn't pay a "Loading editor…" flash (ADR-0015 §6).
-                  if (node.id.startsWith("temp_")) return;
-                  void utils.architecture.getCanvas.prefetch({
-                    slug,
-                    canvasNodeId: node.id,
-                  });
-                  router.prefetch(`/p/${slug}/n/${node.id}`);
-                  // Viewers open the read-only docs panel too, so warm the
-                  // Plate chunk for everyone — no first-open flash (perf #1).
-                  prefetchDocsEditor();
-                }}
-                onNodeDragStop={(_event, _node, dragged) =>
-                  void persistPositions(dragged)
-                }
-                onSelectionDragStop={(_event, dragged) =>
-                  void persistPositions(dragged)
-                }
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                nodesDraggable={canEdit}
-                nodesConnectable={canEdit}
-                deleteKeyCode={canEdit ? undefined : null}
-                fitView
-              >
-                <Background />
-                <Controls />
-                <Panel position="top-left" className="flex gap-2">
-                  {canEdit && (
-                    <AddComponent
-                      onAdd={addComponent}
-                      parentKind={parentKind}
-                      pending={createNode.isPending}
-                    />
-                  )}
-                  {/* Slug-readable: visible to any viewer, not gated on
+                  onSelectionDragStop={(_event, dragged) =>
+                    void persistPositions(dragged)
+                  }
+                  nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
+                  nodesDraggable={canEdit}
+                  nodesConnectable={canEdit}
+                  deleteKeyCode={canEdit ? undefined : null}
+                  fitView
+                >
+                  <Background />
+                  <Controls />
+                  <Panel position="top-left" className="flex gap-2">
+                    {canEdit && (
+                      <AddComponent
+                        onAdd={addComponent}
+                        parentKind={parentKind}
+                        pending={createNode.isPending}
+                      />
+                    )}
+                    {/* Slug-readable: visible to any viewer, not gated on
                       edit. Always exports the whole project (ADR-0017 /
                       #15) — the scope-specific export lives on the
                       breadcrumb bar. */}
-                  <CopyMarkdownToolbar slug={slug} />
-                </Panel>
-                {selectedNodeId !== null &&
-                  (canEdit ? (
-                    <Panel
-                      key={selectedNodeId}
-                      position="top-right"
-                      className="top-0! right-0! bottom-0! m-0! flex"
-                    >
-                      {/* Owner mode: full edit affordances wired to the
+                    <CopyMarkdownToolbar slug={slug} />
+                  </Panel>
+                  {selectedNodeId !== null &&
+                    (canEdit ? (
+                      <Panel
+                        key={selectedNodeId}
+                        position="top-right"
+                        className="top-0! right-0! bottom-0! m-0! flex"
+                      >
+                        {/* Owner mode: full edit affordances wired to the
                           canvas's mutations. Discriminated `readOnly: false`
                           keeps write callbacks visible at compile time (#16). */}
-                      <ComponentDetailPanel
-                        readOnly={false}
-                        ownerNodeId={selectedNodeId}
-                        currentKind={selectedNode?.kind ?? "GENERIC"}
-                        parentKind={parentKind}
-                        initialDocumentation={selectedNode?.documentation ?? ""}
-                        onClose={closeDetailPanel}
-                        onChangeKind={commitNodeKind}
-                        onCommitDocumentation={commitDocumentation}
-                        onPreviewSpec={handlePreviewSpec}
-                        specPreviewPending={
-                          activePreviewOwnerId === selectedNodeId
-                        }
-                        specPreviewError={
-                          specPreviewError?.ownerNodeId === selectedNodeId
-                            ? specPreviewError.message
-                            : null
-                        }
-                      />
-                    </Panel>
-                  ) : (
-                    <Panel
-                      key={selectedNodeId}
-                      position="top-right"
-                      className="top-0! right-0! bottom-0! m-0! flex"
-                    >
-                      {/* Viewer mode: read-only docs, zero write affordances.
+                        <ComponentDetailPanel
+                          readOnly={false}
+                          ownerNodeId={selectedNodeId}
+                          currentKind={selectedNode?.kind ?? "GENERIC"}
+                          parentKind={parentKind}
+                          initialDocumentation={
+                            selectedNode?.documentation ?? ""
+                          }
+                          onClose={closeDetailPanel}
+                          onChangeKind={commitNodeKind}
+                          onCommitDocumentation={commitDocumentation}
+                          onPreviewSpec={handlePreviewSpec}
+                          specPreviewPending={
+                            activePreviewOwnerId === selectedNodeId
+                          }
+                          specPreviewError={
+                            specPreviewError?.ownerNodeId === selectedNodeId
+                              ? specPreviewError.message
+                              : null
+                          }
+                        />
+                      </Panel>
+                    ) : (
+                      <Panel
+                        key={selectedNodeId}
+                        position="top-right"
+                        className="top-0! right-0! bottom-0! m-0! flex"
+                      >
+                        {/* Viewer mode: read-only docs, zero write affordances.
                           Discriminated `readOnly: true` omits mutations at
                           compile time (#16). */}
-                      <ComponentDetailPanel
-                        readOnly={true}
-                        ownerNodeId={selectedNodeId}
-                        currentKind={selectedNode?.kind ?? "GENERIC"}
-                        parentKind={parentKind}
-                        initialDocumentation={selectedNode?.documentation ?? ""}
-                        onClose={closeDetailPanel}
-                      />
+                        <ComponentDetailPanel
+                          readOnly={true}
+                          ownerNodeId={selectedNodeId}
+                          currentKind={selectedNode?.kind ?? "GENERIC"}
+                          parentKind={parentKind}
+                          initialDocumentation={
+                            selectedNode?.documentation ?? ""
+                          }
+                          onClose={closeDetailPanel}
+                        />
+                      </Panel>
+                    ))}
+                  {!nodes.some((n) => n.type === "component") && (
+                    <Panel position="top-center">
+                      <p className="mt-2 text-sm text-white/50">
+                        Empty canvas. Add a Component to start modeling.
+                      </p>
                     </Panel>
-                  ))}
-                {nodes.length === 0 && (
-                  <Panel position="top-center">
-                    <p className="mt-2 text-sm text-white/50">
-                      Empty canvas. Add a Component to start modeling.
-                    </p>
-                  </Panel>
-                )}
-              </ReactFlow>
-            </CanEditContext.Provider>
-          </DeleteComponentContext.Provider>
-        </DescendComponentContext.Provider>
+                  )}
+                </ReactFlow>
+              </CanEditContext.Provider>
+            </DeleteComponentContext.Provider>
+          </DescendComponentContext.Provider>
+        </SetEdgeInteractionContext.Provider>
       </EditEdgeContext.Provider>
       {/* Spec attach/merge modal (#64 / ADR-0029). Portaled by Base UI, so it
           sits outside React Flow's coordinate space. Mounted only while a

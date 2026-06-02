@@ -114,9 +114,7 @@ export function SpecConflictModal({
         </header>
 
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto px-5 py-4">
-          {preview.new.length > 0 && (
-            <NewSection rows={preview.new} />
-          )}
+          {preview.new.length > 0 && <NewSection rows={preview.new} />}
 
           {preview.changed.length > 0 && (
             <ChangedSection
@@ -208,7 +206,7 @@ function SectionHeader({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
+      <h3 className="text-xs font-semibold tracking-wide text-white/60 uppercase">
         {title} · {count}
       </h3>
       {bulkControls && (
@@ -436,7 +434,7 @@ function DroppedSection({
               {row.hasIncidentConnections && (
                 <span
                   title="This component has incident Connections that would be removed if deleted."
-                  className="flex shrink-0 items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-200"
+                  className="flex shrink-0 items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] tracking-wide text-amber-200 uppercase"
                 >
                   <AlertTriangle size={10} aria-hidden /> has connections
                 </span>

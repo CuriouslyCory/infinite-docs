@@ -91,7 +91,10 @@ function buildTable(tableName: string, defs: unknown[]): TableResult {
   const pkColumns = new Set<string>();
   for (const def of defs) {
     if (!isRecord(def)) continue;
-    if (def.resource === "constraint" && def.constraint_type === "primary key") {
+    if (
+      def.resource === "constraint" &&
+      def.constraint_type === "primary key"
+    ) {
       for (const ref of Array.isArray(def.definition) ? def.definition : []) {
         const name = readColumnRef(ref);
         if (name !== null) pkColumns.add(name.toLowerCase());
@@ -134,8 +137,7 @@ function buildColumn(
 
   const inlinePk = def.primary_key === "primary key";
   const primaryKey = inlinePk || pkColumns.has(name.toLowerCase());
-  const notNull =
-    isRecord(def.nullable) && def.nullable.type === "not null";
+  const notNull = isRecord(def.nullable) && def.nullable.type === "not null";
 
   const metadata: ComponentMetadata = {
     nullable: !notNull && !primaryKey,

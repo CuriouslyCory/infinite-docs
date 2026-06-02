@@ -161,62 +161,64 @@ export function ComponentDocsEditor({
   // preventDefault keeps the editor selection so each transform hits the right
   // range. Link insertion is intentionally omitted (it needs a heavier
   // floating-URL UX); pasted markdown links still render and round-trip.
-  const toolbarGroups: { icon: LucideIcon; title: string; run: () => void }[][] =
+  const toolbarGroups: {
+    icon: LucideIcon;
+    title: string;
+    run: () => void;
+  }[][] = [
     [
-      [
-        {
-          icon: Heading1,
-          title: "Heading 1",
-          run: () => editor.tf.toggleBlock(KEYS.h1),
-        },
-        {
-          icon: Heading2,
-          title: "Heading 2",
-          run: () => editor.tf.toggleBlock(KEYS.h2),
-        },
-        {
-          icon: Heading3,
-          title: "Heading 3",
-          run: () => editor.tf.toggleBlock(KEYS.h3),
-        },
-      ],
-      [
-        { icon: Bold, title: "Bold", run: () => editor.tf.toggleMark(KEYS.bold) },
-        {
-          icon: Italic,
-          title: "Italic",
-          run: () => editor.tf.toggleMark(KEYS.italic),
-        },
-        {
-          icon: Strikethrough,
-          title: "Strikethrough",
-          run: () => editor.tf.toggleMark(KEYS.strikethrough),
-        },
-        {
-          icon: Code,
-          title: "Inline code",
-          run: () => editor.tf.toggleMark(KEYS.code),
-        },
-      ],
-      [
-        {
-          icon: List,
-          title: "Bulleted list",
-          run: () => toggleList(editor, { listStyleType: ListStyleType.Disc }),
-        },
-        {
-          icon: ListOrdered,
-          title: "Numbered list",
-          run: () =>
-            toggleList(editor, { listStyleType: ListStyleType.Decimal }),
-        },
-        {
-          icon: Quote,
-          title: "Quote",
-          run: () => editor.tf.toggleBlock(KEYS.blockquote),
-        },
-      ],
-    ];
+      {
+        icon: Heading1,
+        title: "Heading 1",
+        run: () => editor.tf.toggleBlock(KEYS.h1),
+      },
+      {
+        icon: Heading2,
+        title: "Heading 2",
+        run: () => editor.tf.toggleBlock(KEYS.h2),
+      },
+      {
+        icon: Heading3,
+        title: "Heading 3",
+        run: () => editor.tf.toggleBlock(KEYS.h3),
+      },
+    ],
+    [
+      { icon: Bold, title: "Bold", run: () => editor.tf.toggleMark(KEYS.bold) },
+      {
+        icon: Italic,
+        title: "Italic",
+        run: () => editor.tf.toggleMark(KEYS.italic),
+      },
+      {
+        icon: Strikethrough,
+        title: "Strikethrough",
+        run: () => editor.tf.toggleMark(KEYS.strikethrough),
+      },
+      {
+        icon: Code,
+        title: "Inline code",
+        run: () => editor.tf.toggleMark(KEYS.code),
+      },
+    ],
+    [
+      {
+        icon: List,
+        title: "Bulleted list",
+        run: () => toggleList(editor, { listStyleType: ListStyleType.Disc }),
+      },
+      {
+        icon: ListOrdered,
+        title: "Numbered list",
+        run: () => toggleList(editor, { listStyleType: ListStyleType.Decimal }),
+      },
+      {
+        icon: Quote,
+        title: "Quote",
+        run: () => editor.tf.toggleBlock(KEYS.blockquote),
+      },
+    ],
+  ];
 
   const isEmpty = savedDoc.trim().length === 0;
 
@@ -237,9 +239,7 @@ export function ComponentDocsEditor({
       // enough; serialize-and-compare runs after the value settles.
       setTimeout(() => {
         try {
-          const serialized = editor
-            .getApi(MarkdownPlugin)
-            .markdown.serialize();
+          const serialized = editor.getApi(MarkdownPlugin).markdown.serialize();
           if (lossyMarkdownDelta(pasted, serialized)) {
             warnedLossyPasteRef.current = true;
             toast.warning(
@@ -331,10 +331,7 @@ export function ComponentDocsEditor({
               {toolbarGroups.map((group, gi) => (
                 <div key={gi} className="flex items-center gap-0.5">
                   {gi > 0 && (
-                    <span
-                      className="mx-0.5 h-5 w-px bg-white/10"
-                      aria-hidden
-                    />
+                    <span className="mx-0.5 h-5 w-px bg-white/10" aria-hidden />
                   )}
                   {group.map(({ icon: Icon, title, run }) => (
                     <button

@@ -95,3 +95,34 @@ those slices have a spec.
   consume the canonical helper; one place owns the mapping.
 - The ADR-0023 four-case arrow test matrix is repurposed: cases now assert the
   arrow derived from the Connection's own `interaction`, not from a routed Flow.
+
+## Realized in #65
+
+The deferred rendering landed in #65: the canonical helper is
+`~/lib/connection-direction.ts` (`arrowEnds(interaction) → { atSource, atTarget }`),
+a pure module importing only the client-safe `Interaction` type. The canvas maps
+its booleans to React Flow `markerStart`/`markerEnd` in `toRFEdge` (the marker
+mapping lives in the island, never in `~/lib`, so `@xyflow/react` does not leak —
+ADR-0004); the exporter (#67) derives the `→`/`←`/`↔`/`—` glyph from the same
+booleans. The four-case matrix is asserted in `connection-direction.test.ts`.
+
+### Amendment — interaction is editable after creation
+
+#65 added a picker on the selected Connection that upgrades its `interaction`
+(e.g. `ASSOCIATION` → `REQUEST`). This is a distinct write surface from label
+editing because, unlike `label` (in no de-dupe key), `interaction` is in the
+directional de-dupe key — so an edit can collide:
+
+- The edit goes through `updateEdgeInteraction` (its own input/service/procedure),
+  not `updateEdge` (which stays label-only and never collides).
+- `sourceId`/`targetId` are **never rewritten**, so the upgraded arrow points the
+  way the Connection was drawn.
+- The service re-evaluates the de-dupe slot for the new interaction (reusing
+  `activeDuplicateWhere`, with the edge's own `id` excluded — a row is not its own
+  duplicate) and returns a `ConflictError` if another active Connection already
+  holds the target slot; the partial unique index is the TOCTOU backstop, the same
+  shape `connectNodes` uses.
+
+**Reviewable invariant:** changing a Connection's interaction re-keys its de-dupe
+slot; an upgrade that would duplicate an active Connection is rejected, and draw
+order is preserved through the change.

@@ -25,10 +25,17 @@ function makeUser(name = "Owner") {
 
 async function seedProject(
   ownerId: string,
-  opts: { title?: string; componentTitle?: string; documentation?: string } = {},
+  opts: {
+    title?: string;
+    componentTitle?: string;
+    documentation?: string;
+  } = {},
 ) {
-  const { title = "My Project", componentTitle = "API Gateway", documentation } =
-    opts;
+  const {
+    title = "My Project",
+    componentTitle = "API Gateway",
+    documentation,
+  } = opts;
   const actor: Actor = { userId: ownerId };
   const project = await createProject(testDb, actor, { title });
   const node = await createNode(testDb, actor, {
@@ -71,7 +78,9 @@ describe("resolveActorFromToken", () => {
   });
 
   it("rejects an unknown token", async () => {
-    expect(await resolveActorFromToken(testDb, "infdoc_not-a-real-token")).toBeNull();
+    expect(
+      await resolveActorFromToken(testDb, "infdoc_not-a-real-token"),
+    ).toBeNull();
   });
 
   it("rejects a revoked token", async () => {

@@ -126,11 +126,11 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
       }`}
     >
       {/* A neutral connection point — Components are not directional, so a Port
-          carries no input/output meaning; a Connection's direction is derived
-          from the Flows routed on it (ADR-0023). Two handles (left + right) keep
-          drag-to-connect discoverable; under `ConnectionMode.Loose` either can
-          start or end a Connection. "Port" is the user word; "handle" stays
-          React Flow's code word (CONTEXT.md "Port"). */}
+          carries no input/output meaning; a Connection's arrowheads are derived
+          from its `(interaction, source, target)` (ADR-0027). Two handles (left +
+          right) keep drag-to-connect discoverable; under `ConnectionMode.Loose`
+          either can start or end a Connection. "Port" is the user word; "handle"
+          stays React Flow's code word (CONTEXT.md "Port"). */}
       <Handle
         type="target"
         position={Position.Left}
@@ -231,7 +231,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
         </button>
       )}
       {/* The second neutral connection point (right). Non-directional like the
-          left one — see the note above (ADR-0023). */}
+          left one — see the note above (ADR-0027). */}
       <Handle
         type="source"
         position={Position.Right}

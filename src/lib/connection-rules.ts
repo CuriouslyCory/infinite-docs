@@ -16,14 +16,17 @@
  * rules that ARE pure topology — no self-link and no duplicate against the
  * current Connection set — live here, in one tested place.
  *
- * Scope: this mirrors the ASSOCIATION de-dupe rule, the only interaction the
- * web client draws in this slice (#62). An ASSOCIATION's key is the UNORDERED
- * endpoint pair, so A→B and B→A are the SAME Connection (ADR-0027); this helper
- * sees only endpoint ids and matches that unordered rule. When #65 adds the
- * typed-interaction picker this must grow an `interaction` arm: directional
- * interactions de-dupe on the ORDERED triple `(source, target, interaction)`,
- * so a directional A→B must NOT be rejected just because an ASSOCIATION A↔B
- * already exists (see `activeDuplicateWhere` in `edge.service.ts`).
+ * Scope: this mirrors the ASSOCIATION de-dupe rule, the only interaction the web
+ * client DRAWS. An ASSOCIATION's key is the UNORDERED endpoint pair, so A→B and
+ * B→A are the SAME Connection (ADR-0027); this helper sees only endpoint ids and
+ * matches that unordered rule. #65's interaction picker UPGRADES an existing
+ * Connection (an `updateEdgeInteraction` edit, which does not pass through this
+ * draw-time check), so it needs no `interaction` arm here. A gesture that DRAWS a
+ * directional Connection up front (the #66 "Connect to…" surface) is what would
+ * grow this arm: directional interactions de-dupe on the ORDERED triple
+ * `(source, target, interaction)`, so a directional A→B must NOT be rejected just
+ * because an ASSOCIATION A↔B already exists (see `activeDuplicateWhere` in
+ * `edge.service.ts`).
  */
 
 /** A Connection a user is proposing to draw, by endpoint Node id. */

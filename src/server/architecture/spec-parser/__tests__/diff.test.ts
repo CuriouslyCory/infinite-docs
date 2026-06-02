@@ -32,8 +32,20 @@ describe("parseSpecDiff", () => {
   it("classifies new / changed / dropped by specKey", () => {
     const tree = [ep("listPets", "List the pets"), ep("createPet")];
     const existing = [
-      { id: "n1", specKey: "listPets", title: "List", kind: "ENDPOINT" as const, metadata: null },
-      { id: "n2", specKey: "deletePet", title: "Delete", kind: "ENDPOINT" as const, metadata: null },
+      {
+        id: "n1",
+        specKey: "listPets",
+        title: "List",
+        kind: "ENDPOINT" as const,
+        metadata: null,
+      },
+      {
+        id: "n2",
+        specKey: "deletePet",
+        title: "Delete",
+        kind: "ENDPOINT" as const,
+        metadata: null,
+      },
     ];
 
     const diff = parseSpecDiff(tree, existing);
@@ -45,11 +57,15 @@ describe("parseSpecDiff", () => {
   });
 
   it("treats undefined / null / empty metadata as equal", () => {
-    const tree = [
-      { specKey: "x", kind: "ENDPOINT" as const, title: "x" },
-    ];
+    const tree = [{ specKey: "x", kind: "ENDPOINT" as const, title: "x" }];
     const existing = [
-      { id: "n1", specKey: "x", title: "x", kind: "ENDPOINT" as const, metadata: {} },
+      {
+        id: "n1",
+        specKey: "x",
+        title: "x",
+        kind: "ENDPOINT" as const,
+        metadata: {},
+      },
     ];
     const diff = parseSpecDiff(tree, existing);
     expect(diff.changed).toHaveLength(0);
@@ -58,7 +74,13 @@ describe("parseSpecDiff", () => {
   it("reports a kind change as changed", () => {
     const tree = [ep("e1")];
     const existing = [
-      { id: "n1", specKey: "e1", title: "e1", kind: "GENERIC" as const, metadata: null },
+      {
+        id: "n1",
+        specKey: "e1",
+        title: "e1",
+        kind: "GENERIC" as const,
+        metadata: null,
+      },
     ];
     const diff = parseSpecDiff(tree, existing);
     expect(diff.changed).toHaveLength(1);

@@ -108,7 +108,13 @@ async function loadGeneratedChildren(
 ): Promise<ExistingGeneratedComponent[]> {
   const rows = await db.node.findMany({
     where: { sourceSpecId: specId, deletedAt: null, specKey: { not: null } },
-    select: { id: true, specKey: true, title: true, kind: true, metadata: true },
+    select: {
+      id: true,
+      specKey: true,
+      title: true,
+      kind: true,
+      metadata: true,
+    },
   });
   return rows.map((row) => ({
     id: row.id,
@@ -279,7 +285,13 @@ export async function applySpec(
     throw new ValidationError(`This spec did not parse: ${parsed.parseError}`);
   }
 
-  const specId = await upsertLiveSpec(db, owner.projectId, ownerNodeId, kind, source);
+  const specId = await upsertLiveSpec(
+    db,
+    owner.projectId,
+    ownerNodeId,
+    kind,
+    source,
+  );
 
   const existingChildren = await loadGeneratedChildren(db, specId);
   const diff = parseSpecDiff(parsed.tree, existingChildren);

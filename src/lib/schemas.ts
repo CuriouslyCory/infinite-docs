@@ -389,15 +389,36 @@ export type ConnectNodesInput = z.input<typeof connectNodesInput>;
  * natural key for an existing row, and how a future MCP tool arrives. The
  * service loads the Edge, resolves its Project, and enforces owner-only access
  * (ADR-0001). `label` is nullable (null clears it) and optional (undefined
- * leaves it). The Connection's `interaction` is set at creation and edited via
- * its own surface (#65), not here. `label` is UNTRUSTED user content, stored
- * verbatim (prompt-injection standing note, CONTEXT.md).
+ * leaves it). A label edit can never collide (label is in no de-dupe key), so
+ * this path stays a plain update; the Connection's `interaction` is edited via
+ * its own surface (`updateEdgeInteraction`) because changing it CAN collide with
+ * the directional de-dupe key (ADR-0027). `label` is UNTRUSTED user content,
+ * stored verbatim (prompt-injection standing note, CONTEXT.md).
  */
 export const updateEdgeInput = z.object({
   id: z.string().min(1),
   label: z.string().max(200).nullable().optional(),
 });
 export type UpdateEdgeInput = z.infer<typeof updateEdgeInput>;
+
+/**
+ * Input for upgrading a Connection's `interaction` (the picker on the selected
+ * edge; #65). Addressed by the Edge `id`; the service loads the Edge, resolves
+ * its Project, enforces owner-only access (ADR-0001), and — because `interaction`
+ * is in the directional de-dupe key — re-checks the de-dupe slot, returning a
+ * `ConflictError` if the target `(source, target, interaction)` (or the unordered
+ * ASSOCIATION pair) already has an active row. `interaction` is REQUIRED: the
+ * picker always names the value it is setting. Draw order (`sourceId`/`targetId`)
+ * is never rewritten, so upgrading to a directional interaction points the arrow
+ * the way the Connection was drawn (ADR-0027).
+ */
+export const updateEdgeInteractionInput = z.object({
+  id: z.string().min(1),
+  interaction,
+});
+export type UpdateEdgeInteractionInput = z.infer<
+  typeof updateEdgeInteractionInput
+>;
 
 /**
  * Input for removing a Connection. Addressed by the Edge `id`; the service

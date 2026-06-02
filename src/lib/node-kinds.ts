@@ -46,8 +46,8 @@ import { type NodeKind } from "~/lib/schemas";
 
 // Kind → user-facing label. Multi-word kinds are spelled out here, not derived
 // (`EXTERNAL_API` → "External API", `STORED_PROCEDURE` → "Stored procedure").
-// Exported so the boundary-group node labels its inherited members with the same
-// vocabulary.
+// Exported so the boundary-proxy node labels the off-scope Component it stands in
+// for with the same vocabulary.
 export const KIND_LABEL: Record<NodeKind, string> = {
   GENERIC: "Generic",
   GLOBAL_INFRA: "Global infrastructure",
@@ -80,7 +80,7 @@ export const KIND_LABEL: Record<NodeKind, string> = {
 // Kind → icon. Kind is cosmetic (CONTEXT.md "Component kind"); this is the only
 // place the kinds acquire a glyph. A finite `Record` keyed by `NodeKind` is not
 // widened by `noUncheckedIndexedAccess`, so indexing it needs no guard. Shared
-// by the Component node, the kind palette, and the boundary-proxy/-group nodes.
+// by the Component node, the kind palette, and the boundary-proxy node.
 export const KIND_ICON: Record<NodeKind, LucideIcon> = {
   GENERIC: Box,
   GLOBAL_INFRA: Earth,
@@ -163,7 +163,14 @@ export const KIND_AFFINITY: Record<
   NodeKind | typeof ROOT_AFFINITY_KEY,
   readonly NodeKind[]
 > = {
-  ROOT: ["GLOBAL_INFRA", "DATACENTER", "REGION", "NETWORK", "HOST", "EXTERNAL_API"],
+  ROOT: [
+    "GLOBAL_INFRA",
+    "DATACENTER",
+    "REGION",
+    "NETWORK",
+    "HOST",
+    "EXTERNAL_API",
+  ],
   GLOBAL_INFRA: ["DATACENTER", "REGION", "NETWORK", "EXTERNAL_API"],
   REGION: ["DATACENTER", "NETWORK", "HOST", "EXTERNAL_API"],
   DATACENTER: ["HOST", "NETWORK", "DATABASE", "QUEUE"],
@@ -203,9 +210,7 @@ export function suggestedKinds(parentKind: NodeKind | null): {
   suggested: NodeKind[];
   rest: NodeKind[];
 } {
-  const suggested = [
-    ...KIND_AFFINITY[parentKind ?? ROOT_AFFINITY_KEY],
-  ];
+  const suggested = [...KIND_AFFINITY[parentKind ?? ROOT_AFFINITY_KEY]];
   const promoted = new Set(suggested);
   const rest = KIND_ORDER.filter((k) => !promoted.has(k)).sort((a, b) =>
     KIND_LABEL[a] < KIND_LABEL[b] ? -1 : KIND_LABEL[a] > KIND_LABEL[b] ? 1 : 0,

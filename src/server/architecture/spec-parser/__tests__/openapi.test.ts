@@ -104,7 +104,9 @@ paths:
   });
 
   it("returns parseError on garbage", () => {
-    const result = openapiParser.parse("this is not :: valid: : yaml:: or json");
+    const result = openapiParser.parse(
+      "this is not :: valid: : yaml:: or json",
+    );
     expect(result.ok).toBe(false);
   });
 
