@@ -571,18 +571,17 @@ export type ApplyGraphConnectionInput = z.input<
 /**
  * Top-level input for the `apply_graph` MCP batch tool. Discriminated
  * top-level arrays (`components: []`, `connections: []`), not a flat
- * `entities: []` — Slice 5 / #38 appends `flows: []` and `routes: []` here
- * additively without renumbering, and discriminated arrays keep the wire
- * shape statically narrowable per arm. Per-arm length caps bound the
- * transaction-holding time the batch can monopolize (philosophy #1 — keep the
- * app feeling fast even when one agent ships a huge batch).
+ * `entities: []` — any future arm joins as its own typed array without
+ * renumbering, and discriminated arrays keep the wire shape statically
+ * narrowable per arm. Per-arm length caps bound the transaction-holding time
+ * the batch can monopolize (philosophy #1 — keep the app feeling fast even
+ * when one agent ships a huge batch).
  *
  * The `superRefine` enforces batch-wide `clientId` uniqueness across the
- * `components` array so the flat `idMap` shape Slice 5 will join on its own
- * arms cannot collide today. Connections do not carry a `clientId` in this
- * slice, so the check is component-only here; #38's additive arms will extend
- * the same `seen` map. See ADR-0026 for the shape decisions; CONTEXT.md
- * "Client id" for the glossary entry.
+ * `components` array so the flat `idMap` shape stays collision-free. Connections
+ * do not carry a `clientId` today, so the check is component-only here; any
+ * future arm that carries clientIds extends the same `seen` map. See ADR-0026
+ * for the shape decisions; CONTEXT.md "Client id" for the glossary entry.
  */
 export const applyGraphInput = z
   .object({

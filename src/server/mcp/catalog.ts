@@ -6,11 +6,11 @@ import { type McpReadInput } from "~/lib/schemas";
  * render from one source and can never disagree. Keeping this dependency-free
  * also keeps the `llms.txt` route from pulling the MCP SDK into its bundle.
  *
- * Frozen at {index, project, subtree} for #18; #38's Flow resources
- * (`flow/:id`, `flow-route/:id`) are a pure APPEND to {@link READ_RESOURCES} —
- * no change to the registration loop, the auth gate, the route, or `llms.txt`.
- * The three map 1:1 to the serializer's three modes (ADR-0017): they are the
- * MCP-addressable face of `Markdown export`, not a new data vocabulary.
+ * Frozen at {index, project, subtree} for #18. Future read resources plug in
+ * as a pure APPEND to {@link READ_RESOURCES} — no change to the registration
+ * loop, the auth gate, the route, or `llms.txt`. The three map 1:1 to the
+ * serializer's three modes (ADR-0017): they are the MCP-addressable face of
+ * `Markdown export`, not a new data vocabulary.
  */
 
 /** The custom URI scheme every MCP read resource is addressed under. */
