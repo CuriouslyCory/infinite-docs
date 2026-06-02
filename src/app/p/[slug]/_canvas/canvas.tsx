@@ -20,9 +20,9 @@ import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 
 import { canConnect } from "~/lib/connection-rules";
-import { type Interaction, type NodeKind } from "~/lib/schemas";
+import { type Interaction, type NodeKind, type SpecKind } from "~/lib/schemas";
 import { type CanvasData, type CanvasEdge, type CanvasNode } from "~/lib/types";
-import { api } from "~/trpc/react";
+import { api, type RouterOutputs } from "~/trpc/react";
 
 import { AddComponent } from "./add-component";
 import { CopyMarkdownToolbar } from "./copy-markdown";
@@ -30,6 +30,10 @@ import {
   ComponentDetailPanel,
   prefetchDocsEditor,
 } from "./component-detail-panel";
+import {
+  SpecConflictModal,
+  type SpecApplyDecisions,
+} from "./spec-conflict-modal";
 import {
   CanEditContext,
   ComponentNodeView,
@@ -257,6 +261,8 @@ function CanvasInner({
     api.architecture.deleteNode.useMutation();
   const { mutateAsync: restoreComponent } =
     api.architecture.restoreNode.useMutation();
+  const previewSpec = api.architecture.previewSpec.useMutation();
+  const applySpec = api.architecture.applySpec.useMutation();
 
   // The query cache is the re-seed mirror. EVERY write goes through this merge
   // helper so a partial update can never drop a sibling key (e.g. node edits
@@ -743,6 +749,149 @@ function CanvasInner({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const closeDetailPanel = useCallback(() => setSelectedNodeId(null), []);
 
+  // Spec attach / merge state (#64 / ADR-0029). `specPreviewError` and
+  // `activePreviewOwnerId` are each scoped to the node that STARTED the preview
+  // (an `ownerNodeId`): the panel renders for whatever node is currently
+  // selected, so a preview for A resolving after the user clicks B must not leak
+  // A's error/spinner into B's panel. `pendingPreview` carries the source the
+  // user pasted so the modal's confirm can re-apply it without re-pasting, and
+  // `specPreview` is the diff classification the modal renders.
+  const [specPreviewError, setSpecPreviewError] = useState<{
+    ownerNodeId: string;
+    message: string;
+  } | null>(null);
+  const [activePreviewOwnerId, setActivePreviewOwnerId] = useState<
+    string | null
+  >(null);
+  const [pendingPreview, setPendingPreview] = useState<{
+    ownerNodeId: string;
+    kind: SpecKind;
+    source: string;
+  } | null>(null);
+  const [specPreview, setSpecPreview] = useState<
+    RouterOutputs["architecture"]["previewSpec"] | null
+  >(null);
+
+  const handlePreviewSpec = useCallback(
+    (ownerNodeId: string, input: { kind: SpecKind; source: string }) => {
+      setSpecPreviewError(null);
+      setActivePreviewOwnerId(ownerNodeId);
+      previewSpec.mutate(
+        { ownerNodeId, kind: input.kind, source: input.source },
+        {
+          onSuccess: (result) => {
+            if (result.parseError !== null) {
+              setSpecPreviewError({ ownerNodeId, message: result.parseError });
+              setActivePreviewOwnerId(null);
+              return;
+            }
+            // First-attach with only NEW (no existing spec) skips the modal —
+            // convenience philosophy. Anything else opens the modal.
+            const firstAttach =
+              !result.hasExistingSpec &&
+              result.changed.length === 0 &&
+              result.dropped.length === 0;
+            if (firstAttach) {
+              applySpec.mutate(
+                {
+                  ownerNodeId,
+                  kind: input.kind,
+                  source: input.source,
+                  changed: [],
+                  dropped: [],
+                },
+                {
+                  onSuccess: () => {
+                    // Re-sync from the REFETCHED cache: read inside `.then` so it
+                    // sees post-refetch data, not the stale pre-apply snapshot
+                    // (`void` keeps this callback void-returning for the mutation
+                    // option type). A spec apply mutates the owner's INTERIOR (its
+                    // children), never this canvas's own nodes, so only cross-scope
+                    // Connection reprs (ADR-0031) can change here — re-seed edges,
+                    // not nodes (re-seeding nodes would needlessly drop the owner's
+                    // selection).
+                    void utils.architecture.getCanvas.invalidate().then(() => {
+                      const canvas =
+                        utils.architecture.getCanvas.getData(canvasInput);
+                      if (canvas) setEdges(canvas.interiorEdges.map(toRFEdge));
+                    });
+                    toast.success(
+                      `Attached spec — created ${result.new.length} component${
+                        result.new.length === 1 ? "" : "s"
+                      }.`,
+                    );
+                  },
+                  onError: (error) => {
+                    toast.error(
+                      error.message || "Couldn’t attach the spec. Please try again.",
+                    );
+                  },
+                  onSettled: () => setActivePreviewOwnerId(null),
+                },
+              );
+              return;
+            }
+            // The modal takes over the pending/error surface from here.
+            setActivePreviewOwnerId(null);
+            setSpecPreview(result);
+            setPendingPreview({ ownerNodeId, kind: input.kind, source: input.source });
+          },
+          onError: (error) => {
+            setSpecPreviewError({
+              ownerNodeId,
+              message:
+                error.message || "Couldn’t preview this spec. Please try again.",
+            });
+            setActivePreviewOwnerId(null);
+          },
+        },
+      );
+    },
+    [previewSpec, applySpec, utils, canvasInput, setEdges],
+  );
+
+  const closeSpecModal = useCallback(() => {
+    setSpecPreview(null);
+    setPendingPreview(null);
+  }, []);
+
+  const handleApplySpec = useCallback(
+    (decisions: SpecApplyDecisions) => {
+      if (!pendingPreview) return;
+      applySpec.mutate(
+        {
+          ownerNodeId: pendingPreview.ownerNodeId,
+          kind: pendingPreview.kind,
+          source: pendingPreview.source,
+          changed: decisions.changed,
+          dropped: decisions.dropped,
+        },
+        {
+          onSuccess: (result) => {
+            // Read inside `.then` so the re-sync sees post-refetch data, not the
+            // stale pre-apply snapshot. Only cross-scope Connection reprs change
+            // on this canvas (the apply touches the owner's interior), so re-seed
+            // edges, not nodes. See handlePreviewSpec for the rationale.
+            void utils.architecture.getCanvas.invalidate().then(() => {
+              const canvas = utils.architecture.getCanvas.getData(canvasInput);
+              if (canvas) setEdges(canvas.interiorEdges.map(toRFEdge));
+            });
+            closeSpecModal();
+            toast.success(
+              `Applied spec — ${result.created} created, ${result.overwritten} overwritten, ${result.detached} detached, ${result.deleted} deleted.`,
+            );
+          },
+          onError: (error) => {
+            toast.error(
+              error.message || "Couldn’t apply the spec. Please try again.",
+            );
+          },
+        },
+      );
+    },
+    [pendingPreview, applySpec, utils, closeSpecModal, canvasInput, setEdges],
+  );
+
   // Delete a Component: a cascading soft-delete. Optimistically remove it and its
   // ON-CANVAS incident Connections from the store + cache mirror (descendants and
   // interior Connections live off-canvas — the server cascade handles them), then
@@ -985,6 +1134,15 @@ function CanvasInner({
                         onClose={closeDetailPanel}
                         onChangeKind={commitNodeKind}
                         onCommitDocumentation={commitDocumentation}
+                        onPreviewSpec={handlePreviewSpec}
+                        specPreviewPending={
+                          activePreviewOwnerId === selectedNodeId
+                        }
+                        specPreviewError={
+                          specPreviewError?.ownerNodeId === selectedNodeId
+                            ? specPreviewError.message
+                            : null
+                        }
                       />
                     </Panel>
                   ) : (
@@ -1018,6 +1176,18 @@ function CanvasInner({
           </DeleteComponentContext.Provider>
         </DescendComponentContext.Provider>
       </EditEdgeContext.Provider>
+      {/* Spec attach/merge modal (#64 / ADR-0029). Portaled by Base UI, so it
+          sits outside React Flow's coordinate space. Mounted only while a
+          preview is staged so its initial state seeds from the current diff. */}
+      {specPreview !== null && (
+        <SpecConflictModal
+          open
+          preview={specPreview}
+          pending={applySpec.isPending}
+          onCancel={closeSpecModal}
+          onConfirm={handleApplySpec}
+        />
+      )}
     </RenameComponentContext.Provider>
   );
 }

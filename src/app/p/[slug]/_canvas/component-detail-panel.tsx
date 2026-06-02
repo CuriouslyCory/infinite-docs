@@ -5,8 +5,9 @@ import dynamic from "next/dynamic";
 import { useEffect } from "react";
 
 import { KIND_ICON, KIND_LABEL } from "~/lib/node-kinds";
-import { type NodeKind } from "~/lib/schemas";
+import { type NodeKind, type SpecKind } from "~/lib/schemas";
 
+import { AttachSpecSection } from "./attach-spec-section";
 import { KindPickerPopover } from "./kind-palette";
 
 // Lazy-loaded so the Plate bundle code-splits into its own chunk and only
@@ -36,7 +37,9 @@ export function prefetchDocsEditor(): void {
  * single-selects a Component on the Canvas. Two sections in this slice:
  *
  * 1. **Kind** — the Component's kind row (owner: opens the kind palette).
- * 2. **Documentation** — the Plate markdown editor (issues #11 / #12): a
+ * 2. **Attach spec** — owner-only paste-and-preview affordance that opens the
+ *    spec-conflict modal (#64 / ADR-0029).
+ * 3. **Documentation** — the Plate markdown editor (issues #11 / #12): a
  *    rendered view that toggles to an editable surface with debounced
  *    optimistic autosave.
  *
@@ -75,6 +78,15 @@ type ComponentDetailPanelProps = {
       onChangeKind: (ownerNodeId: string, kind: NodeKind) => void;
       /** Debounced optimistic docs autosave; the mutation lives on the canvas. */
       onCommitDocumentation: (ownerNodeId: string, documentation: string) => void;
+      /** "Preview" runs the spec parse/diff; the modal lives on the canvas. */
+      onPreviewSpec: (
+        ownerNodeId: string,
+        input: { kind: SpecKind; source: string },
+      ) => void;
+      /** True while a previewSpec mutation is in flight for THIS Component. */
+      specPreviewPending: boolean;
+      /** Latest parseError from a preview attempt; null = clean. */
+      specPreviewError: string | null;
     }
   | {
       /** Capability-viewer mode: read docs, zero write affordances. */
@@ -118,6 +130,14 @@ export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
           currentKind={currentKind}
           parentKind={parentKind}
           onChangeKind={(kind) => props.onChangeKind(ownerNodeId, kind)}
+        />
+      )}
+
+      {!props.readOnly && (
+        <AttachSpecSection
+          pending={props.specPreviewPending}
+          parseError={props.specPreviewError}
+          onPreview={(input) => props.onPreviewSpec(ownerNodeId, input)}
         />
       )}
 

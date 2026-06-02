@@ -26,7 +26,9 @@ import {
   updateEdge,
 } from "~/server/architecture/edge.service";
 import { exportMarkdown } from "~/server/architecture/export.service";
+import { applySpec, previewSpec } from "~/server/architecture/spec.service";
 import {
+  applySpecInput,
   connectNodesInput,
   createNodeInput,
   createProjectInput,
@@ -35,6 +37,7 @@ import {
   exportMarkdownInput,
   getCanvasInput,
   getProjectBySlugInput,
+  previewSpecInput,
   restoreEdgeInput,
   restoreNodeInput,
   updateEdgeInput,
@@ -266,6 +269,37 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await ctx.db.$transaction((tx) => restoreNode(tx, actor, input));
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only, READ-ONLY action: parse a pasted Spec and diff it against the
+  // owner Component's existing generated children, returning the classification
+  // that drives the conflict modal. A mutation (not a query) because it's an
+  // imperative action over a large `source` body, never reactive/cached data —
+  // and it writes nothing (cancel = zero writes; #64). Authz is in the service.
+  previewSpec: protectedProcedure
+    .input(previewSpecInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await previewSpec(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: apply a previewed Spec (create/overwrite/detach/delete
+  // per the user's resolutions). Wrapped in a transaction so a per-row reject
+  // rolls the whole merge back — never a partial apply (#64). Owner access is
+  // enforced in the service (ADR-0001).
+  applySpec: protectedProcedure
+    .input(applySpecInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await ctx.db.$transaction((tx) => applySpec(tx, actor, input));
       } catch (error) {
         throw toTRPCError(error);
       }

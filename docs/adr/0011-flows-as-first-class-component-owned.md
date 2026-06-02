@@ -2,7 +2,13 @@
 
 ## Status
 
-Accepted.
+**Superseded** by [ADR-0029](0029-specs-generate-components-recursive-parse-diff-merge.md)
+(#64): the Flow capability model was retired in #62 (tables and code paths
+dropped); a pasted Spec now generates ordinary child **Components**, not Flows.
+The 1:1 `Spec` row (renamed from `FlowSpec`) persists, but now points at derived
+`Node`s via `Node.sourceSpecId` + `Node.specKey` rather than projecting Flows.
+
+Originally Accepted (now historical context only).
 
 ## Context
 
