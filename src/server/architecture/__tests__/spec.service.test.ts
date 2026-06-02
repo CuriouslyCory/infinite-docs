@@ -266,6 +266,31 @@ describe("applySpec", () => {
     expect(dropped.hasIncidentConnections).toBe(true);
   });
 
+  it("createNode rejects a sourceSpecId from another Project", async () => {
+    const { actor: actorA, owner: ownerA } = await seedOwner();
+    await applySpec(testDb, actorA, {
+      ownerNodeId: ownerA.id,
+      kind: "OPENAPI",
+      source: PETS_V1,
+    });
+    const foreignSpec = await testDb.spec.findFirstOrThrow({
+      where: { ownerNodeId: ownerA.id, deletedAt: null },
+    });
+
+    // A second owner in a different Project cannot link the foreign Spec.
+    const { actor: actorB, owner: ownerB } = await seedOwner();
+    await expect(
+      createNode(testDb, actorB, {
+        projectId: ownerB.projectId,
+        parentId: ownerB.id,
+        kind: "ENDPOINT",
+        title: "smuggled",
+        sourceSpecId: foreignSpec.id,
+        specKey: "smuggled",
+      }),
+    ).rejects.toThrow(/not found/i);
+  });
+
   it("reuses the live Spec row on re-attach (no idx_spec_owner_live violation)", async () => {
     const { actor, owner } = await seedOwner();
     await applySpec(testDb, actor, {

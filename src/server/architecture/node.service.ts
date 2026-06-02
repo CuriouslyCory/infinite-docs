@@ -159,11 +159,25 @@ export async function createNode(
     }
   }
 
-  // The optional provenance fields ride the same create (#64 / ADR-0029). A
-  // non-null `sourceSpecId` must reference a live Spec in this same Project; the
-  // applier always creates the Spec first, so the FK resolves. `metadata` is
-  // UNTRUSTED JSON, stored verbatim. Undefined fields are omitted so the plain
-  // canvas create path is unchanged (blank docs, null metadata/provenance).
+  // A non-null `sourceSpecId` must reference a live Spec in this same owned
+  // Project — the same set-membership posture as the parentId check above, so a
+  // foreign Spec id can never be linked (cross-project provenance smuggling) and
+  // its existence elsewhere is never disclosed. The applier always creates the
+  // Spec first, so the FK resolves on the happy path.
+  if (sourceSpecId !== undefined) {
+    const spec = await db.spec.findFirst({
+      where: { id: sourceSpecId, projectId: project.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!spec) {
+      throw new NotFoundError();
+    }
+  }
+
+  // The optional provenance fields ride the same create (#64 / ADR-0029).
+  // `metadata` is UNTRUSTED JSON, stored verbatim. Undefined fields are omitted
+  // so the plain canvas create path is unchanged (blank docs, null
+  // metadata/provenance).
   const data: Prisma.NodeUncheckedCreateInput = {
     projectId: project.id,
     parentId,

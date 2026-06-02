@@ -48,6 +48,47 @@ describe("openapiParser", () => {
     });
   });
 
+  it("operation-level parameters override path-level ones of the same (name, in)", () => {
+    const result = openapiParser.parse(
+      JSON.stringify({
+        openapi: "3.0.0",
+        info: { title: "Pets", version: "1" },
+        paths: {
+          "/pets": {
+            parameters: [
+              {
+                name: "limit",
+                in: "query",
+                description: "path-level",
+                schema: { type: "string" },
+              },
+            ],
+            get: {
+              operationId: "listPets",
+              parameters: [
+                {
+                  name: "limit",
+                  in: "query",
+                  description: "op-level wins",
+                  schema: { type: "integer" },
+                },
+              ],
+            },
+          },
+        },
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const param = result.tree[0]?.children?.find(
+      (c) => c.specKey === "listPets#query:limit",
+    );
+    // Exactly one (deduped) and the operation-level definition won.
+    expect(result.tree[0]?.children).toHaveLength(1);
+    expect(param?.documentation).toBe("op-level wins");
+    expect(param?.metadata?.type).toBe("integer");
+  });
+
   it("accepts YAML", () => {
     const result = openapiParser.parse(`
 openapi: 3.0.0

@@ -93,9 +93,12 @@ function parse(source: string): ParseResult {
       const opLevelParams: unknown[] = Array.isArray(opRaw.parameters)
         ? opRaw.parameters
         : [];
+      // Operation-level parameters override path-level ones with the same
+      // (name, in) (OpenAPI spec). `parseParameters` keeps the first occurrence
+      // of a duplicate key, so op-level must come first to win.
       const children = parseParameters(specKey, [
-        ...pathLevelParams,
         ...opLevelParams,
+        ...pathLevelParams,
       ]);
 
       const endpoint: ParsedComponent = {
@@ -169,14 +172,19 @@ function summarizeRequestBody(
   if (contentTypes.length === 0) return undefined;
 
   const summary: ComponentMetadata = { contentTypes };
-  const firstType = contentTypes[0];
-  const media = firstType !== undefined ? content[firstType] : undefined;
-  if (isRecord(media) && isRecord(media.schema)) {
+  // Union the top-level property names across every media type's schema (the
+  // same body is often offered as JSON + form, occasionally with differing
+  // shapes), deduplicated and order-stable.
+  const properties = new Set<string>();
+  for (const type of contentTypes) {
+    const media = content[type];
+    if (!isRecord(media) || !isRecord(media.schema)) continue;
     const props = media.schema.properties;
     if (isRecord(props)) {
-      summary.properties = Object.keys(props);
+      for (const name of Object.keys(props)) properties.add(name);
     }
   }
+  if (properties.size > 0) summary.properties = [...properties];
   if (requestBody.required === true) summary.required = true;
   return summary;
 }
