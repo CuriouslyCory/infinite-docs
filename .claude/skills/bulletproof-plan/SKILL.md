@@ -1,6 +1,6 @@
 ---
 name: bulletproof-plan
-description: Produces a bulletproof implementation plan for a GitHub issue by collaborating with three specialist subagents — senior engineer, application architect, and technical writer — in parallel, validating every claim against CONTEXT.md and the ADRs, then presenting the plan in plan mode for approval before any code is written. Use when the user wants to plan or spec out a GitHub issue, runs /bulletproof-plan with an issue number or URL, or asks for a rigorous multi-specialist implementation plan.
+description: Produces a bulletproof implementation plan for a GitHub issue by collaborating with three specialist subagents — senior engineer, application architect, and technical writer — in parallel, validating every claim against CONTEXT.md and the ADRs, then presenting the plan in plan mode for approval before any code is written. Every plan carries the full standard SDLC envelope (branch → implement → commit → CodeRabbit review + self-review → autofix → commit → PR) so it lands a PR for sign-off. Use when the user wants to plan or spec out a GitHub issue, runs /bulletproof-plan with an issue number or URL, or asks for a rigorous multi-specialist implementation plan.
 ---
 
 # Bulletproof Plan
@@ -57,8 +57,21 @@ Write the finalized plan to the plan file, then call `ExitPlanMode` to gate on a
 
 Structure the plan: **goal · the vertical slice · ordered steps (each naming its files) · risks + mitigations · assumptions & open questions · docs to update.**
 
+**Every plan ships the full SDLC, not just the implementation.** Unless the user explicitly says otherwise, the ordered steps MUST open with branch creation and close with the review → fix → PR envelope, so that running this skill against an issue produces everything needed to land a PR the user signs off on. Wrap the issue-specific work in this scaffold:
+
+1. **First step — create the feature branch.** Branch off `main` before any code is written (e.g. `git checkout main && git pull && git checkout -b <type>/<issue-#>-<slug>`). Never implement on `main`.
+2. *(…the issue-specific ordered steps go here — each naming its files…)*
+3. **When acceptance criteria are met — commit, push, and kick off the CodeRabbit review.** Commit the work, push the branch, then run `/code-review` (CodeRabbit). This review can take a while on larger changes, so it runs in the background while the next step proceeds.
+4. **Self-review in parallel with CodeRabbit.** Do not block on CodeRabbit — run your own review concurrently. All work must pass `pnpm check` (lint + types) and `pnpm build`, and any tests, unless the user specifically overrides a check. Never disable a rule to make it pass (philosophy #6).
+5. **After both reviews complete — apply fixes with `/autofix`.** Use `/autofix` to triage and apply the CodeRabbit review-thread feedback (with per-change approval), alongside anything surfaced by the self-review.
+6. **After fixes — commit, push, and open the PR.** Commit the fixes, push, and open the pull request for the user's final sign-off.
+
+State these as real, numbered steps in the plan (not a footnote), so the implementing agent treats branch/commit/review/fix/PR as first-class deliverables.
+
 ## Quality bar
 
+- **Plan ends in a PR.** The ordered steps open with feature-branch creation and close with the commit → review → autofix → commit → PR envelope. Running this skill against an issue should produce everything needed to land a PR for the user's sign-off, with no manual scaffolding left implicit.
+- **Reviews run in parallel.** Self-review never blocks on the CodeRabbit review; the plan runs them concurrently. All work passes `pnpm check` and `pnpm build` (and any tests) unless the user explicitly overrides — and a rule is never disabled to make a check pass (philosophy #6).
 - **Plan scope is explicitly bounded.** Related work in other issues is called out by name; if overlap exists, the plan states what it excludes and why.
 - Every step respects the service-layer contract and routes authz through the `access` module (ADR-0001).
 - Honors `CLAUDE.md` — especially performance (optimistic updates, no waterfalls) and never disabling a lint/test rule to make it pass.
