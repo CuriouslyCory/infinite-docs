@@ -542,16 +542,41 @@ Historical: ADR-0011.
 
 ### Spec (`Spec`)
 The imported contract — an OpenAPI/AsyncAPI/GraphQL/SQL-DDL/TypeScript document or hand-authored
-`CUSTOM` prose — that materializes a set of derived child **Components** on its owner Component.
-1:1 with a Component (`ownerNodeId @unique`); renamed from the retired `FlowSpec`. Where the old
-FlowSpec projected **Flows**, a Spec now points at derived child **Components** via their
-`Node.sourceSpecId` + `Node.specKey` provenance columns. `source` is **UNTRUSTED user-pasted
-content** — stored verbatim, parsed only by a bounded loader (prompt-injection standing note,
-parse-time clause). No user/code split (it rides the exception — "Spec" / `Spec`). *(#62 lands the
-renamed row, the provenance columns, and the cascade (`deleteNode` sweeps the owned Spec —
-ADR-0030). The actual spec→Component **generation** — re-parse, `ParsedComponent`, non-destructive
-key matching — is #64. Its source format is a **spec kind** (`SpecKind`); the parser registry and
-per-Component affinity are revisited in #64. Historical: ADR-0011, ADR-0025.)*
+`CUSTOM` prose — that **materializes a tree of derived child Components** on its owner Component
+(#64 / ADR-0029). 1:1 with a Component (`ownerNodeId @unique`, enforced live-only by
+`idx_spec_owner_live`); renamed from the retired `FlowSpec`. Where the old FlowSpec projected
+**Flows**, a Spec now points at derived child **Components** via their `Node.sourceSpecId` +
+`Node.specKey` provenance columns. A pasted **OpenAPI** doc on an API Component creates
+**Endpoint** children (params as nested generic children, request bodies summarized into
+`metadata`); pasted **SQL-DDL** on a Database creates **Table** children (columns as nested generic
+children with type/nullability/PK in `metadata`). Re-paste is a **user-resolved merge**: nothing
+writes until the user confirms the conflict-modal decisions (skip / overwrite [keep|wipe docs] for
+changed rows; keep [detach] / delete for dropped rows). Position and incident Connections are
+**always preserved**; matched Components keep their Node id, so Connections drawn to a generated
+Component survive re-parse. The default for an unresolved row is the **safe** action (skip /
+keep). `source` is **UNTRUSTED user-pasted content** — stored verbatim, parsed only by a
+bounded loader (size + node-count + depth caps; bound breach surfaces one `parseError` and
+generates nothing — never partial). No user/code split (it rides the exception — "Spec" / `Spec`).
+*(#62 landed the renamed row, the provenance columns, and the cascade (`deleteNode` sweeps the
+owned Spec — ADR-0030). #64 lands the spec→Component **generation** itself — the parser registry
+(OpenAPI + SQL-DDL today, others reserved), the recursive `ParsedComponent` tree, the pure
+`parseSpecDiff`, and the `previewSpec`/`applySpec` services driving the conflict modal. Its source
+format is a **spec kind** (`SpecKind`). Historical: ADR-0011 (superseded by ADR-0029), ADR-0025
+(amended by ADR-0029).)*
+
+### Component provenance
+A Component is either **user-placed** (the canvas Add gesture) or **generated** (materialized by a
+parsed **Spec**; #64 / ADR-0029). Generated provenance is recorded by two columns on the **Node**:
+`sourceSpecId` (the **Spec** it was derived from) and `specKey` (the parser's stable per-format
+identity for it — `operationId` else `METHOD path` for OpenAPI, table name for SQL-DDL, qualified
+by the parent's key for nested rows). **"Generated" is a provenance modifier, never a Component
+type.** A generated Endpoint is an ordinary `kind: ENDPOINT` Node; a generated Table is an ordinary
+`kind: TABLE` Node; `GENERIC` appears only when the parser cannot infer a kind (parameters,
+columns — until they earn dedicated kinds). Generated Components nest, connect, descend, and are
+documented exactly like user-placed ones. Re-parse uses `specKey` to match Components across runs,
+which is what lets it preserve Node id / position / incident Connections without asking the user.
+The merge UI's "keep (detach)" action clears both columns — the Component becomes user-owned with
+its docs and Connections retained, leaving the Spec.
 
 ### Interaction (`Interaction`)
 A **Connection**'s type, stored on its **Edge** as `interaction: Interaction` (default
@@ -670,7 +695,7 @@ the system must not. Every code path that hands graph content to a model carries
 Defenses live at the output/serialization boundary (added in a later milestone); today we only
 adopt the mindset — store text verbatim and never interpolate user content into queries.
 
-**Parse-time trust too.** Untrusted content that is later *parsed* — a pasted **FlowSpec**'s
+**Parse-time trust too.** Untrusted content that is later *parsed* — a pasted **Spec**'s
 `source`, future contract imports — must go through a **bounded loader** with size and depth
 caps so a hostile input cannot OOM the server before it ever reaches the output boundary. The
 caps belong to the parser itself (testable in isolation), not just the API surface; a future

@@ -125,12 +125,80 @@ export const interaction = z.enum([
 export type Interaction = z.infer<typeof interaction>;
 
 /**
+ * A Spec's source format — selects which parser materializes derived child
+ * Components from its `source` (#64 / ADR-0029). Client-safe source of truth
+ * for the value set (the attach-spec picker imports `specKind.options`); the
+ * Prisma `SpecKind` enum mirrors it, kept in lockstep by a compile-time parity
+ * guard in the parser registry. Today only `OPENAPI` and `SQL_DDL` have a
+ * parser; the rest are reserved (parsing them yields a `parseError`). `CUSTOM`
+ * is hand-authored prose with no parser. See CONTEXT.md "Spec"; ADR-0025.
+ */
+export const specKind = z.enum([
+  "OPENAPI",
+  "ASYNCAPI",
+  "TS_SIGNATURE",
+  "GRAPHQL",
+  "SQL_DDL",
+  "CUSTOM",
+]);
+export type SpecKind = z.infer<typeof specKind>;
+
+/**
+ * A permissive recursive JSON value — the shape Prisma's `Json` columns accept.
+ * Used to validate the `metadata` blob a Component may carry (parser-derived
+ * facts that don't warrant their own column: an Endpoint's HTTP method, a
+ * column's SQL type, a request-body schema kept shallow rather than exploded
+ * into child Components). UNTRUSTED when it originates from a pasted Spec —
+ * stored verbatim, never interpreted (prompt-injection standing note).
+ */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+export const jsonValue: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValue),
+    z.record(z.string(), jsonValue),
+  ]),
+);
+
+/**
+ * A Component's `metadata` — always a keyed object (never a bare scalar/null),
+ * so it maps cleanly to a Prisma `Json` write without the `JsonNull` vs DB-null
+ * ambiguity. Object values may be any {@link jsonValue}.
+ */
+export const componentMetadata = z.record(z.string(), jsonValue);
+export type ComponentMetadata = z.infer<typeof componentMetadata>;
+
+// The bounded-payload cap on `Node.documentation` — pasted/typed markdown bytes.
+// Sized to be far past any practical Component doc (~100 KB is roughly 30k words)
+// while bounding the autosave payload. UTF-8 bytes — a `string().max()` counts
+// UTF-16 code units, which under-counts emoji and CJK by 2×; the byte refine
+// gives a predictable wire-size budget regardless of script.
+export const MAX_NODE_DOCUMENTATION_BYTES = 100_000;
+
+/**
  * Input for creating a Component. Addressed by `projectId` (an internal handle),
  * NOT by the capability slug: writes are never granted by the slug (ADR-0002),
  * so the write path does not even accept one — the service resolves the project
  * by id and enforces owner-only access. `input` carries no ownerId; identity
  * comes only from the actor (ADR-0001). `parentId` is the Canvas scope (null =>
  * the Project's root Canvas).
+ *
+ * `documentation` / `metadata` / `sourceSpecId` / `specKey` are optional
+ * provenance carriers for Spec-driven generation (#64 / ADR-0029): the ordinary
+ * canvas create path omits all four (a blank, user-placed Component); the spec
+ * applier sets them so a generated Component records the Spec it came from
+ * (`sourceSpecId`), the parser's stable identity for it (`specKey`), and its
+ * seeded docs/metadata. "Generated" is a provenance modifier on a real `kind`,
+ * never a distinct type. All are UNTRUSTED, stored verbatim (prompt-injection).
  */
 export const createNodeInput = z.object({
   projectId: z.string().min(1),
@@ -139,6 +207,16 @@ export const createNodeInput = z.object({
   title: z.string().min(1).max(200).default("Untitled"),
   posX: z.number().finite().default(0),
   posY: z.number().finite().default(0),
+  documentation: z
+    .string()
+    .refine(
+      (s) => new TextEncoder().encode(s).length <= MAX_NODE_DOCUMENTATION_BYTES,
+      { message: "Documentation exceeds the 100 KB cap." },
+    )
+    .optional(),
+  metadata: componentMetadata.optional(),
+  sourceSpecId: z.string().min(1).optional(),
+  specKey: z.string().min(1).max(512).optional(),
 });
 // `z.input` (not `z.infer`/`z.output`) so callers may omit the defaulted fields;
 // the service re-parses with the schema to materialize the defaults.
@@ -188,13 +266,6 @@ export const updateNodeKindInput = z.object({
   kind: nodeKind,
 });
 export type UpdateNodeKindInput = z.infer<typeof updateNodeKindInput>;
-
-// The bounded-payload cap on `Node.documentation` — pasted/typed markdown bytes.
-// Sized to be far past any practical Component doc (~100 KB is roughly 30k words)
-// while bounding the autosave payload. UTF-8 bytes — a `string().max()` counts
-// UTF-16 code units, which under-counts emoji and CJK by 2×; the byte refine
-// below gives a predictable wire-size budget regardless of script.
-export const MAX_NODE_DOCUMENTATION_BYTES = 100_000;
 
 /**
  * Input for editing a Component's markdown `documentation`. A dedicated narrow
@@ -503,3 +574,122 @@ export const applyGraphOutput = z.object({
   connectionCount: z.number().int().nonnegative(),
 });
 export type ApplyGraphOutput = z.infer<typeof applyGraphOutput>;
+
+// ---------------------------------------------------------------------------
+// Spec → Component generation (#64 / ADR-0029)
+// ---------------------------------------------------------------------------
+
+/**
+ * The bounded-payload cap on a pasted Spec's `source`. A Spec is UNTRUSTED
+ * user-pasted text that the server then *parses* — so it must hit a size bound
+ * before the parser ever walks it (the parse-time-trust standing note,
+ * CONTEXT.md; ADR-0008's bounded-loader rule). UTF-8 bytes, generous enough for
+ * a large OpenAPI document but far short of an OOM lever.
+ */
+export const MAX_SPEC_SOURCE_BYTES = 2_000_000;
+
+const specSource = z
+  .string()
+  .refine((s) => new TextEncoder().encode(s).length <= MAX_SPEC_SOURCE_BYTES, {
+    message: "Spec source exceeds the 2 MB cap.",
+  });
+
+/**
+ * One node of a parser's recursive output (#64 / ADR-0029). A parser turns a
+ * pasted Spec into a tree of these; the applier turns each into an ordinary
+ * child Component (its `kind` is real — GENERIC only when the parser cannot
+ * infer one). Fields:
+ *  - `specKey` — the parser's STABLE per-format identity for this node, UNIQUE
+ *    across the whole parsed tree (child keys are qualified by their parent's,
+ *    e.g. `GET /pets#query:limit`). It is what the diff matches on, so a
+ *    re-parse re-identifies the same Component and preserves its Node id,
+ *    position, and incident Connections (ADR-0029).
+ *  - `documentation` — an optional seed for the Component's docs on first
+ *    create; thereafter user-owned (a re-parse never silently overwrites it —
+ *    only an explicit "overwrite + wipe docs" does).
+ *  - `metadata` — parser-derived facts kept shallow rather than exploded into
+ *    deeper children (HTTP method/path, a column's SQL type, a request-body
+ *    schema). UNTRUSTED, stored verbatim.
+ * Typed by hand (not `z.infer`) because Zod cannot infer the recursive `self`.
+ */
+export interface ParsedComponent {
+  specKey: string;
+  kind: NodeKind;
+  title: string;
+  documentation?: string;
+  metadata?: ComponentMetadata;
+  children?: ParsedComponent[];
+}
+export const parsedComponent: z.ZodType<ParsedComponent> = z.lazy(() =>
+  z.object({
+    specKey: z.string().min(1).max(512),
+    kind: nodeKind,
+    title: z.string().min(1).max(200),
+    documentation: z.string().optional(),
+    metadata: componentMetadata.optional(),
+    children: z.array(parsedComponent).optional(),
+  }),
+);
+
+/**
+ * Input for the read-only preview that powers the attach/merge UX (#64). The
+ * service parses `source` with the `kind`'s parser and diffs the result against
+ * the owner Component's existing generated children — WITHOUT writing anything
+ * (cancel = zero writes is the whole point). Addressed by `ownerNodeId` (the
+ * Component the Spec attaches to); the service resolves the Project and enforces
+ * owner-only access (ADR-0001). `source` is UNTRUSTED, bounded, never
+ * interpolated.
+ */
+export const previewSpecInput = z.object({
+  ownerNodeId: z.string().min(1),
+  kind: specKind,
+  source: specSource,
+});
+export type PreviewSpecInput = z.infer<typeof previewSpecInput>;
+
+/**
+ * A user's resolution for one CHANGED Component (matched by `specKey` but with
+ * differing derived fields) in the conflict modal. `overwrite` refreshes the
+ * derived fields (title, kind, metadata); `wipeDocumentation` additionally
+ * clears the now-stale docs (default keeps them — docs are user-owned). `skip`
+ * leaves the Component untouched. Position and incident Connections are NEVER in
+ * this prompt — always preserved (ADR-0029).
+ */
+export const specChangedResolution = z.object({
+  specKey: z.string().min(1).max(512),
+  action: z.enum(["skip", "overwrite"]),
+  wipeDocumentation: z.boolean().default(false),
+});
+export type SpecChangedResolution = z.infer<typeof specChangedResolution>;
+
+/**
+ * A user's resolution for one DROPPED Component (present in the graph, gone from
+ * the re-parsed Spec). `keep` detaches it from the Spec (`sourceSpecId → null`),
+ * retaining the now-user-owned Component with its docs and Connections;
+ * `delete` soft-deletes its subtree and incident Connections (ADR-0008). Keyed
+ * by `nodeId` (an existing Node), not `specKey`.
+ */
+export const specDroppedResolution = z.object({
+  nodeId: z.string().min(1),
+  action: z.enum(["keep", "delete"]),
+});
+export type SpecDroppedResolution = z.infer<typeof specDroppedResolution>;
+
+/**
+ * Input for applying a previewed Spec (#64). The server RE-PARSES `source` and
+ * RE-DIFFS server-side (never trusts a client-sent tree — the source is
+ * untrusted), then applies the user's per-item resolutions in one transaction:
+ * NEW Components are always created; CHANGED follow `changed[]` (default skip —
+ * a key absent here is left as-is); DROPPED follow `dropped[]` (default keep — a
+ * nodeId absent here is detached, never deleted: destructive actions are never
+ * the default). First attach (no existing Spec, all-new) needs neither array.
+ * Owner-only; the caller wraps it in a transaction so a partial apply rolls back.
+ */
+export const applySpecInput = z.object({
+  ownerNodeId: z.string().min(1),
+  kind: specKind,
+  source: specSource,
+  changed: z.array(specChangedResolution).max(5000).default([]),
+  dropped: z.array(specDroppedResolution).max(5000).default([]),
+});
+export type ApplySpecInput = z.input<typeof applySpecInput>;

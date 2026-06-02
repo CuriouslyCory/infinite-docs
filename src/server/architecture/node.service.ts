@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   type Node,
   type NodeKind as PrismaNodeKind,
+  type Prisma,
 } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import { activeDuplicateWhere } from "./edge.service";
@@ -120,8 +121,18 @@ export async function createNode(
   actor: Actor,
   input: CreateNodeInput,
 ): Promise<Node> {
-  const { projectId, parentId, kind, title, posX, posY } =
-    createNodeInput.parse(input);
+  const {
+    projectId,
+    parentId,
+    kind,
+    title,
+    posX,
+    posY,
+    documentation,
+    metadata,
+    sourceSpecId,
+    specKey,
+  } = createNodeInput.parse(input);
 
   const project = await db.project.findFirst({
     where: { id: projectId, deletedAt: null },
@@ -148,9 +159,25 @@ export async function createNode(
     }
   }
 
-  return db.node.create({
-    data: { projectId: project.id, parentId, kind, title, posX, posY },
-  });
+  // The optional provenance fields ride the same create (#64 / ADR-0029). A
+  // non-null `sourceSpecId` must reference a live Spec in this same Project; the
+  // applier always creates the Spec first, so the FK resolves. `metadata` is
+  // UNTRUSTED JSON, stored verbatim. Undefined fields are omitted so the plain
+  // canvas create path is unchanged (blank docs, null metadata/provenance).
+  const data: Prisma.NodeUncheckedCreateInput = {
+    projectId: project.id,
+    parentId,
+    kind,
+    title,
+    posX,
+    posY,
+  };
+  if (documentation !== undefined) data.documentation = documentation;
+  if (metadata !== undefined) data.metadata = metadata;
+  if (sourceSpecId !== undefined) data.sourceSpecId = sourceSpecId;
+  if (specKey !== undefined) data.specKey = specKey;
+
+  return db.node.create({ data });
 }
 
 // Bound on the breadcrumb ancestry walk. The graph is acyclic — `moveNode`
