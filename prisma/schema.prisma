@@ -233,9 +233,13 @@ model Node {
     outgoingEdges Edge[]    @relation("EdgesFromNode")
     incomingEdges Edge[]    @relation("EdgesToNode")
 
-    // The imported contract owned by this Component (1:1). Renamed from
-    // `flowSpec` with the Flow model's retirement (#62).
-    ownedSpec Spec? @relation("SpecOnNode")
+    // The imported contracts owned by this Component. At most ONE is live; the
+    // rest are tombstones (soft-delete + undo). Live-only 1:1 is enforced by the
+    // partial unique index `idx_spec_owner_live` (WHERE "deletedAt" IS NULL) —
+    // not a plain `@unique`, which Prisma would model as an all-rows constraint
+    // and so block re-attaching a Spec while an old tombstone survives. Renamed
+    // from `flowSpec` with the Flow model's retirement (#62).
+    ownedSpecs Spec[] @relation("SpecOnNode")
 
     @@index([projectId, parentId])
     @@index([parentId])
@@ -308,7 +312,11 @@ model Spec {
     id          String     @id @default(cuid())
     projectId   String
     project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
-    ownerNodeId String     @unique
+    // No `@unique`: live-only 1:1 is the partial index `idx_spec_owner_live`
+    // (raw SQL — Prisma can't express a partial predicate), mirroring how Edge
+    // de-dupe lives in partial indexes, not the schema. A plain `@unique` would
+    // reserve the owner across tombstones too, blocking re-attach after undo.
+    ownerNodeId String
     ownerNode   Node       @relation("SpecOnNode", fields: [ownerNodeId], references: [id], onDelete: Cascade)
     kind        SpecKind
     source      String

@@ -326,8 +326,8 @@ export async function updateNode(
  * `input`.
  *
  * Kind is cosmetic (CONTEXT.md "Component kind"; ADR-0018): this is a single
- * `kind` write with NO cascade — no Edge, Flow, or FlowRoute is touched, because
- * none of them depend on kind. Any `kind` is accepted regardless of the parent's
+ * `kind` write with NO cascade — no Edge or Spec is touched, because none of
+ * them depend on kind. Any `kind` is accepted regardless of the parent's
  * kind: affinity ranks the picker, it does not constrain the write (ADR-0019).
  */
 export async function updateNodeKind(
@@ -757,7 +757,15 @@ export async function deleteNode(
  * Restore is "as-is": if an ancestor of this batch was independently deleted in
  * a LATER operation, the restored subtree is briefly unreachable via `getCanvas`
  * until that ancestor is also restored — honoring "restore exactly the affected
- * set and nothing outside it" literally. Runs inside the caller's transaction.
+ * set and nothing outside it" literally.
+ *
+ * MUST run inside the caller's transaction (the router wraps it in
+ * `db.$transaction`). All dedup pre-checks run before any `updateMany`, but the
+ * Edge revival can still lose a race to a concurrent writer and throw AFTER the
+ * Node revival has already committed its statement; correctness then rests on
+ * the transaction aborting and rolling the Node revival back. Outside a
+ * transaction that throw would leave Nodes revived with their Edges still
+ * tombstoned.
  */
 export async function restoreNode(
   db: Db,
@@ -830,9 +838,10 @@ export async function restoreNode(
     }
   }
 
-  // Spec is 1:1 with its owner Node (`ownerNodeId @unique`); restoring a stamped
-  // Spec collides if the user attached a fresh Spec to the same Node since the
-  // delete. Same readable-error posture as the Edge case.
+  // Spec is live-only 1:1 with its owner Node (partial index
+  // `idx_spec_owner_live`); restoring a stamped Spec collides if the user
+  // attached a fresh Spec to the same Node since the delete. Same readable-error
+  // posture as the Edge case.
   if (stampedSpecs.length > 0) {
     const conflicts = await db.spec.findMany({
       where: {

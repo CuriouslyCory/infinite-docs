@@ -7,6 +7,7 @@
 
 - **Postgres** (Database) — direct
 - **Third Party API** (External API) — direct
+- **Analytics API** (External API) — inherited
 
 ## Components
 

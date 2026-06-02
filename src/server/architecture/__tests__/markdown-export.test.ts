@@ -79,6 +79,13 @@ function buildProjectInput(): SerializerInput {
         kind: "SERVICE",
         documentation: "",
       },
+      {
+        id: "n-analytics",
+        parentId: null,
+        title: "Analytics API",
+        kind: "EXTERNAL_API",
+        documentation: "",
+      },
     ],
     edges: [
       {
@@ -98,6 +105,16 @@ function buildProjectInput(): SerializerInput {
         sourceId: "n-auth",
         targetId: "n-users",
         label: null,
+      },
+      // Descendant→external: incident to n-users (a child of the n-api subtree
+      // root), NOT to n-api itself. In the subtree export this surfaces n-analytics
+      // as an "inherited" boundary proxy (is_direct = false), the complement of
+      // the "direct" externals incident to the root.
+      {
+        id: "e-users-analytics",
+        sourceId: "n-users",
+        targetId: "n-analytics",
+        label: "tracks events",
       },
     ],
     boundaryProxies: [],
@@ -136,6 +153,14 @@ function buildSubtreeInput(): SerializerInput {
         title: "Third Party API",
         kind: "EXTERNAL_API",
         origin: "direct",
+      },
+      // Reached only via n-users (a descendant), never the subtree root — so the
+      // service derives is_direct = false. Exercises the inherited boundary branch.
+      {
+        nodeId: "n-analytics",
+        title: "Analytics API",
+        kind: "EXTERNAL_API",
+        origin: "inherited",
       },
     ],
     mode: "full",

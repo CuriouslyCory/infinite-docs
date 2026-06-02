@@ -49,10 +49,11 @@ import { type NodeKind as PrismaNodeKind } from "../../../generated/prisma/clien
  * authored content is never interpolated.
  */
 
-// Defensive bound on the descent / ancestry walks. The graph is a tree
-// today (no `move`/reparent), so a cycle cannot occur; the cap is shared
-// with `node.service.ts`'s `ANCESTRY_DEPTH_CAP` and bounds a future
-// reparent feature, not a real nesting limit.
+// Defensive bound on the descent / ancestry walks. Reparenting exists
+// (`moveNode`), which rejects cycles at the write — so a cycle cannot occur
+// for clean data; this cap is the belt-and-suspenders backstop if that guard
+// ever regresses or bad data slips in. Shared with `node.service.ts`'s
+// `ANCESTRY_DEPTH_CAP`; it is a recursion fuse, not a real nesting limit.
 const SUBTREE_DEPTH_CAP = 256;
 
 interface SubtreeNodeRow {
@@ -185,17 +186,18 @@ async function serializeProjectScope(
       // incident to the subtree root R itself, vs a deeper descendant.
       db.$queryRaw<BoundaryRow[]>`
         WITH RECURSIVE subtree AS (
-          SELECT n.id
+          SELECT n.id, 0 AS depth
           FROM "Node" n
           WHERE n.id = ${canvasNodeId}
             AND n."projectId" = ${projectId}
             AND n."deletedAt" IS NULL
           UNION ALL
-          SELECT c.id
+          SELECT c.id, s.depth + 1
           FROM "Node" c
           JOIN subtree s ON c."parentId" = s.id
           WHERE c."projectId" = ${projectId}
             AND c."deletedAt" IS NULL
+            AND s.depth < ${SUBTREE_DEPTH_CAP}
         )
         SELECT
           proxy.id AS node_id,

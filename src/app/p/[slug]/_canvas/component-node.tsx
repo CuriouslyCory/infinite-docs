@@ -31,8 +31,8 @@ export const RenameComponentContext = createContext<
  * The Canvas island supplies the Descent action (open a Component's interior
  * Canvas) through this context, for the same reason rename uses one: the node
  * stays pure and React Flow doesn't re-render every node when the island
- * re-renders. Both the node's "Open" button and the flow's double-click handler
- * call it, so the route/prefetch logic lives in exactly one place. The default
+ * re-renders. Both the node's "Open" button and React Flow's double-click
+ * handler call it, so the route/prefetch logic lives in exactly one place. The default
  * is inert — a node rendered outside the island's provider cannot descend.
  */
 export const DescendComponentContext = createContext<(id: string) => void>(

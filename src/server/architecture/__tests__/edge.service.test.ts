@@ -208,7 +208,7 @@ describe("connectNodes", () => {
     expect(await testDb.edge.count({ where: { deletedAt: null } })).toBe(1);
   });
 
-  it("lets the four directional interactions and an association coexist on one ordered/unordered pair", async () => {
+  it("lets directional interactions on both ordered pairs plus an association coexist", async () => {
     const { actor, project, a, b } = await seedTwoRootNodes();
     const draw = (interaction: "ASSOCIATION" | "REQUEST" | "PUSH", from: string, to: string) =>
       connectNodes(testDb, actor, {

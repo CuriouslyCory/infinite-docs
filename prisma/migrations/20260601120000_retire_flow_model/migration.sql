@@ -7,6 +7,16 @@
 -- Node + plain Edge data are preserved; Flow-model data (Flow / FlowRoute /
 -- FlowSpec rows) is droppable per the clean-redesign mandate. Every preserved
 -- Edge backfills to `interaction = 'ASSOCIATION'`.
+--
+-- Re-run posture: DROPs carry `IF EXISTS` as best-effort defense-in-depth for a
+-- hand-touched / half-applied prod DB. This is NOT full idempotency — the FK
+-- drops target tables this same migration drops moments later, so a re-run that
+-- starts after the DROP TABLEs would still fail at `ALTER TABLE "Flow"` (the
+-- table is gone). The clean single-pass apply is the supported path.
+--
+-- Note: `idx_edge_dedup` is intentionally REUSED below — the old all-rows
+-- `(canvasNodeId, LEAST, GREATEST)` index is dropped and the name is recreated
+-- with a new directional `(projectId, sourceId, targetId, interaction)` shape.
 
 -- CreateEnum. Fresh `Interaction` type with all five values (incl. the new
 -- ASSOCIATION default) — a fresh CREATE TYPE avoids the Postgres "cannot use a
@@ -40,26 +50,26 @@ END$$;
 
 -- Drop the old scope-keyed dedup index (raw SQL from 20260601000252) before
 -- dropping the `canvasNodeId` column it references.
-DROP INDEX "idx_edge_dedup";
+DROP INDEX IF EXISTS "idx_edge_dedup";
 
 -- DropForeignKey (Flow model + the Edge canvas-scope FK).
-ALTER TABLE "Edge" DROP CONSTRAINT "Edge_canvasNodeId_fkey";
-ALTER TABLE "Flow" DROP CONSTRAINT "Flow_ownerNodeId_fkey";
-ALTER TABLE "Flow" DROP CONSTRAINT "Flow_projectId_fkey";
-ALTER TABLE "Flow" DROP CONSTRAINT "Flow_sourceSpecId_fkey";
-ALTER TABLE "FlowRoute" DROP CONSTRAINT "FlowRoute_flowId_fkey";
-ALTER TABLE "FlowRoute" DROP CONSTRAINT "FlowRoute_innerEdgeId_fkey";
-ALTER TABLE "FlowRoute" DROP CONSTRAINT "FlowRoute_outerEdgeId_fkey";
-ALTER TABLE "FlowRoute" DROP CONSTRAINT "FlowRoute_projectId_fkey";
-ALTER TABLE "FlowSpec" DROP CONSTRAINT "FlowSpec_ownerNodeId_fkey";
-ALTER TABLE "FlowSpec" DROP CONSTRAINT "FlowSpec_projectId_fkey";
+ALTER TABLE "Edge" DROP CONSTRAINT IF EXISTS "Edge_canvasNodeId_fkey";
+ALTER TABLE "Flow" DROP CONSTRAINT IF EXISTS "Flow_ownerNodeId_fkey";
+ALTER TABLE "Flow" DROP CONSTRAINT IF EXISTS "Flow_projectId_fkey";
+ALTER TABLE "Flow" DROP CONSTRAINT IF EXISTS "Flow_sourceSpecId_fkey";
+ALTER TABLE "FlowRoute" DROP CONSTRAINT IF EXISTS "FlowRoute_flowId_fkey";
+ALTER TABLE "FlowRoute" DROP CONSTRAINT IF EXISTS "FlowRoute_innerEdgeId_fkey";
+ALTER TABLE "FlowRoute" DROP CONSTRAINT IF EXISTS "FlowRoute_outerEdgeId_fkey";
+ALTER TABLE "FlowRoute" DROP CONSTRAINT IF EXISTS "FlowRoute_projectId_fkey";
+ALTER TABLE "FlowSpec" DROP CONSTRAINT IF EXISTS "FlowSpec_ownerNodeId_fkey";
+ALTER TABLE "FlowSpec" DROP CONSTRAINT IF EXISTS "FlowSpec_projectId_fkey";
 
 -- DropIndex (Prisma-managed scope index).
-DROP INDEX "Edge_projectId_canvasNodeId_idx";
+DROP INDEX IF EXISTS "Edge_projectId_canvasNodeId_idx";
 
 -- Edge: drop the stored Canvas scope. Scope is now derived from endpoint
 -- ancestry (#63 / ADR-0028).
-ALTER TABLE "Edge" DROP COLUMN "canvasNodeId";
+ALTER TABLE "Edge" DROP COLUMN IF EXISTS "canvasNodeId";
 
 -- Node: generated-component provenance columns (#64 populates them; #62 lands
 -- the columns + cascade).
@@ -69,14 +79,14 @@ ADD COLUMN     "specKey" TEXT;
 -- DropTable. FlowRoute first (it FKs Flow/Edge), then Flow (it FKs FlowSpec),
 -- then FlowSpec — and before the enum drops below, since Flow.kind /
 -- Flow.interaction / FlowSpec.kind are their last consumers.
-DROP TABLE "FlowRoute";
-DROP TABLE "Flow";
-DROP TABLE "FlowSpec";
+DROP TABLE IF EXISTS "FlowRoute";
+DROP TABLE IF EXISTS "Flow";
+DROP TABLE IF EXISTS "FlowSpec";
 
 -- DropEnum (after their tables are gone).
-DROP TYPE "FlowInteraction";
-DROP TYPE "FlowKind";
-DROP TYPE "FlowSpecKind";
+DROP TYPE IF EXISTS "FlowInteraction";
+DROP TYPE IF EXISTS "FlowKind";
+DROP TYPE IF EXISTS "FlowSpecKind";
 
 -- CreateTable Spec (the renamed 1:1 import row; Prisma-canonical names so the
 -- drift gate stays green). Flow-model FlowSpec data is dropped per the
