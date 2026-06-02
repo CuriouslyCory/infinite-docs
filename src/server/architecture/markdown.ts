@@ -4,13 +4,15 @@ import remarkStringify from "remark-stringify";
 import { unified } from "unified";
 import { visit } from "unist-util-visit";
 
+import { arrowEnds } from "~/lib/connection-direction";
+import { type Interaction } from "~/lib/schemas";
 import { type NodeKind as PrismaNodeKind } from "../../../generated/prisma/client";
 
 /**
- * Pure deterministic markdown serializer (M2 / #15; ADR-0017). Takes
- * already-fetched, already-authorized graph data and returns a byte-stable
- * string. No `db`, no authorization, no I/O: this is the unit a future MCP
- * read path (#18) reuses behind a token gate.
+ * Pure deterministic markdown serializer (M2 / #15; ADR-0017 + #67 amendment).
+ * Takes already-fetched, already-authorized graph data and returns a
+ * byte-stable string. No `db`, no authorization, no I/O: this is the unit the
+ * MCP read path (#18) reuses behind a token gate.
  *
  * Determinism contract (every clause is load-bearing; see ADR-0017):
  *
@@ -25,11 +27,29 @@ import { type NodeKind as PrismaNodeKind } from "../../../generated/prisma/clien
  *    `remark-stringify` options are pinned explicitly below so a remark
  *    version bump cannot silently re-baseline the golden fixtures.
  *
- * The typed cross-scope export rewrite — one line per real Connection with the
- * interaction glyph, deterministically ordered — is #67. #62 only adjusts this
- * serializer for the dropped `Edge.canvasNodeId` (scope is no longer stored;
- * ADR-0028): Connections render `source → target` without a per-canvas scope
- * suffix, and subtree boundary derivation is endpoint-membership based.
+ * Typed cross-scope rewrite (#67):
+ *
+ *  - Each Connection serializes exactly once at its real `(source, target)`
+ *    endpoints, NEVER mirrored under altitude reprs (an LLM counting
+ *    Connections from the markdown must not over-count). The multi-altitude
+ *    canvas projection (`sourceRepr`/`targetRepr` from `getCanvas`,
+ *    ADR-0031) is presentation-only and stays out of this module.
+ *  - The interaction glyph is derived from `arrowEnds(interaction)` (the
+ *    `~/lib/connection-direction` helper, ADR-0027) — booleans are the
+ *    canonical mapping, two consumers (the canvas marker mapping in the
+ *    island, the glyph below) translate them to their rendering language.
+ *  - Sort key: `(sourceId, targetId, interaction, id)`. `interaction` is in
+ *    the directional de-dupe key (ADR-0010 amendment + ADR-0027), so it
+ *    enters the sort to keep the order total; `id` stays as paranoia
+ *    tiebreak.
+ *  - The subtree Boundary section lists one row per crossing Connection
+ *    (not coalesced by far Node), each naming the far endpoint with its
+ *    anchor — matching ADR-0031's per-edge posture on the export consumer.
+ *    The `direct/inherited` partition is retired with the Flow model.
+ *  - Generated Components (#64 / ADR-0029) require no special arm — they are
+ *    ordinary Nodes that serialize through `renderComponentsFull` /
+ *    `renderComponentsIndex`. Anchors stay stable across re-parse because
+ *    `parseSpecDiff` preserves `Node.id` on matched `specKey`.
  */
 
 export interface SerializerProject {
@@ -48,14 +68,33 @@ export interface SerializerEdge {
   id: string;
   sourceId: string;
   targetId: string;
+  interaction: Interaction;
   label: string | null;
 }
 
-export interface SerializerBoundaryProxy {
-  nodeId: string;
-  title: string;
-  kind: PrismaNodeKind;
-  origin: "direct" | "inherited";
+/**
+ * One boundary-crossing Connection as seen from inside a subtree export. Each
+ * row carries the full Connection (so the renderer emits the same shape it
+ * uses inside the Components Connection list) PLUS the denormalized far-end
+ * Component fields the pure serializer cannot fetch. ADR-0031 settles the
+ * per-edge posture (one row per crossing Edge, no `direct/inherited`
+ * partition); #67 adopts it on the export consumer. The export's subtree
+ * derivation stays intentionally separate from `getCanvas`'s whole-Project
+ * ancestry walk (ADR-0031 §"Scope of this ADR" — two consumers, two
+ * derivations, no DRY).
+ */
+export interface SerializerBoundaryEdge {
+  edgeId: string;
+  sourceId: string;
+  targetId: string;
+  interaction: Interaction;
+  label: string | null;
+  // The far endpoint — the Node outside the exported subtree. Denormalized so
+  // the renderer can emit a Connection-shaped line `near → far {#far-id}`
+  // without reaching for the DB.
+  farEndpointId: string;
+  farTitle: string;
+  farKind: PrismaNodeKind;
 }
 
 export type SerializerMode = "full" | "index";
@@ -64,12 +103,13 @@ export interface SerializerInput {
   project: SerializerProject;
   // The scope being exported. `null` = the whole Project (no Boundary
   // section: the root has no ancestors). A Node id = the subtree rooted at
-  // that Component (Boundary section enumerates the externals incident to
-  // the subtree root on its parent Canvas, so the export is self-describing).
+  // that Component (Boundary section enumerates one row per Connection that
+  // crosses the subtree boundary, far endpoint named, so the export is
+  // self-describing).
   rootCanvasNodeId: string | null;
   nodes: SerializerNode[];
   edges: SerializerEdge[];
-  boundaryProxies: SerializerBoundaryProxy[];
+  boundaryEdges: SerializerBoundaryEdge[];
   mode: SerializerMode;
 }
 
@@ -117,6 +157,30 @@ const KIND_LABEL: Record<PrismaNodeKind, string> = {
  */
 function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Renders an {@link Interaction} as the glyph that bridges the two endpoints
+ * of a Connection line. Derived from `arrowEnds()` (the canonical mapping in
+ * `~/lib/connection-direction`, ADR-0027) so the markdown exporter and the
+ * canvas marker renderer (in the Canvas island) share one source of truth for
+ * "which ends bear an arrow." The exporter translates those booleans into
+ * a glyph; the canvas translates them into React Flow `markerStart`/
+ * `markerEnd`. Keeping the glyph mapping here (not in `~/lib`) preserves the
+ * "one mapping, two consumers" framing: `~/lib` returns booleans; each
+ * consumer chooses its rendering language.
+ *
+ *   {F,F} → `—` (ASSOCIATION — plain undirected line)
+ *   {F,T} → `→` (REQUEST / PUSH — arrow at target)
+ *   {T,F} → `←` (SUBSCRIBE — arrow at source)
+ *   {T,T} → `↔` (DUPLEX — arrows at both ends)
+ */
+function interactionGlyph(interaction: Interaction): string {
+  const { atSource, atTarget } = arrowEnds(interaction);
+  if (atSource && atTarget) return "↔";
+  if (atTarget) return "→";
+  if (atSource) return "←";
+  return "—";
 }
 
 /**
@@ -238,20 +302,34 @@ function renderHeader(input: SerializerInput): string {
 }
 
 function renderBoundary(input: SerializerInput): string {
-  if (input.boundaryProxies.length === 0) return "";
-  const sorted = [...input.boundaryProxies].sort(
+  if (input.boundaryEdges.length === 0) return "";
+  // One row per crossing Connection (ADR-0031 per-edge posture extended to
+  // the export consumer). Sort key mirrors the Connections section so the two
+  // lists read with the same shape: `(sourceId, targetId, interaction,
+  // edgeId)`. No `direct/inherited` partition.
+  const sorted = [...input.boundaryEdges].sort(
     (a, b) =>
-      // Direct first, then inherited; tiebreak by title then nodeId.
-      cmp(
-        a.origin === "direct" ? "0" : "1",
-        b.origin === "direct" ? "0" : "1",
-      ) ||
-      cmp(a.title, b.title) ||
-      cmp(a.nodeId, b.nodeId),
+      cmp(a.sourceId, b.sourceId) ||
+      cmp(a.targetId, b.targetId) ||
+      cmp(a.interaction, b.interaction) ||
+      cmp(a.edgeId, b.edgeId),
   );
+  const interiorById = new Map(input.nodes.map((n) => [n.id, n]));
   const lines = ["## Boundary context", ""];
-  for (const p of sorted) {
-    lines.push(`- **${p.title}** (${KIND_LABEL[p.kind]}) — ${p.origin}`);
+  for (const edge of sorted) {
+    const sourceIsInterior = interiorById.has(edge.sourceId);
+    const sourceTitle = sourceIsInterior
+      ? interiorById.get(edge.sourceId)!.title
+      : edge.farTitle;
+    const targetTitle = sourceIsInterior
+      ? edge.farTitle
+      : interiorById.get(edge.targetId)!.title;
+    const farKindSuffix = ` (${KIND_LABEL[edge.farKind]})`;
+    const glyph = interactionGlyph(edge.interaction);
+    const labelPart = edge.label ? ` · ${edge.label}` : "";
+    lines.push(
+      `- ${sourceTitle} {#${edge.sourceId}} ${glyph} ${targetTitle} {#${edge.targetId}}${farKindSuffix}${labelPart}`,
+    );
   }
   lines.push("");
   return lines.join("\n");
@@ -312,14 +390,17 @@ function renderConnections(input: SerializerInput): string {
   if (input.edges.length === 0) return "";
   const byId = new Map(input.nodes.map((n) => [n.id, n]));
 
-  // Stable order: source id, target id, edge id (codepoint). An Edge no longer
-  // stores a scope (ADR-0028), so the former canvas-scope sort key is gone; the
-  // id-based tiebreak keeps the byte output stable even when two Connections
-  // share endpoint titles.
+  // Stable order: (sourceId, targetId, interaction, edgeId). `interaction`
+  // enters the key because the directional de-dupe (ADR-0010 amendment +
+  // ADR-0027) admits `A→B REQUEST` and `A→B PUSH` as distinct active
+  // Connections; without it, two such rows would tiebreak only by opaque
+  // cuid. The `edgeId` tail keeps the byte output stable across any future
+  // shape change.
   const ordered = [...input.edges].sort(
     (a, b) =>
       cmp(a.sourceId, b.sourceId) ||
       cmp(a.targetId, b.targetId) ||
+      cmp(a.interaction, b.interaction) ||
       cmp(a.id, b.id),
   );
 
@@ -329,8 +410,14 @@ function renderConnections(input: SerializerInput): string {
     const target = byId.get(e.targetId);
     const sTitle = source?.title ?? e.sourceId;
     const tTitle = target?.title ?? e.targetId;
-    const labelPart = e.label ? ` — ${e.label}` : "";
-    lines.push(`- ${sTitle} → ${tTitle}${labelPart}`);
+    const glyph = interactionGlyph(e.interaction);
+    // Label separator is ` · ` (mid-dot, U+00B7) — distinct from the
+    // ASSOCIATION glyph `—` (em-dash). Mid-dot is already in-vocabulary in
+    // the export header (`> N Components · M Connections`).
+    const labelPart = e.label ? ` · ${e.label}` : "";
+    lines.push(
+      `- ${sTitle} {#${e.sourceId}} ${glyph} ${tTitle} {#${e.targetId}}${labelPart}`,
+    );
   }
   lines.push("");
   return lines.join("\n");

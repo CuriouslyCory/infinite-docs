@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { NotFoundError } from "../errors";
 import { exportMarkdown } from "../export.service";
-import { serializeGraph, type SerializerInput } from "../markdown";
+import {
+  serializeGraph,
+  type SerializerEdge,
+  type SerializerInput,
+} from "../markdown";
 import { resetDb, testDb } from "./helpers/test-db";
 
 beforeEach(async () => {
@@ -89,75 +93,91 @@ function buildProjectInput(): SerializerInput {
         id: "e-api-db",
         sourceId: "n-api",
         targetId: "n-db",
+        interaction: "REQUEST",
         label: "reads from",
       },
       {
         id: "e-api-ext",
         sourceId: "n-api",
         targetId: "n-ext",
+        interaction: "REQUEST",
         label: "calls",
       },
       {
         id: "e-auth-users",
         sourceId: "n-auth",
         targetId: "n-users",
+        interaction: "ASSOCIATION",
         label: null,
       },
       // Descendant→external: incident to n-users (a child of the n-api subtree
-      // root), NOT to n-api itself. In the subtree export this surfaces n-analytics
-      // as an "inherited" boundary proxy (is_direct = false), the complement of
-      // the "direct" externals incident to the root.
+      // root), NOT to n-api itself. In the subtree export this surfaces as ONE
+      // per-edge Boundary row (the `direct/inherited` partition is retired;
+      // ADR-0031 / #67 amendment).
       {
         id: "e-users-analytics",
         sourceId: "n-users",
         targetId: "n-analytics",
+        interaction: "PUSH",
         label: "tracks events",
       },
     ],
-    boundaryProxies: [],
+    boundaryEdges: [],
     mode: "full",
   };
 }
 
 /**
- * Subtree input: the API Gateway and its children, with the two externals
- * lifted into Boundary context (they sit on the parent Canvas and a subtree
- * export must be self-describing — AC).
+ * Subtree input: the API Gateway and its children, with the three crossing
+ * Connections surfaced as per-edge Boundary rows (the export must be
+ * self-describing — AC). Each row carries the full Connection plus the
+ * denormalized far-end Component fields; the `direct/inherited` partition
+ * is retired (ADR-0031 / #67 amendment).
  */
 function buildSubtreeInput(): SerializerInput {
   const root = buildProjectInput();
+  const subtreeIds = new Set(["n-api", "n-auth", "n-users"]);
   return {
     project: root.project,
     rootCanvasNodeId: "n-api",
-    nodes: root.nodes.filter((n) =>
-      ["n-api", "n-auth", "n-users"].includes(n.id),
-    ),
+    nodes: root.nodes.filter((n) => subtreeIds.has(n.id)),
     // Internal Connections: both endpoints inside the subtree (ADR-0028).
     edges: root.edges.filter(
-      (e) =>
-        ["n-api", "n-auth", "n-users"].includes(e.sourceId) &&
-        ["n-api", "n-auth", "n-users"].includes(e.targetId),
+      (e) => subtreeIds.has(e.sourceId) && subtreeIds.has(e.targetId),
     ),
-    boundaryProxies: [
+    boundaryEdges: [
       {
-        nodeId: "n-db",
-        title: "Postgres",
-        kind: "DATABASE",
-        origin: "direct",
+        edgeId: "e-api-db",
+        sourceId: "n-api",
+        targetId: "n-db",
+        interaction: "REQUEST",
+        label: "reads from",
+        farEndpointId: "n-db",
+        farTitle: "Postgres",
+        farKind: "DATABASE",
       },
       {
-        nodeId: "n-ext",
-        title: "Third Party API",
-        kind: "EXTERNAL_API",
-        origin: "direct",
+        edgeId: "e-api-ext",
+        sourceId: "n-api",
+        targetId: "n-ext",
+        interaction: "REQUEST",
+        label: "calls",
+        farEndpointId: "n-ext",
+        farTitle: "Third Party API",
+        farKind: "EXTERNAL_API",
       },
-      // Reached only via n-users (a descendant), never the subtree root — so the
-      // service derives is_direct = false. Exercises the inherited boundary branch.
+      // Reached only via n-users (a descendant of the root). Under the retired
+      // partition this would have been "inherited"; per-edge it is just one
+      // more crossing Connection row — no special class.
       {
-        nodeId: "n-analytics",
-        title: "Analytics API",
-        kind: "EXTERNAL_API",
-        origin: "inherited",
+        edgeId: "e-users-analytics",
+        sourceId: "n-users",
+        targetId: "n-analytics",
+        interaction: "PUSH",
+        label: "tracks events",
+        farEndpointId: "n-analytics",
+        farTitle: "Analytics API",
+        farKind: "EXTERNAL_API",
       },
     ],
     mode: "full",
@@ -223,13 +243,143 @@ describe("serializeGraph (pure, deterministic)", () => {
         },
       ],
       edges: [],
-      boundaryProxies: [],
+      boundaryEdges: [],
       mode: "full",
     };
     const md = serializeGraph(input);
     // The real heading is shifted to depth 4; the fenced literal is intact.
     expect(md).toContain("#### Real heading");
     expect(md).toContain("```\n# not a heading\n```");
+  });
+
+  // The four-glyph mapping is the canonical translation of `arrowEnds()`'s
+  // booleans into rendering language (ADR-0027 + #67 amendment): the canvas
+  // maps to React Flow markers, the exporter maps to glyphs. These cases lock
+  // the exporter half so a future Interaction value forces a deliberate update.
+  describe("interaction glyphs", () => {
+    function projectWithEdge(interaction: SerializerEdge["interaction"]): SerializerInput {
+      return {
+        project: { title: "G" },
+        rootCanvasNodeId: null,
+        nodes: [
+          {
+            id: "n-a",
+            parentId: null,
+            title: "A",
+            kind: "SERVICE",
+            documentation: "",
+          },
+          {
+            id: "n-b",
+            parentId: null,
+            title: "B",
+            kind: "SERVICE",
+            documentation: "",
+          },
+        ],
+        edges: [
+          {
+            id: "e-ab",
+            sourceId: "n-a",
+            targetId: "n-b",
+            interaction,
+            label: null,
+          },
+        ],
+        boundaryEdges: [],
+        mode: "full",
+      };
+    }
+
+    it("renders ASSOCIATION as `—` (no arrowheads)", () => {
+      expect(serializeGraph(projectWithEdge("ASSOCIATION"))).toContain(
+        "- A {#n-a} — B {#n-b}",
+      );
+    });
+    it("renders REQUEST as `→` (arrow at target)", () => {
+      expect(serializeGraph(projectWithEdge("REQUEST"))).toContain(
+        "- A {#n-a} → B {#n-b}",
+      );
+    });
+    it("renders PUSH as `→` (arrow at target)", () => {
+      expect(serializeGraph(projectWithEdge("PUSH"))).toContain(
+        "- A {#n-a} → B {#n-b}",
+      );
+    });
+    it("renders SUBSCRIBE as `←` (arrow at source)", () => {
+      expect(serializeGraph(projectWithEdge("SUBSCRIBE"))).toContain(
+        "- A {#n-a} ← B {#n-b}",
+      );
+    });
+    it("renders DUPLEX as `↔` (arrows at both ends)", () => {
+      expect(serializeGraph(projectWithEdge("DUPLEX"))).toContain(
+        "- A {#n-a} ↔ B {#n-b}",
+      );
+    });
+  });
+
+  // The data layer never coalesces boundary proxies by far Node (ADR-0031):
+  // a single external reached by N crossing Connections must render N
+  // Boundary rows. Tests the export's per-edge derivation on the serializer
+  // side — the integration test below proves the DB fetch produces the same
+  // shape.
+  it("renders one Boundary row per crossing Connection (no coalescing)", () => {
+    const input: SerializerInput = {
+      project: { title: "P" },
+      rootCanvasNodeId: "n-root",
+      nodes: [
+        {
+          id: "n-root",
+          parentId: null,
+          title: "Root",
+          kind: "SERVICE",
+          documentation: "",
+        },
+        {
+          id: "n-x",
+          parentId: "n-root",
+          title: "X",
+          kind: "SERVICE",
+          documentation: "",
+        },
+        {
+          id: "n-y",
+          parentId: "n-root",
+          title: "Y",
+          kind: "SERVICE",
+          documentation: "",
+        },
+      ],
+      edges: [],
+      boundaryEdges: [
+        {
+          edgeId: "e-x-ext",
+          sourceId: "n-x",
+          targetId: "n-ext",
+          interaction: "REQUEST",
+          label: null,
+          farEndpointId: "n-ext",
+          farTitle: "External",
+          farKind: "EXTERNAL_API",
+        },
+        {
+          edgeId: "e-y-ext",
+          sourceId: "n-y",
+          targetId: "n-ext",
+          interaction: "PUSH",
+          label: null,
+          farEndpointId: "n-ext",
+          farTitle: "External",
+          farKind: "EXTERNAL_API",
+        },
+      ],
+      mode: "full",
+    };
+    const md = serializeGraph(input);
+    const lines = md.split("\n").filter((l) => l.includes("{#n-ext}"));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("n-x");
+    expect(lines[1]).toContain("n-y");
   });
 });
 
@@ -271,6 +421,7 @@ async function seedProject(): Promise<string> {
         projectId: "p-test",
         sourceId: e.sourceId,
         targetId: e.targetId,
+        interaction: e.interaction,
         label: e.label,
       },
     });
@@ -328,5 +479,151 @@ describe("exportMarkdown (service, real DB)", () => {
         mode: "full",
       }),
     ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  // The boundary CTE must NOT coalesce by far Node — two children of the
+  // subtree root, both wired to the same external Component, must produce
+  // two Boundary rows (ADR-0031 / #67 amendment, the export consumer of the
+  // per-edge posture).
+  it("derives per-edge Boundary rows when multiple children share one external", async () => {
+    const user = await testDb.user.create({
+      data: { id: "u-be", name: "Boundary owner" },
+    });
+    await testDb.project.create({
+      data: {
+        id: "p-be",
+        title: "Boundary project",
+        slug: "be-slug",
+        ownerId: user.id,
+      },
+    });
+    await testDb.node.create({
+      data: {
+        id: "n-be-root",
+        projectId: "p-be",
+        parentId: null,
+        title: "Root",
+        kind: "SERVICE",
+      },
+    });
+    await testDb.node.create({
+      data: {
+        id: "n-be-x",
+        projectId: "p-be",
+        parentId: "n-be-root",
+        title: "X",
+        kind: "SERVICE",
+      },
+    });
+    await testDb.node.create({
+      data: {
+        id: "n-be-y",
+        projectId: "p-be",
+        parentId: "n-be-root",
+        title: "Y",
+        kind: "SERVICE",
+      },
+    });
+    await testDb.node.create({
+      data: {
+        id: "n-be-ext",
+        projectId: "p-be",
+        parentId: null,
+        title: "Ext",
+        kind: "EXTERNAL_API",
+      },
+    });
+    await testDb.edge.create({
+      data: {
+        id: "e-be-x",
+        projectId: "p-be",
+        sourceId: "n-be-x",
+        targetId: "n-be-ext",
+        interaction: "REQUEST",
+      },
+    });
+    await testDb.edge.create({
+      data: {
+        id: "e-be-y",
+        projectId: "p-be",
+        sourceId: "n-be-y",
+        targetId: "n-be-ext",
+        interaction: "PUSH",
+      },
+    });
+
+    const { markdown } = await exportMarkdown(testDb, null, {
+      slug: "be-slug",
+      canvasNodeId: "n-be-root",
+      mode: "full",
+    });
+
+    // Both crossing Connections appear under Boundary context (one row each),
+    // never coalesced into a single "Ext" entry.
+    const boundaryLines = markdown
+      .split("\n")
+      .filter((l) => l.includes("{#n-be-ext}"));
+    expect(boundaryLines).toHaveLength(2);
+    expect(markdown).toContain("X {#n-be-x} → Ext {#n-be-ext}");
+    expect(markdown).toContain("Y {#n-be-y} → Ext {#n-be-ext}");
+  });
+
+  // Generated Components (#64 / ADR-0029) serialize as ORDINARY Components
+  // with their `{#nodeId}` anchor — no special arm, no "generated" marker
+  // in the output. Their Node ids stay stable across re-parse because
+  // `parseSpecDiff` preserves them on matched `specKey` rows, so the anchor
+  // is byte-stable too.
+  it("renders a generated Component as an ordinary Component with a stable anchor", async () => {
+    const user = await testDb.user.create({
+      data: { id: "u-gen", name: "Spec owner" },
+    });
+    await testDb.project.create({
+      data: {
+        id: "p-gen",
+        title: "Spec project",
+        slug: "gen-slug",
+        ownerId: user.id,
+      },
+    });
+    await testDb.node.create({
+      data: {
+        id: "n-api-root",
+        projectId: "p-gen",
+        parentId: null,
+        title: "Pets API",
+        kind: "EXTERNAL_API",
+      },
+    });
+    const spec = await testDb.spec.create({
+      data: {
+        projectId: "p-gen",
+        ownerNodeId: "n-api-root",
+        kind: "OPENAPI",
+        source: "openapi: 3.0.0",
+      },
+    });
+    await testDb.node.create({
+      data: {
+        id: "n-gen-endpoint",
+        projectId: "p-gen",
+        parentId: "n-api-root",
+        title: "List pets",
+        kind: "ENDPOINT",
+        sourceSpecId: spec.id,
+        specKey: "GET /pets",
+      },
+    });
+
+    const { markdown } = await exportMarkdown(testDb, null, {
+      slug: "gen-slug",
+      canvasNodeId: null,
+      mode: "full",
+    });
+
+    // Anchor present, rendered as an ordinary Component (kind: Endpoint), no
+    // provenance markup leaks into the output.
+    expect(markdown).toContain("### List pets {#n-gen-endpoint}");
+    expect(markdown).toContain("- kind: Endpoint");
+    expect(markdown).not.toMatch(/sourceSpec|specKey|generated/i);
   });
 });

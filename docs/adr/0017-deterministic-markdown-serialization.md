@@ -181,3 +181,111 @@ purpose and unornamented.
   (ADR-0006). Keeping the same identifier-quoting discipline, the same bound-
   parameter posture, and the same `ANCESTRY_DEPTH_CAP` value preserves a
   single mental model for anyone reading these queries.
+
+## Amendment — #67 (typed cross-scope, generated Components, Flow scrub)
+
+Two upstream refoundings landed since #15 / #18:
+
+1. The Flow capability model retired (#62 / ADR-0027/0028/0030); a Connection
+   now carries its own **Interaction** intrinsically on the Edge.
+2. **Spec** → **Component** generation landed (#64 / ADR-0029); a pasted
+   OpenAPI / SQL DDL document materialises a tree of ordinary nested
+   **Components** on its owner.
+
+The serializer is caught up to both at #67. The four-clause **determinism
+contract** above (codepoint sort, no timestamps, AST heading-shift, pinned
+`remark-stringify`) is unchanged — this amendment adds form, not new
+machinery.
+
+### Connection lines now carry the interaction glyph
+
+Each Connection serializes exactly once as:
+
+    - Source title {#sourceId} <glyph> Target title {#targetId} · label
+
+The glyph is derived from `arrowEnds(interaction)` (the canonical helper in
+`~/lib/connection-direction.ts`, ADR-0027 — the same source of truth the
+canvas marker mapping consumes), translated by a per-module helper in
+`markdown.ts`:
+
+  - `REQUEST` / `PUSH` → `→` (arrow at target);
+  - `SUBSCRIBE`        → `←` (arrow at source);
+  - `DUPLEX`           → `↔` (arrows at both ends);
+  - `ASSOCIATION`      → `—` (em-dash; a plain undirected line).
+
+Keeping the glyph mapping in `markdown.ts` (not in `~/lib/connection-direction`)
+preserves ADR-0027's "one mapping, two consumers" framing: the helper returns
+booleans; each consumer chooses its rendering language (React Flow markers in
+the canvas island; glyphs in the serializer). The label separator switches
+from ` — ` to ` · ` (mid-dot, the punctuation already used in the export
+header) so it never collides with the ASSOCIATION glyph.
+
+Sort key becomes `(sourceId, targetId, interaction, edgeId)` — `interaction`
+enters the key because the directional de-dupe (ADR-0010 amendment + ADR-0027)
+admits `A→B REQUEST` and `A→B PUSH` as distinct active Connections; without
+it, two such rows would tiebreak only by opaque cuid. `edgeId` remains the
+paranoia tail.
+
+### Each Connection appears exactly once (presentation-only altitude)
+
+The cross-scope canvas projection — `getCanvas`'s `sourceRepr`/`targetRepr`
+altitude collapses (ADR-0031) — is **presentation only**. The serializer
+renders each Connection exactly once at its real `(source, target)` endpoints,
+NEVER mirrored under an ancestor scope. An LLM counting Connections from the
+markdown must not over-count one dependency at every altitude.
+
+### Subtree Boundary section becomes per-edge
+
+The old `direct` / `inherited` partition on `SerializerBoundaryProxy` is
+**retired**: the subtree Boundary section now emits one row per crossing
+Connection, with the far endpoint named (anchor + title + kind) so the
+export stays self-describing. The export's subtree derivation walks
+descendants under a root; it stays intentionally separate from `getCanvas`'s
+whole-Project ancestry walk (ADR-0031 §"Scope of this ADR" sanctions the two
+derivations — two consumers, two purposes, no DRY). The pending-export note
+at ADR-0031 line 142 is **retired** here.
+
+### Generated Components need no special arm
+
+A generated Endpoint is an ordinary `kind: ENDPOINT` Node; a generated Table
+is an ordinary `kind: TABLE` Node (ADR-0029 "Generated is a provenance
+modifier, never a Component type"). They serialize through the same
+`renderComponentsFull` / `renderComponentsIndex` paths as user-placed
+Components; provenance never appears in the output. Their `{#nodeId}` anchors
+stay byte-stable across re-parse because `parseSpecDiff` preserves `Node.id`
+on matched `specKey` rows — anchor stability is free.
+
+### The §6 additive-Flow forward-naming is retired
+
+This ADR's "The format extends additively — never re-baseline" §6 named #38
+as adding `### Flows (…)` and `flows:` subsections. With Flows gone, that
+extension never lands. The next additive extension is unnamed; the
+no-re-baseline disposition still stands going forward — #67 is the one
+deliberate exception.
+
+### One deliberate golden re-baseline
+
+`UPDATE_FIXTURES=1 pnpm vitest run markdown-export` regenerated
+`export-{project,subtree,index}-full.md` once. The locale-invariance test
+(mutates `LANG`/`LC_ALL`/`LC_COLLATE`) and the heading-shift round-trip test
+(fenced `#` line inside a code block) stayed green untouched — the
+determinism contract is enforced format-agnostically.
+
+### Reviewable invariants (added at #67)
+
+- *Each Connection serializes exactly once at its real `(source, target)` —
+  never mirrored under altitude reprs from `getCanvas`'s projection.* A
+  future change that emits a Connection at multiple altitudes regresses this
+  ADR.
+- *The boundary section never re-introduces `origin` / `direct` /
+  `inherited` / `isDirect`.* ADR-0031's per-edge invariant carries over to
+  the export consumer.
+- *The glyph mapping lives in `markdown.ts`, consuming `arrowEnds()`
+  booleans.* A glyph table in `~/lib/connection-direction` would regress
+  ADR-0027's "one mapping, two consumers" framing.
+- *The serializer still never imports `@xyflow/react`, `lucide-react`, or
+  `~/lib/node-kinds`* (ADR-0017 / ADR-0004). The duplicate `KIND_LABEL` and
+  the duplicate glyph derivation are deliberate.
+- *The export's subtree boundary CTE stays separate from `getCanvas`'s
+  ancestry CTE* (ADR-0031 §"Scope of this ADR" — two derivations, two
+  purposes, no DRY).

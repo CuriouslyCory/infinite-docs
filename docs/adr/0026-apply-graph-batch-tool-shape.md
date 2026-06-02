@@ -267,3 +267,30 @@ plug in without further catalog change.
   it out of the service — Zod cannot name a cycle's participating
   clientIds, and a refine that runs before the transaction cannot read the
   live graph to detect foreign-Project server-refs. Both moves regress.
+
+## Amendment — #67 (Flow arm scrub; `apply_spec` companion tool)
+
+The "## Forward-naming" §#38 block above named `flows: []` and `routes: []`
+as the next additive arms of `apply_graph`. With the Flow model retired
+(#62 / ADR-0027/0028/0030) those arms never land. The `flows`/`routes`
+additive promise is **retired**; the topological-sort and `idMap` shape
+documented in §1–§2 stay correct unchanged for `components: []` and
+`connections: []`. Future arms — if any — plug in by the same shape.
+
+The Consequences "additive details" list named historical keys
+(`conflictingFlowIds`, `conflictingFlowSpecIds`, `conflictingFlowRouteIds`)
+that **never shipped**: `ConflictErrorDetails` currently carries
+`conflictingEdgeIds`, `conflictingSpecIds`, and `conflictingClientIds`.
+Reviewers reading the Consequences should mentally substitute the
+surviving keys; the structural pattern (service-primary check + structured
+details + named P2002 catch) is what is load-bearing, not the historical
+key list.
+
+`apply_spec` (#67) joins `WRITE_TOOLS` as the sixth `defineTool` descriptor
+— a **companion** to `apply_graph`, not an arm of it. It wraps `applySpec`
+(ADR-0029) — same `applySpecInput`, same per-row `changed[]`/`dropped[]`
+resolution arrays the web modal drives, same atomic apply, same structured
+result. The `outputSchema` + `structuredContent` seam this ADR established
+(§6, lines 161–171) is reused unchanged: `applySpec`'s result rides on the
+wire as a typed object, not as a JSON-encoded message blob. No catalog
+interface evolution needed.

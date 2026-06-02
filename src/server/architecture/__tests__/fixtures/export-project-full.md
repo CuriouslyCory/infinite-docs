@@ -38,7 +38,7 @@ Tokens are JWT-based.
 
 ## Connections
 
-- API Gateway → Postgres — reads from
-- API Gateway → Third Party API — calls
-- Auth Module → Users Module
-- Users Module → Analytics API — tracks events
+- API Gateway {#n-api} → Postgres {#n-db} · reads from
+- API Gateway {#n-api} → Third Party API {#n-ext} · calls
+- Auth Module {#n-auth} — Users Module {#n-users}
+- Users Module {#n-users} → Analytics API {#n-analytics} · tracks events
