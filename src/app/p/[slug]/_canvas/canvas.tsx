@@ -819,11 +819,17 @@ function CanvasInner({
       setNodes((ns) => {
         const present = new Set(ns.map((n) => n.id));
         const add = incidentProxies.filter((p) => !present.has(p.nodeId));
+        // Append below any proxies still on the rail so a re-added stand-in never
+        // lands on top of an existing one.
+        const railBase = ns.filter((n) => n.type === "boundary-proxy").length;
         return add.length
           ? [
               ...ns,
               ...add.map((p, i) =>
-                toProxyRFNode(p, breadcrumbIds, { x: -280, y: i * 72 }),
+                toProxyRFNode(p, breadcrumbIds, {
+                  x: -280,
+                  y: (railBase + i) * 72,
+                }),
               ),
             ]
           : ns;
@@ -1104,11 +1110,19 @@ function CanvasInner({
           setNodes((ns) => {
             const present = new Set(ns.map((n) => n.id));
             const add = incidentProxies.filter((p) => !present.has(p.nodeId));
+            // Append below any proxies still on the rail so a re-added stand-in
+            // never lands on top of an existing one.
+            const railBase = ns.filter(
+              (n) => n.type === "boundary-proxy",
+            ).length;
             return add.length
               ? [
                   ...ns,
                   ...add.map((p, i) =>
-                    toProxyRFNode(p, breadcrumbIds, { x: -280, y: i * 72 }),
+                    toProxyRFNode(p, breadcrumbIds, {
+                      x: -280,
+                      y: (railBase + i) * 72,
+                    }),
                   ),
                 ]
               : ns;

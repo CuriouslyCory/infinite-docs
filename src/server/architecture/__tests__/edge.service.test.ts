@@ -549,7 +549,7 @@ describe("updateEdgeInteraction", () => {
   it("rejects an upgrade that collides with an existing directional Connection", async () => {
     const { actor, project, a, b, edge } = await seedAssociation();
     // A pre-existing A→B REQUEST holds the directional slot the upgrade targets.
-    await connectNodes(testDb, actor, {
+    const blocker = await connectNodes(testDb, actor, {
       projectId: project.id,
       sourceId: a.id,
       targetId: b.id,
@@ -562,15 +562,27 @@ describe("updateEdgeInteraction", () => {
     }).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(ConflictError);
+    // The conflict names the blocking Connection, not the edge being upgraded —
+    // the AI-readable channel a duplicate write must carry (ADR-0010).
+    expect((error as ConflictError).details).toEqual({
+      conflictingEdgeIds: [blocker.id],
+    });
     const persisted = await testDb.edge.findUnique({ where: { id: edge.id } });
     expect(persisted?.interaction).toBe("ASSOCIATION");
   });
 
-  it("allows a directional upgrade even when an ASSOCIATION shares the unordered pair", async () => {
-    // The seeded ASSOCIATION A↔B and a new A→B REQUEST occupy different de-dupe
-    // slots (unordered vs. ordered triple), so upgrading a SECOND association is
-    // only blocked by a matching directional row, not by the association itself.
-    const { actor, a, b, edge } = await seedAssociation();
+  it("allows a directional upgrade when only the REVERSE directional slot is taken", async () => {
+    // Directional de-dupe is on the ORDERED triple (source, target, interaction).
+    // A B→A REQUEST occupies slot (B,A,REQUEST); upgrading the A↔B association to
+    // REQUEST targets the DISTINCT slot (A,B,REQUEST), so it must succeed — and
+    // keep its drawn order so the arrow points A→B (ADR-0027/0028).
+    const { actor, project, a, b, edge } = await seedAssociation();
+    await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: b.id,
+      targetId: a.id,
+      interaction: "REQUEST",
+    });
 
     const updated = await updateEdgeInteraction(testDb, actor, {
       id: edge.id,
