@@ -1,11 +1,14 @@
 import { type Project } from "../../../generated/prisma/client";
+import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
 import { NotFoundError } from "./errors";
 import { isSlugCollision } from "./prisma-errors";
 import {
   createProjectInput,
+  deleteProjectInput,
   getProjectBySlugInput,
   type CreateProjectInput,
+  type DeleteProjectInput,
   type GetProjectBySlugInput,
 } from "~/lib/schemas";
 import { generateSlug } from "./slug";
@@ -53,6 +56,39 @@ export async function getProjectBySlug(
     throw new NotFoundError();
   }
   return project;
+}
+
+/**
+ * Owner-only soft-delete: resolve the Project by its capability slug, enforce
+ * owner access, then stamp `deletedAt`. The conditional `updateMany` (the
+ * `deletedAt: null` predicate) closes the TOCTOU race against a concurrent
+ * delete — `count === 0` means another writer won, reported as not-found. A
+ * soft-delete leaves child rows intact (no cascade fires); the project simply
+ * stops resolving anywhere `deletedAt: null` is filtered. Mirrors `deleteTrace`.
+ */
+export async function deleteProject(
+  db: Db,
+  actor: Actor,
+  input: DeleteProjectInput,
+): Promise<{ id: string }> {
+  const { slug } = deleteProjectInput.parse(input);
+  const project = await db.project.findFirst({
+    where: { slug, deletedAt: null },
+    select: { id: true, ownerId: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanWrite(actor, project);
+
+  const { count } = await db.project.updateMany({
+    where: { id: project.id, deletedAt: null },
+    data: { deletedAt: new Date() },
+  });
+  if (count === 0) {
+    throw new NotFoundError();
+  }
+  return { id: project.id };
 }
 
 async function createWithUniqueSlug(

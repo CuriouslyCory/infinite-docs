@@ -1,10 +1,13 @@
 "use client";
 
+import { Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { Toaster } from "sonner";
 
 import { createProjectInput } from "~/lib/schemas";
 import { api } from "~/trpc/react";
+import { DeleteProjectDialog } from "./delete-project-dialog";
 
 /**
  * Owner-only dashboard: lists the actor's projects and creates new ones.
@@ -17,6 +20,10 @@ export function ProjectDashboard() {
   const utils = api.useUtils();
   const [projects] = api.architecture.listProjects.useSuspenseQuery();
   const [title, setTitle] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<{
+    slug: string;
+    title: string;
+  } | null>(null);
 
   const createProject = api.architecture.createProject.useMutation({
     onSuccess: async () => {
@@ -76,20 +83,40 @@ export function ProjectDashboard() {
         ) : (
           <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {projects.map((project) => (
-              <li key={project.id}>
+              <li key={project.id} className="group relative">
                 <Link
                   href={`/p/${project.slug}`}
-                  className="block rounded-xl bg-white/10 p-4 transition hover:bg-white/20"
+                  className="block rounded-xl bg-white/10 p-4 pr-12 transition hover:bg-white/20"
                 >
                   <span className="font-medium text-white">
                     {project.title}
                   </span>
                 </Link>
+                <button
+                  type="button"
+                  aria-label={`Delete ${project.title}`}
+                  title="Delete project"
+                  onClick={() =>
+                    setPendingDelete({
+                      slug: project.slug,
+                      title: project.title,
+                    })
+                  }
+                  className="absolute top-1/2 right-3 -translate-y-1/2 rounded p-1.5 text-white/40 opacity-0 transition hover:bg-white/10 hover:text-red-400 group-hover:opacity-100 focus-visible:opacity-100"
+                >
+                  <Trash2 size={16} aria-hidden />
+                </button>
               </li>
             ))}
           </ul>
         )}
       </div>
+
+      <DeleteProjectDialog
+        project={pendingDelete}
+        onClose={() => setPendingDelete(null)}
+      />
+      <Toaster theme="dark" position="bottom-right" richColors />
     </div>
   );
 }
