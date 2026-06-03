@@ -192,13 +192,66 @@ function restyledRFEdge(
   };
 }
 
+// The left-rail seed slot for the `i`-th distinct off-scope endpoint with no
+// stored placement — the fallback layout that reads a proxy as an off-scope
+// stand-in rather than a free Component (ADR-0031).
+const RAIL_X = -280;
+function railPosition(i: number): { x: number; y: number } {
+  return { x: RAIL_X, y: i * 72 };
+}
+
+// Whether a boundary proxy carries a stored placement (#91 / ADR-0036). Both
+// coordinates non-null is the "placed" signal; either null means never-dragged on
+// this scope, so it falls back to the left rail.
+function isPlaced(p: CanvasBoundaryProxy): boolean {
+  return p.posX !== null && p.posY !== null;
+}
+
+// How many boundary-proxy nodes currently sit ON the left rail (x === RAIL_X) —
+// the count an incremental add seeds the NEXT unplaced rail node below. Placed
+// proxies (#91) live off the rail at their stored coordinate, so they don't count;
+// the RF node carries no posX/posY, so the rail is identified by x position.
+function railOccupants(nodes: readonly CanvasRFNode[]): number {
+  return nodes.filter(
+    (n) => n.type === "boundary-proxy" && n.position.x === RAIL_X,
+  ).length;
+}
+
+// Lay out a group of coalesced boundary-proxy reps (#90): each PLACED proxy seeds
+// at its stored coordinate (#91 / ADR-0036), each unplaced one takes the NEXT
+// rail slot below `railBase`, so placed proxies never consume a rail slot and the
+// remaining rail stays tight. The drag/seed/persist key is `realEndpointId`
+// (stable, coalesced), so a placement persisted for one crossing edge re-seeds
+// every edge's coalesced node to the same spot.
+function placedProxyNodes(
+  reps: readonly CanvasBoundaryProxy[],
+  breadcrumbIds: ReadonlySet<string>,
+  railBase = 0,
+): BoundaryProxyNode[] {
+  let rail = railBase;
+  return reps.map((p) =>
+    toProxyRFNode(
+      p,
+      breadcrumbIds,
+      isPlaced(p) ? { x: p.posX!, y: p.posY! } : railPosition(rail++),
+    ),
+  );
+}
+
 // A boundary proxy renders as a passive, read-only stand-in for the off-scope
 // endpoint of a cross-scope Connection (ADR-0031). `lineal` is true when the real
 // endpoint is an ANCESTOR of this scope (it appears on the breadcrumb trail) — the
 // ingress case the proxy must label distinctly so it doesn't read as "the host
-// inside itself". Non-draggable / non-selectable / non-connectable: passive. Maps
-// a single proxy ROW; coalescing rows that share a `realEndpointId` is the seed's
-// concern (`coalesceProxies`, #90), not this helper's.
+// inside itself".
+//
+// Dragging is the ONE interactive exception (#91 / ADR-0036): a proxy can be
+// dragged so its per-scope placement persists. We do NOT set per-node `draggable`
+// here — that would override the island's `nodesDraggable={canEdit}` and let a
+// VIEWER drag it; instead the proxy INHERITS that flag, exactly like a Component,
+// so it is draggable for an editor and inert for a viewer. It stays explicitly
+// non-selectable / non-connectable / non-deletable — passive everywhere else
+// (ADR-0016). Maps a single proxy ROW; coalescing rows that share a `realEndpointId`
+// is the seed's concern (`coalesceProxies`, #90), not this helper's.
 function toProxyRFNode(
   p: CanvasBoundaryProxy,
   breadcrumbIds: ReadonlySet<string>,
@@ -208,7 +261,6 @@ function toProxyRFNode(
     id: p.nodeId,
     type: "boundary-proxy",
     position,
-    draggable: false,
     selectable: false,
     connectable: false,
     deletable: false,
@@ -494,18 +546,19 @@ function CanvasInner({
   // (a scope change) remounts and re-seeds rather than inheriting these.
   // Persistence flows through one batched/single mutation per gesture (below),
   // with the query cache kept in lockstep so a remount re-seeds it. Boundary
-  // proxies (which carry no stored position) seed onto a vertical rail off the
-  // left edge so they read as off-scope stand-ins rather than free Components;
-  // rows sharing a `realEndpointId` coalesce to ONE rail node (#90), so the rail
-  // index `i` counts distinct off-scope Components, not crossing edges, and every
-  // crossing edge is routed to its shared node through `seedRemap`.
+  // proxies seed at their STORED per-scope placement when they have one (#91 /
+  // ADR-0036), else onto a vertical rail off the left edge so they read as
+  // off-scope stand-ins rather than free Components; rows sharing a
+  // `realEndpointId` coalesce to ONE node (#90), keyed by the endpoint, so a
+  // placement re-seeds every crossing edge's shared node to the same spot, and the
+  // rail counter (`placedProxyNodes`) counts only the UNPLACED distinct endpoints,
+  // not crossing edges. Every crossing edge is routed to its shared node through
+  // `seedRemap`.
   const { reps: seedProxyReps, remap: seedRemap } =
     coalesceProxies(boundaryProxies);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasRFNode>([
     ...interiorNodes.map(toRFNode),
-    ...seedProxyReps.map((p, i) =>
-      toProxyRFNode(p, breadcrumbIds, { x: -280, y: i * 72 }),
-    ),
+    ...placedProxyNodes(seedProxyReps, breadcrumbIds),
   ]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<ConnectionEdge>(
     interiorEdges.map((e) => toRFEdge(e, seedRemap)),
@@ -524,6 +577,8 @@ function CanvasInner({
   const { mutateAsync: editDocumentation } =
     api.architecture.updateNodeDocumentation.useMutation();
   const updatePositions = api.architecture.updatePositions.useMutation();
+  const upsertProxyPlacement =
+    api.architecture.upsertBoundaryProxyPlacement.useMutation();
   const connectNodes = api.architecture.connectNodes.useMutation();
   const { mutateAsync: editEdge } = api.architecture.updateEdge.useMutation();
   const { mutateAsync: setEdgeInteraction } =
@@ -853,6 +908,90 @@ function CanvasInner({
     [utils, canvasInput, projectId, updatePositions, setNodes, patchCanvas],
   );
 
+  // Persist a boundary proxy's placement on this scope when its drag stops (#91 /
+  // ADR-0036). Unlike `persistPositions`, this writes ONE placement, never a batch:
+  // a proxy is `selectable:false`, so it can never be part of a multi-select drag.
+  // The drag/seed/persist key is `realEndpointId` (stable, coalesced #90), NEVER the
+  // representative node id (`proxy_<edgeId>`); a placement persists per off-scope
+  // endpoint, so the cache mirror patches EVERY per-edge `boundaryProxies` row
+  // sharing that endpoint (faithful to getCanvas, which joins the same coordinate
+  // onto all of them). The RF store already shows the dropped position; mirror it,
+  // call the owner-only upsert, and roll BOTH store and mirror back + toast on
+  // failure. A `temp_` endpoint has no server id to key on, so it is skipped.
+  const persistProxyPlacement = useCallback(
+    async (proxyNode: CanvasRFNode) => {
+      if (proxyNode.type !== "boundary-proxy") return;
+      const realEndpointId = proxyNode.data.realEndpointId;
+      if (realEndpointId.startsWith("temp_")) return;
+
+      const cached = utils.architecture.getCanvas.getData(canvasInput);
+      const prev = cached?.boundaryProxies.find(
+        (p) => p.realEndpointId === realEndpointId,
+      );
+      const prevPosX = prev?.posX ?? null;
+      const prevPosY = prev?.posY ?? null;
+
+      const posX = proxyNode.position.x;
+      const posY = proxyNode.position.y;
+      if (prevPosX === posX && prevPosY === posY) return;
+
+      // Mirror the new coordinate onto EVERY per-edge row for this endpoint so a
+      // remount re-seeds the coalesced node to the dropped spot (#90/#91).
+      patchCanvas((c) => ({
+        boundaryProxies: c.boundaryProxies.map((p) =>
+          p.realEndpointId === realEndpointId ? { ...p, posX, posY } : p,
+        ),
+      }));
+
+      try {
+        await upsertProxyPlacement.mutateAsync({
+          projectId,
+          containerNodeId: canvasNodeId,
+          realEndpointId,
+          posX,
+          posY,
+        });
+      } catch {
+        // Snap the dragged node back and restore the mirror's prior coordinate on
+        // every row for this endpoint. A proxy that had a prior placement returns
+        // to it; one that had none (was on the rail) returns to the next rail slot
+        // among the OTHER proxies, the same fallback the seed would pick.
+        setNodes((ns) =>
+          ns.map((n) =>
+            n.id === proxyNode.id
+              ? {
+                  ...n,
+                  position:
+                    prevPosX !== null && prevPosY !== null
+                      ? { x: prevPosX, y: prevPosY }
+                      : railPosition(
+                          railOccupants(ns.filter((o) => o.id !== n.id)),
+                        ),
+                }
+              : n,
+          ),
+        );
+        patchCanvas((c) => ({
+          boundaryProxies: c.boundaryProxies.map((p) =>
+            p.realEndpointId === realEndpointId
+              ? { ...p, posX: prevPosX, posY: prevPosY }
+              : p,
+          ),
+        }));
+        toast.error("Couldn’t save the position. Please try again.");
+      }
+    },
+    [
+      utils,
+      canvasInput,
+      projectId,
+      canvasNodeId,
+      upsertProxyPlacement,
+      setNodes,
+      patchCanvas,
+    ],
+  );
+
   // Draw a Connection. Refuses a still-optimistic (temp_) endpoint (no real id
   // to persist yet), then pre-flights the pure topology rules — no self-link, no
   // duplicate — via `canConnect`, so the user gets instant feedback rather than a
@@ -1021,6 +1160,13 @@ function CanvasInner({
               kind: target.kind,
               realEndpointId: target.id,
               edgeId: tempId,
+              // A freshly drawn crossing Connection has no stored placement yet —
+              // its proxy seeds onto the left rail (#91). If the endpoint already
+              // had a placement on this scope, an existing rep node already carries
+              // it and this edge folds onto it (existingRepNodeId), so a null here
+              // never overrides a placed node.
+              posX: null,
+              posY: null,
             }
           : null;
 
@@ -1046,20 +1192,17 @@ function CanvasInner({
           boundaryProxies: [...c.boundaryProxies, optimisticProxy],
         }));
         if (existingRepNodeId === null) {
-          // Seed the far-end stand-in onto the left rail below any already there,
-          // the same placement the delete-undo path uses (ADR-0031).
-          setNodes((ns) => {
-            const railBase = ns.filter(
-              (n) => n.type === "boundary-proxy",
-            ).length;
-            return [
-              ...ns,
-              toProxyRFNode(optimisticProxy, breadcrumbIds, {
-                x: -280,
-                y: railBase * 72,
-              }),
-            ];
-          });
+          // Seed the far-end stand-in at its stored placement when one exists for
+          // this endpoint on this scope (#91), else onto the left rail below any
+          // already there — the same placement the delete-undo path uses (ADR-0031).
+          setNodes((ns) => [
+            ...ns,
+            ...placedProxyNodes(
+              [optimisticProxy],
+              breadcrumbIds,
+              railOccupants(ns),
+            ),
+          ]);
         }
       }
 
@@ -1318,15 +1461,15 @@ function CanvasInner({
             repForEdge = prevProxy.nodeId;
             setNodes((ns) => {
               if (ns.some((n) => n.id === prevProxy.nodeId)) return ns;
-              const railBase = ns.filter(
-                (n) => n.type === "boundary-proxy",
-              ).length;
+              // Re-seed at the proxy's stored placement when it had one (#91), else
+              // onto the left rail below any already there.
               return [
                 ...ns,
-                toProxyRFNode(prevProxy, breadcrumbIds, {
-                  x: -280,
-                  y: railBase * 72,
-                }),
+                ...placedProxyNodes(
+                  [prevProxy],
+                  breadcrumbIds,
+                  railOccupants(ns),
+                ),
               ];
             });
           }
@@ -1399,19 +1542,10 @@ function CanvasInner({
       setNodes((ns) => {
         const present = new Set(ns.map((n) => n.id));
         const add = proxiesToAdd.filter((p) => !present.has(p.nodeId));
-        // Append below any proxies still on the rail so a re-added stand-in never
-        // lands on top of an existing one.
-        const railBase = ns.filter((n) => n.type === "boundary-proxy").length;
+        // Re-seed each at its stored placement when it had one (#91), else append
+        // below any proxies still on the rail so it never lands on an existing one.
         return add.length
-          ? [
-              ...ns,
-              ...add.map((p, i) =>
-                toProxyRFNode(p, breadcrumbIds, {
-                  x: -280,
-                  y: (railBase + i) * 72,
-                }),
-              ),
-            ]
+          ? [...ns, ...placedProxyNodes(add, breadcrumbIds, railOccupants(ns))]
           : ns;
       });
       setEdges((es) => {
@@ -1534,9 +1668,9 @@ function CanvasInner({
       const { reps, remap } = coalesceProxies(canvas.boundaryProxies);
       setNodes((ns) => [
         ...ns.filter((n) => n.type !== "boundary-proxy"),
-        ...reps.map((p, i) =>
-          toProxyRFNode(p, breadcrumbIds, { x: -280, y: i * 72 }),
-        ),
+        // Each rep seeds at its stored placement when it has one (#91), else onto
+        // the rail; the whole proxy subset was just cleared, so the rail starts at 0.
+        ...placedProxyNodes(reps, breadcrumbIds),
       ]);
       setEdges(canvas.interiorEdges.map((e) => toRFEdge(e, remap)));
     },
@@ -1971,9 +2105,18 @@ function CanvasInner({
                     // Plate chunk for everyone — no first-open flash (perf #1).
                     prefetchDocsEditor();
                   }}
-                  onNodeDragStop={(_event, _node, dragged) =>
-                    void persistPositions(dragged)
-                  }
+                  onNodeDragStop={(_event, node, dragged) => {
+                    // A boundary proxy is the one draggable passive node (#91): it
+                    // persists a single per-scope placement keyed by realEndpointId,
+                    // never a batched Component position. It is `selectable:false`,
+                    // so it can never be part of a multi-select drag — route it on
+                    // its own; everything else is a Component position write.
+                    if (node.type === "boundary-proxy") {
+                      void persistProxyPlacement(node);
+                    } else {
+                      void persistPositions(dragged);
+                    }
+                  }}
                   onSelectionDragStop={(_event, dragged) =>
                     void persistPositions(dragged)
                   }

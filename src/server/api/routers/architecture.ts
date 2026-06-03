@@ -20,6 +20,7 @@ import {
   updateNodeDocumentation,
   updateNodeKind,
   updatePositions,
+  upsertBoundaryProxyPlacement,
 } from "~/server/architecture/node.service";
 import {
   connectNodes,
@@ -71,6 +72,7 @@ import {
   updateNodeInput,
   updateNodeKindInput,
   updatePositionsInput,
+  upsertBoundaryProxyPlacementInput,
 } from "~/lib/schemas";
 import { toTRPCError } from "~/server/architecture/trpc-errors";
 
@@ -345,6 +347,21 @@ export const architectureRouter = createTRPCRouter({
         return await ctx.db.$transaction((tx) =>
           updatePositions(tx, actor, input),
         );
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: persist where a boundary proxy sits on one scope's
+  // Canvas (#91 / ADR-0036). `protectedProcedure` is the transport gate; owner
+  // access is enforced in the service (ADR-0001). The service does its own
+  // find-then-write with a P2002 race backstop, so no wrapping transaction.
+  upsertBoundaryProxyPlacement: protectedProcedure
+    .input(upsertBoundaryProxyPlacementInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await upsertBoundaryProxyPlacement(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }
