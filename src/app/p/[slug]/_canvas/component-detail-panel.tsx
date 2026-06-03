@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Plus, Route, X } from "lucide-react";
+import { ChevronDown, Plus, Route, Trash2, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo } from "react";
@@ -93,6 +93,10 @@ type ComponentDetailPanelProps = {
        *  mutation (and its far-end-proxy insert + reconcile) lives on the
        *  canvas (#66). */
       onConnect: (ownerNodeId: string, target: ConnectTarget) => void;
+      /** Optimistic Connection delete from a row's trash control; the mutation
+       *  (and its on-canvas edge + per-edge boundary-proxy removal) lives on the
+       *  canvas, mirroring the keyboard-Delete path (ADR-0030 / ADR-0031). */
+      onDeleteConnection: (ownerNodeId: string, connectionId: string) => void;
       /** Debounced optimistic docs autosave; the mutation lives on the canvas. */
       onCommitDocumentation: (
         ownerNodeId: string,
@@ -171,6 +175,12 @@ export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
           props.readOnly
             ? undefined
             : (target) => props.onConnect(ownerNodeId, target)
+        }
+        onDeleteConnection={
+          props.readOnly
+            ? undefined
+            : (connectionId) =>
+                props.onDeleteConnection(ownerNodeId, connectionId)
         }
       />
 
@@ -331,10 +341,12 @@ function ConnectionsSection({
   slug,
   ownerNodeId,
   onConnect,
+  onDeleteConnection,
 }: {
   slug: string;
   ownerNodeId: string;
   onConnect?: (target: ConnectTarget) => void;
+  onDeleteConnection?: (connectionId: string) => void;
 }) {
   const {
     data: connections,
@@ -395,7 +407,11 @@ function ConnectionsSection({
       ) : (
         <ul className="flex flex-col gap-1">
           {connections.map((connection) => (
-            <ConnectionRow key={connection.id} connection={connection} />
+            <ConnectionRow
+              key={connection.id}
+              connection={connection}
+              onDelete={onDeleteConnection}
+            />
           ))}
         </ul>
       )}
@@ -411,14 +427,24 @@ function ConnectionsSection({
  * title identify the other end; the interaction label and any user label sit
  * muted beneath.
  */
-function ConnectionRow({ connection }: { connection: NodeConnection }) {
+function ConnectionRow({
+  connection,
+  onDelete,
+}: {
+  connection: NodeConnection;
+  onDelete?: (connectionId: string) => void;
+}) {
   const ends = arrowEnds(connection.interaction);
   const atOther = connection.sourceIsSelf ? ends.atTarget : ends.atSource;
   const atSelf = connection.sourceIsSelf ? ends.atSource : ends.atTarget;
   const glyph = atOther && atSelf ? "↔" : atOther ? "→" : atSelf ? "←" : "—";
   const Icon = KIND_ICON[connection.other.kind];
+  // A still-optimistic row has no server id yet — its delete would 404, and the
+  // create's own rollback owns it. Mirror the canvas node's "hidden while
+  // temp_" delete affordance (component-node.tsx).
+  const canDelete = onDelete && !connection.id.startsWith("temp_");
   return (
-    <li className="flex flex-col gap-0.5 rounded bg-white/5 px-2 py-1.5">
+    <li className="group flex flex-col gap-0.5 rounded bg-white/5 px-2 py-1.5">
       <div className="flex items-center gap-2">
         <span
           aria-hidden
@@ -435,6 +461,20 @@ function ConnectionRow({ connection }: { connection: NodeConnection }) {
         <span className="truncate text-sm text-white">
           {connection.other.title}
         </span>
+        {/* Delete affordance, mirroring the canvas node's trash control: a
+            soft-delete of just this Connection (ADR-0030), revealed on hover or
+            keyboard focus so it stays reachable without a pointer. */}
+        {canDelete && (
+          <button
+            type="button"
+            aria-label={`Delete connection to ${connection.other.title}`}
+            title="Delete connection"
+            className="ml-auto shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-red-400 focus-visible:opacity-100"
+            onClick={() => onDelete(connection.id)}
+          >
+            <Trash2 size={14} aria-hidden />
+          </button>
+        )}
       </div>
       <span className="pl-5 text-xs text-white/40">
         {INTERACTION_LABEL[connection.interaction]}

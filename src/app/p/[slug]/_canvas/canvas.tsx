@@ -1055,6 +1055,108 @@ function CanvasInner({
     [utils, canvasInput, patchCanvas, setEdges, removeEdge],
   );
 
+  // Remove a Connection from the Component-detail panel's row trash control.
+  // Unlike `handleEdgesDelete` (React Flow already dropped the edge from its
+  // store), here nothing has touched any store yet, so we drive the full
+  // optimistic removal: the owner's Connection-list row updates this frame, and
+  // if the Connection is drawn at THIS scope we also pull its edge and any
+  // per-edge boundary proxy (ADR-0031) out of the RF store + cache mirror. A
+  // cross-scope Connection not drawn here simply has no local edge to pull. The
+  // soft-delete is the same lone delete the keyboard path uses (ADR-0030);
+  // failure rolls every store back and toasts.
+  const commitDeleteConnection = useCallback(
+    async (ownerNodeId: string, connectionId: string) => {
+      const cached = utils.architecture.getCanvas.getData(canvasInput);
+      const prevRow = utils.architecture.listNodeConnections
+        .getData({ slug, nodeId: ownerNodeId })
+        ?.find((c) => c.id === connectionId);
+      const prevEdge = cached?.interiorEdges.find((e) => e.id === connectionId);
+      const prevProxy = cached?.boundaryProxies.find(
+        (p) => p.edgeId === connectionId,
+      );
+
+      utils.architecture.listNodeConnections.setData(
+        { slug, nodeId: ownerNodeId },
+        (old) => (old ?? []).filter((c) => c.id !== connectionId),
+      );
+      if (prevEdge) {
+        setEdges((es) => es.filter((e) => e.id !== connectionId));
+        patchCanvas((c) => ({
+          interiorEdges: c.interiorEdges.filter((e) => e.id !== connectionId),
+        }));
+      }
+      if (prevProxy) {
+        setNodes((ns) => ns.filter((n) => n.id !== prevProxy.nodeId));
+        patchCanvas((c) => ({
+          boundaryProxies: c.boundaryProxies.filter(
+            (p) => p.edgeId !== connectionId,
+          ),
+        }));
+      }
+
+      try {
+        await removeEdge({ id: connectionId });
+        void utils.architecture.getCanvas.invalidate(canvasInput);
+        void utils.architecture.listProjectComponents.invalidate({ slug });
+      } catch {
+        if (prevRow) {
+          utils.architecture.listNodeConnections.setData(
+            { slug, nodeId: ownerNodeId },
+            (old) =>
+              (old ?? []).some((c) => c.id === connectionId)
+                ? (old ?? [])
+                : [...(old ?? []), prevRow],
+          );
+        }
+        if (prevEdge) {
+          setEdges((es) =>
+            es.some((e) => e.id === connectionId)
+              ? es
+              : addEdge(toRFEdge(prevEdge), es),
+          );
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.some((e) => e.id === connectionId)
+              ? c.interiorEdges
+              : [...c.interiorEdges, prevEdge],
+          }));
+        }
+        if (prevProxy) {
+          setNodes((ns) => {
+            if (ns.some((n) => n.id === prevProxy.nodeId)) return ns;
+            const railBase = ns.filter(
+              (n) => n.type === "boundary-proxy",
+            ).length;
+            return [
+              ...ns,
+              toProxyRFNode(prevProxy, breadcrumbIds, {
+                x: -280,
+                y: railBase * 72,
+              }),
+            ];
+          });
+          patchCanvas((c) => ({
+            boundaryProxies: c.boundaryProxies.some(
+              (p) => p.edgeId === connectionId,
+            )
+              ? c.boundaryProxies
+              : [...c.boundaryProxies, prevProxy],
+          }));
+        }
+        toast.error("Couldn’t remove the connection. Please try again.");
+      }
+    },
+    [
+      utils,
+      slug,
+      canvasInput,
+      setEdges,
+      setNodes,
+      patchCanvas,
+      removeEdge,
+      breadcrumbIds,
+    ],
+  );
+
   // Undo a Component delete: optimistically re-add the on-canvas rows the delete
   // removed (the off-canvas subtree + interior Connections are restored
   // server-side and reappear on descent), then restore the whole batch by its
@@ -1667,6 +1769,7 @@ function CanvasInner({
                           onClose={closeDetailPanel}
                           onChangeKind={commitNodeKind}
                           onConnect={commitConnect}
+                          onDeleteConnection={commitDeleteConnection}
                           onCommitDocumentation={commitDocumentation}
                           onPreviewSpec={handlePreviewSpec}
                           specPreviewPending={
