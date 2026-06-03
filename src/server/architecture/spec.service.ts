@@ -1,12 +1,15 @@
 import { Prisma } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
+import { activeDuplicateWhere } from "./edge.service";
 import { NotFoundError, ValidationError } from "./errors";
 import { deleteNode } from "./node.service";
 import {
+  diffConnections,
   parseSpec,
   parseSpecDiff,
   type ExistingGeneratedComponent,
+  type ExistingGeneratedConnection,
   type SpecChangedField,
 } from "./spec-parser";
 import {
@@ -14,6 +17,7 @@ import {
   previewSpecInput,
   type ApplySpecInput,
   type NodeKind,
+  type ParsedConnection,
   type PreviewSpecInput,
   type SpecKind,
 } from "~/lib/schemas";
@@ -60,6 +64,11 @@ export interface SpecPreview {
   new: SpecPreviewNew[];
   changed: SpecPreviewChanged[];
   dropped: SpecPreviewDropped[];
+  // FK Connections the apply will auto-reconcile (#76). Informational only —
+  // Connections carry no user content, so they are never user-resolved like
+  // Components; surfaced so the modal can say what will be drawn/removed.
+  connectionsToCreate: number;
+  connectionsToRemove: number;
 }
 
 export interface ApplySpecResult {
@@ -69,6 +78,8 @@ export interface ApplySpecResult {
   overwritten: number;
   detached: number;
   deleted: number;
+  connectionsCreated: number;
+  connectionsRemoved: number;
 }
 
 /**
@@ -135,6 +146,110 @@ async function loadGeneratedChildren(
     kind: row.kind,
     metadata: row.metadata,
   }));
+}
+
+async function loadGeneratedConnections(
+  db: Db,
+  specId: string,
+): Promise<ExistingGeneratedConnection[]> {
+  const rows = await db.edge.findMany({
+    where: { sourceSpecId: specId, deletedAt: null, specKey: { not: null } },
+    select: { id: true, specKey: true, interaction: true, label: true },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    specKey: row.specKey!,
+    interaction: row.interaction,
+    label: row.label,
+  }));
+}
+
+/**
+ * Auto-reconciles a Spec's FK Connections (#76 / ADR-0033). Resolves each parsed
+ * connection's endpoint `specKey`s to live Node ids via `keyToId` (built from the
+ * Component reconcile), then: creates the new ones with Spec provenance,
+ * soft-deletes the ones whose FK vanished, and refreshes interaction/label on the
+ * changed ones. Endpoints always resolve (bounds guarantees both are tree nodes,
+ * all of which are matched/created and so in `keyToId`); a stray unresolved or
+ * self-pair endpoint is skipped rather than failing the merge.
+ *
+ * Slot-adoption: the directional de-dupe index forbids a second active edge in a
+ * `(projectId, source, target, interaction)` slot. If a slot is already occupied
+ * (a hand-drawn Connection, or one from another Spec), STAMP that edge with this
+ * Spec's provenance and refresh its label instead of inserting a duplicate the
+ * index would reject — so the Spec adopts the existing arrow and reconciles it on
+ * future re-parses.
+ */
+async function reconcileConnections(
+  db: Db,
+  projectId: string,
+  specId: string,
+  keyToId: Record<string, string>,
+  parsedConnections: ParsedConnection[],
+): Promise<{ connectionsCreated: number; connectionsRemoved: number }> {
+  const existing = await loadGeneratedConnections(db, specId);
+  const diff = diffConnections(parsedConnections, existing);
+
+  let connectionsCreated = 0;
+  const freshRows: Prisma.EdgeCreateManyInput[] = [];
+  for (const connection of diff.new) {
+    const sourceId = keyToId[connection.sourceKey];
+    const targetId = keyToId[connection.targetKey];
+    if (!sourceId || !targetId || sourceId === targetId) continue;
+    const label = connection.label ?? null;
+
+    const occupant = await db.edge.findFirst({
+      where: activeDuplicateWhere(
+        projectId,
+        sourceId,
+        targetId,
+        connection.interaction,
+      ),
+      select: { id: true },
+    });
+    if (occupant) {
+      await db.edge.update({
+        where: { id: occupant.id },
+        data: { sourceSpecId: specId, specKey: connection.specKey, label },
+      });
+      connectionsCreated += 1;
+    } else {
+      freshRows.push({
+        projectId,
+        sourceId,
+        targetId,
+        interaction: connection.interaction,
+        label,
+        sourceSpecId: specId,
+        specKey: connection.specKey,
+      });
+    }
+  }
+  if (freshRows.length > 0) {
+    const result = await db.edge.createMany({ data: freshRows });
+    connectionsCreated += result.count;
+  }
+
+  for (const change of diff.changed) {
+    await db.edge.update({
+      where: { id: change.id },
+      data: {
+        interaction: change.parsed.interaction,
+        label: change.parsed.label ?? null,
+      },
+    });
+  }
+
+  let connectionsRemoved = 0;
+  if (diff.dropped.length > 0) {
+    const result = await db.edge.updateMany({
+      where: { id: { in: diff.dropped.map((d) => d.id) }, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    connectionsRemoved = result.count;
+  }
+
+  return { connectionsCreated, connectionsRemoved };
 }
 
 /**
@@ -224,6 +339,8 @@ export async function previewSpec(
       new: [],
       changed: [],
       dropped: [],
+      connectionsToCreate: 0,
+      connectionsToRemove: 0,
     };
   }
 
@@ -236,6 +353,17 @@ export async function previewSpec(
     db,
     owner.projectId,
     diff.dropped.map((d) => d.nodeId),
+  );
+
+  // FK Connection reconcile is auto (no user resolution), so the preview only
+  // counts what will change. Endpoints are guaranteed present by the parse bound,
+  // so `new`/`dropped` counts need no node-id resolution here.
+  const existingConnections = existingSpec
+    ? await loadGeneratedConnections(db, existingSpec.id)
+    : [];
+  const connectionDiff = diffConnections(
+    parsed.connections,
+    existingConnections,
   );
 
   return {
@@ -261,6 +389,8 @@ export async function previewSpec(
       title: d.title,
       hasIncidentConnections: flagged.has(d.nodeId),
     })),
+    connectionsToCreate: connectionDiff.new.length,
+    connectionsToRemove: connectionDiff.dropped.length,
   };
 }
 
@@ -426,7 +556,27 @@ export async function applySpec(
     pending = next;
   }
 
-  return { specId, ownerNodeId, created, overwritten, detached, deleted };
+  // 5) FK Connections (#76). `keyToId` now holds every endpoint candidate — the
+  //    matched tables (seeded) and the freshly-created ones — so reconcile draws
+  //    new FK edges, drops vanished ones, and refreshes changed ones in one pass.
+  const { connectionsCreated, connectionsRemoved } = await reconcileConnections(
+    db,
+    owner.projectId,
+    specId,
+    keyToId,
+    parsed.connections,
+  );
+
+  return {
+    specId,
+    ownerNodeId,
+    created,
+    overwritten,
+    detached,
+    deleted,
+    connectionsCreated,
+    connectionsRemoved,
+  };
 }
 
 // The live Spec on a Component is 1:1 (partial index `idx_spec_owner_live`), so

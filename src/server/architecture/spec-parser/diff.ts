@@ -1,7 +1,9 @@
 import type {
   ComponentMetadata,
+  Interaction,
   NodeKind,
   ParsedComponent,
+  ParsedConnection,
 } from "~/lib/schemas";
 
 /**
@@ -141,6 +143,73 @@ export function parseSpecDiff(
   }
 
   return { new: created, changed, dropped, matchedKeyToId };
+}
+
+/**
+ * A Spec-derived Connection as the connection diff needs to see it — a live Edge
+ * whose `sourceSpecId` points at this Spec (#76). `specKey` is the parser's
+ * stable per-Connection identity (the ordered table pair). `label` is the raw
+ * column (null when unset).
+ */
+export interface ExistingGeneratedConnection {
+  id: string;
+  specKey: string;
+  interaction: Interaction;
+  label: string | null;
+}
+
+/**
+ * The reconciliation a re-parse produces for a Spec's Connections (#76 /
+ * ADR-0033), matched by `specKey`:
+ *  - `new` — parsed connections with no matching Spec-derived Edge (create).
+ *  - `dropped` — Spec-derived Edges whose key is gone from the parse
+ *    (soft-delete).
+ *  - `changed` — matched keys whose `interaction` or `label` differ (update).
+ * Connections are pure derivations with no user-owned content, so unlike
+ * Components they are auto-reconciled — there is no per-Connection user
+ * resolution. Pure: no DB, no clock.
+ */
+export interface SpecConnectionDiff {
+  new: ParsedConnection[];
+  dropped: { id: string; specKey: string }[];
+  changed: { id: string; parsed: ParsedConnection }[];
+}
+
+/**
+ * Classifies parsed Connections against the Spec's existing generated Edges by
+ * `specKey` (#76). Mirrors {@link parseSpecDiff} for Components, but with no
+ * "keep/detach" branch — a Spec wholly owns the Connections it generated, so a
+ * vanished one is simply removed.
+ */
+export function diffConnections(
+  parsed: ParsedConnection[],
+  existing: ExistingGeneratedConnection[],
+): SpecConnectionDiff {
+  const parsedByKey = new Map(parsed.map((c) => [c.specKey, c]));
+  const existingByKey = new Map(existing.map((e) => [e.specKey, e]));
+
+  const created: ParsedConnection[] = [];
+  const changed: { id: string; parsed: ParsedConnection }[] = [];
+  for (const connection of parsed) {
+    const match = existingByKey.get(connection.specKey);
+    if (match === undefined) {
+      created.push(connection);
+      continue;
+    }
+    const labelChanged = (connection.label ?? null) !== match.label;
+    if (connection.interaction !== match.interaction || labelChanged) {
+      changed.push({ id: match.id, parsed: connection });
+    }
+  }
+
+  const dropped: { id: string; specKey: string }[] = [];
+  for (const edge of existing) {
+    if (!parsedByKey.has(edge.specKey)) {
+      dropped.push({ id: edge.id, specKey: edge.specKey });
+    }
+  }
+
+  return { new: created, changed, dropped };
 }
 
 // The DERIVED fields that differ between a parsed node and its live match (empty
