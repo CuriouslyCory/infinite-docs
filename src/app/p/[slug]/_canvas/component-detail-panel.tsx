@@ -292,12 +292,10 @@ function KindSection({
         parentKind={parentKind}
         currentKind={currentKind}
         onSelect={onChangeKind}
-        trigger={({ open, toggle }) => (
+        trigger={
           <button
             type="button"
             aria-haspopup="listbox"
-            aria-expanded={open}
-            onClick={toggle}
             className="nodrag flex items-center gap-2 rounded bg-white/10 px-2 py-1.5 text-sm text-white transition hover:bg-white/15"
           >
             <Icon
@@ -312,7 +310,7 @@ function KindSection({
               className="ml-auto shrink-0 text-white/40"
             />
           </button>
-        )}
+        }
       />
     </section>
   );
@@ -371,19 +369,16 @@ function ConnectionsSection({
             slug={slug}
             excludeIds={excludeIds}
             onSelect={onConnect}
-            panelClassName="absolute top-full right-0 z-10 mt-2"
-            trigger={({ open, toggle }) => (
+            trigger={
               <button
                 type="button"
                 aria-haspopup="listbox"
-                aria-expanded={open}
-                onClick={toggle}
                 className="nodrag flex items-center gap-1 rounded bg-white/10 px-1.5 py-0.5 text-xs text-white transition hover:bg-white/15"
               >
                 <Plus size={12} aria-hidden />
                 Add connection
               </button>
-            )}
+            }
           />
         )}
       </div>

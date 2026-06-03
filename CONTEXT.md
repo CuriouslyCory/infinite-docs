@@ -120,7 +120,12 @@ and the remainder under "All kinds" below, preserving the invariant that every
 kind is always reachable (search spans both groups). It is the only
 kind-selection surface in the canvas: the "Add Component" control opens it, and —
 since Slice 2 — the **Component-detail panel** reopens the same palette to change
-a Component's kind. Follows the *palette* convention — the word names the
+a Component's kind. That control and the **Connect-to** palette both mount their
+popover through the shared Base UI wrapper at `src/components/ui/popover.tsx`,
+which portals out of the panel's `overflow` clip with collision-aware
+positioning (#89) — the canonical popover host, mirroring the `dialog.tsx` /
+`command.tsx` vendor-a-minimal-subset convention. Follows the *palette*
+convention — the word names the
 surface, not the library (cf. the **Command-palette** primitive it is built on).
 Never "kind picker" (too generic —
 it could name a `<select>`), "command palette" (collides with the library term),

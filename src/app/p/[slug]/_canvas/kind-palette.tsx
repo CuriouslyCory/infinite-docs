@@ -1,7 +1,7 @@
 "use client";
 
 import { Check } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactElement } from "react";
 
 import {
   Command,
@@ -12,6 +12,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "~/components/ui/command";
+import { Popover, PopoverPanel, PopoverTrigger } from "~/components/ui/popover";
 import { KIND_ICON, KIND_LABEL, suggestedKinds } from "~/lib/node-kinds";
 import { type NodeKind } from "~/lib/schemas";
 
@@ -115,64 +116,38 @@ function KindItem({
 /**
  * The reusable popover that hosts the **kind palette** behind a caller-supplied
  * trigger — shared by the "Add Component" control and the Component-detail
- * panel's change-kind row so the open/close, outside-click, and Escape handling
- * live in one place (there is no shared Popover primitive in the repo). cmdk owns
- * in-list arrow/Enter navigation; this wrapper owns only the surrounding
- * open/dismiss. Selecting a kind closes the popover and forwards to `onSelect`.
+ * panel's change-kind row. cmdk owns in-list arrow/Enter navigation; this
+ * wrapper owns only the surrounding open/dismiss. Selecting a kind closes the
+ * popover and forwards to `onSelect`.
  */
 export function KindPickerPopover({
   parentKind,
   currentKind,
   onSelect,
   trigger,
-  panelClassName = "absolute top-full left-0 z-10 mt-2",
+  align = "start",
 }: {
   parentKind: NodeKind | null;
   currentKind?: NodeKind;
   onSelect: (kind: NodeKind) => void;
-  trigger: (args: { open: boolean; toggle: () => void }) => ReactNode;
-  panelClassName?: string;
+  trigger: ReactElement<Record<string, unknown>>;
+  align?: "start" | "center" | "end";
 }) {
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onPointerDown(event: PointerEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        setOpen(false);
-      }
-    }
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
 
   return (
-    <div ref={containerRef} className="relative">
-      {trigger({ open, toggle: () => setOpen((v) => !v) })}
-      {open && (
-        <div
-          className={panelClassName}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.stopPropagation();
-              setOpen(false);
-            }
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={trigger} />
+      <PopoverPanel align={align} aria-label="Component kind">
+        <KindPalette
+          parentKind={parentKind}
+          currentKind={currentKind}
+          onSelect={(kind) => {
+            setOpen(false);
+            onSelect(kind);
           }}
-        >
-          <KindPalette
-            parentKind={parentKind}
-            currentKind={currentKind}
-            onSelect={(kind) => {
-              setOpen(false);
-              onSelect(kind);
-            }}
-          />
-        </div>
-      )}
-    </div>
+        />
+      </PopoverPanel>
+    </Popover>
   );
 }
