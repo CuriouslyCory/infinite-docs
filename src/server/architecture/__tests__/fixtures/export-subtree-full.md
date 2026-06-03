@@ -5,9 +5,9 @@
 
 ## Boundary context
 
-- **Postgres** (Database) — direct
-- **Third Party API** (External API) — direct
-- **Analytics API** (External API) — inherited
+- API Gateway {#n-api} → Postgres {#n-db} (Database) · reads from
+- API Gateway {#n-api} → Third Party API {#n-ext} (External API) · calls
+- Users Module {#n-users} → Analytics API {#n-analytics} (External API) · tracks events
 
 ## Components
 
@@ -33,4 +33,4 @@ Tokens are JWT-based.
 
 ## Connections
 
-- Auth Module → Users Module
+- Auth Module {#n-auth} — Users Module {#n-users}

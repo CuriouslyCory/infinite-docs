@@ -323,7 +323,12 @@ off-scope ones. *(The cross-scope read is realized now via **getCanvas** (#63 / 
 rendering of the proxy — as a passive node with a *go to real endpoint* affordance (navigating to
 the off-scope Component's own scope) — and the arrowheads on its incident Connection are realized
 now (#65). A proxy whose real endpoint is an ancestor of the current scope (the lineal/ingress
-case) is labelled as an inbound boundary so it does not read as the host inside itself.)*
+case) is labelled as an inbound boundary so it does not read as the host inside itself. The
+markdown export's subtree **Boundary context** section adopts the same per-edge posture (#67 /
+ADR-0017 amendment): ONE row per crossing Connection, far endpoint named with its `{#nodeId}`
+anchor, no `direct/inherited` partition — derived independently from `getCanvas` (one walks
+descendants under a subtree root, the other walks whole-Project ancestry; ADR-0031 sanctions the
+two derivations stay separate).)*
 
 ### Boundary endpoint
 Retired (#62): with no cross-scope **FlowRoute** and no `routeFlow` writer, there is no "one
@@ -503,7 +508,7 @@ and surfaces the result as a short text confirmation that includes the affected 
 agent can chain calls without an intermediate read. Authorization, invariants, and de-dupe live in
 the service — the tool registers, parses, and translates errors only. The word is **tool** — the
 MCP-spec native term, so no split applies. Never "action", "command", "mutation" (collides with
-tRPC), or "verb". Today's surface is the **MCP write tools** — the four single-op tools (`create_component`, `connect_components`, `update_component_docs`, `move_component` — #19) plus the **`apply_graph`** batch tool (#20) for constructing many Components and Connections in one transaction, chained by **client id** (the in-batch reference handle the agent picks). **No destructive tool is exposed at this version** (acceptance criterion). The catalog is plain data (`WRITE_TOOLS` in `~/server/mcp/tool-catalog.ts`), so the registration loop, `tools/list`, and `/llms.txt` all render from one source — additional tools plug in without touching the adapter, the auth gate, or the route. `connect_components` and the `apply_graph` `connections` arm gain an `interaction` input and accept cross-scope endpoints (#62; the `canvasNode` ref is dropped — see **Client id**); a spec-attach tool (generating Components) lands in #67. *(Realized now via #19 + #20; see ADR-0001, ADR-0010, ADR-0022, ADR-0026, ADR-0027, ADR-0028.)*
+tRPC), or "verb". Today's surface is the **MCP write tools** — the four single-op tools (`create_component`, `connect_components`, `update_component_docs`, `move_component` — #19), the **`apply_graph`** batch tool (#20) for constructing many Components and Connections in one transaction (chained by **client id**, the in-batch reference handle the agent picks), and the **`apply_spec`** tool (#67) that wraps the **Spec** → **Component** generator (ADR-0029) on the agent surface — same `applySpecInput` the web `applySpec` uses, including the per-row `changed[]` / `dropped[]` resolution arrays (defaults are safe — skip / keep), re-parsing server-side, applying inside one transaction, and returning the counts the web surface returns. **No destructive tool is exposed at this version** (acceptance criterion). The catalog is plain data (`WRITE_TOOLS` in `~/server/mcp/tool-catalog.ts`), so the registration loop, `tools/list`, and `/llms.txt` all render from one source — additional tools plug in without touching the adapter, the auth gate, or the route. `connect_components` and the `apply_graph` `connections` arm carry an `interaction` input and accept cross-scope endpoints (#62; the `canvasNode` ref is dropped — see **Client id**). *(Realized now via #19 + #20 + #67; see ADR-0001, ADR-0010, ADR-0022, ADR-0026, ADR-0027, ADR-0028, ADR-0029.)*
 
 ### llms.txt
 The served discovery document at `/llms.txt` that tells an **agent** how to reach the **MCP path**,
@@ -513,8 +518,9 @@ resources**. **Generated**, not hand-authored — its resource catalog renders f
 the grant (ADR-0021): it describes capability ("a token acts on behalf of the minting user"), never a
 "read-only scope" the token does not carry — the MCP surface is read-only *at this version*, not the
 token. Carries the **prompt-injection standing note** that graph content is **data, not
-instructions**. Never "manifest", "sitemap", or "robots.txt for AI". *(Realized now via #18; #34/#38
-extend its vocabulary as they grow. See ADR-0022.)*
+instructions**. Never "manifest", "sitemap", or "robots.txt for AI". *(Realized now via #18; #67
+extended the tool catalog with `apply_spec` (additive, no doc-generation change required — the
+catalog renders dynamically). See ADR-0022.)*
 
 ### Client id
 The agent-chosen string an **apply-graph batch** uses to chain references between rows it is about to create in one **MCP tool** call — `parent` on a new Component, or `source` / `target` on a new Connection (the `canvasNode` ref is dropped — Edges no longer store scope; #62 / ADR-0026 amendment) — without an intermediate round trip to learn the server-minted ids. Each Component in the batch carries a `clientId` the agent picks (any non-empty string ≤ 64 chars); the response returns an `idMap: { [clientId: string]: serverId }` the agent uses for subsequent calls. Per-batch scope: a `clientId` means nothing outside the one transaction that materializes the map, and **carries no authorization** — it is a lookup key, not a bearer credential (writes still authorize through the **API token**-resolved **Actor**, ADR-0002). Each field that accepts a Component endpoint or a Component parent accepts EITHER a `clientId` from the same batch (`{ref:"client", clientId:"..."}`) OR an existing server id (`{ref:"server", id:"..."}`); the discriminator is explicit so a typo surfaces as "no such clientId in this batch" instead of silently rebinding to an unrelated server row. The word is **client id** in prose and `clientId` in code — never "ref id" / "batch id" / "local id" / "temp id". Clientids must be unique batch-wide so the flat `idMap` shape stays collision-free across any future additive arm. *(Realized now via #20 / `apply_graph`. The id-map type is `Record<string, string>` in code; the outer service result is `ApplyGraphOutput`. See ADR-0026.)*
@@ -694,31 +700,44 @@ with three modes:
 - **Full project** (`canvasNodeId: null`, `mode: "full"`) — every **Component** in the Project,
   authored documentation included (heading-shifted), plus a **Connections** section.
 - **Subtree** (`canvasNodeId: R`, `mode: "full"`) — R + descendants only, with a **Boundary
-  context** section enumerating the externals incident to R on its parent **Canvas** so the
-  export is self-describing (a deep slice is readable without re-walking up to the root).
+  context** section listing one row per boundary-crossing **Connection** (far endpoint named with
+  its `{#nodeId}` anchor and **kind**) so a deep slice is readable without re-walking up to the
+  root.
 - **Index** (`mode: "index"`) — a cheap structural map: titles, **Component kind**s, anchors,
   per-Component **Connection** counts; doc bodies omitted. The navigable view an indexing
   agent reads first.
 
-Each Component carries an addressable HTML-style anchor `{#nodeId}`. Authored documentation is
-**heading-shifted via an mdast AST walk** (`unist-util-visit` over `remark-parse`), never via
-regex — a fenced code block containing a literal `#` line round-trips intact. Output is
-**deterministic across runs AND OS locales**: ordering is **depth → title → id** computed in
-application code with a Unicode codepoint comparator (`<`/`>`), never delegated to SQL collation
-or `String#localeCompare` / `Intl` (those are banned in the serializer module). `remark-stringify`
-options are pinned explicitly so a library version bump cannot silently re-baseline the byte
-output. Locked by a golden-file byte-equality test that also mutates `LANG` / `LC_ALL` to prove
-locale invariance. *(Realized now via two owner-resolving front doors over one shared fetch core
+Each Component carries an addressable HTML-style anchor `{#nodeId}`. Each **Connection** serializes
+**exactly once** at its real `(source, target)` endpoints, NEVER mirrored under altitude reprs
+from **getCanvas**'s presentation projection (otherwise an LLM counting Connections from the
+markdown would over-count dependencies). The line shape is
+`- Source {#sourceId} <glyph> Target {#targetId} · label`, where `<glyph>` is derived from
+`arrowEnds(interaction)` (the canonical helper in `~/lib/connection-direction`, ADR-0027) — `→` for
+`REQUEST`/`PUSH`, `←` for `SUBSCRIBE`, `↔` for `DUPLEX`, `—` (em-dash) for `ASSOCIATION`; the label
+separator is ` · ` (mid-dot, the punctuation already used in the export header) so it never
+collides with the ASSOCIATION glyph. Sort key is `(sourceId, targetId, interaction, edgeId)`,
+codepoint-ascending. Authored documentation is **heading-shifted via an mdast AST walk**
+(`unist-util-visit` over `remark-parse`), never via regex — a fenced code block containing a literal
+`#` line round-trips intact. Output is **deterministic across runs AND OS locales**: ordering is
+computed in application code with a Unicode codepoint comparator (`<`/`>`), never delegated to SQL
+collation or `String#localeCompare` / `Intl` (those are banned in the serializer module).
+`remark-stringify` options are pinned explicitly so a library version bump cannot silently
+re-baseline the byte output. Locked by a golden-file byte-equality test that also mutates `LANG` /
+`LC_ALL` to prove locale invariance. **Generated Components** (#64 / ADR-0029) serialize as ordinary
+nested Components — `kind` is cosmetic, provenance never appears in the output — and their `{#nodeId}`
+anchors stay stable across re-parse because `parseSpecDiff` preserves `Node.id` on matched `specKey`
+rows. *(Realized now via two owner-resolving front doors over one shared fetch core
 (`serializeProjectScope`) in `src/server/architecture/export.service.ts` — `exportMarkdown(db,
 actor, input)` (slug-readable, web) and `exportMarkdownForActor(db, actor, input)` (owner-gated by
 `projectId`, the MCP read path #18 / ADR-0022) — both depth-independent, honouring the
 single-round-trip posture (ADR-0001), and both delegating to the pure `serializeGraph` in
-`src/server/architecture/markdown.ts`. The "Copy as markdown" toolbar action and the breadcrumb-bar
-scope-anchored copy ship the client-side surface. The export rewrite for the typed cross-scope
-model — the **Connections** section gaining the `interaction` glyph and a **Spec** subsection — is
-#67 (which amends ADR-0017). #62 only adjusts the serializer for the dropped `Edge.canvasNodeId`
-(Connections render `source → target` without a per-canvas scope suffix; subtree boundary
-derivation is endpoint-membership based) and re-baselines the golden once. See ADR-0017.)*
+`src/server/architecture/markdown.ts`. The typed cross-scope rewrite landed at #67 (which amends
+ADR-0017): each Connection serializes exactly once with its `interaction` glyph, deterministically
+ordered; the subtree Boundary section lists one row per crossing Connection (no `direct/inherited`
+partition — ADR-0031 per-edge posture extended to the export consumer); generated Components
+serialize as ordinary Nodes with stable anchors; the goldens were re-baselined once, locale-
+invariance and heading-shift tests stayed green. The "Copy as markdown" toolbar action and the
+breadcrumb-bar scope-anchored copy ship the client-side surface. See ADR-0017.)*
 
 ## Standing notes
 

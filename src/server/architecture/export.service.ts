@@ -10,11 +10,14 @@ import {
 } from "~/lib/schemas";
 import {
   serializeGraph,
-  type SerializerBoundaryProxy,
+  type SerializerBoundaryEdge,
   type SerializerEdge,
   type SerializerNode,
 } from "./markdown";
-import { type NodeKind as PrismaNodeKind } from "../../../generated/prisma/client";
+import {
+  type Interaction as PrismaInteraction,
+  type NodeKind as PrismaNodeKind,
+} from "../../../generated/prisma/client";
 
 /**
  * Deterministic markdown export of a Project or subtree (M2 / #15; ADR-0017).
@@ -36,10 +39,12 @@ import { type NodeKind as PrismaNodeKind } from "../../../generated/prisma/clien
  *    INTERNAL Connections — both endpoints inside the subtree) — running them
  *    in parallel keeps the round trip flat at the cost of one extra recursive
  *    walk on the server, far cheaper than a second client → server round trip.
- *    The third derives the **boundary context** by endpoint membership: the far
- *    endpoint of any Connection crossing the subtree boundary. An Edge no longer
- *    stores a scope (ADR-0028), so all three derive from endpoint ancestry; the
- *    full typed cross-scope export rewrite is #67.
+ *    The third derives the **boundary context** by endpoint membership: ONE
+ *    row per Connection crossing the subtree boundary (per-edge, never
+ *    coalesced by far Node; ADR-0031 posture extended to the export consumer
+ *    at #67). An Edge no longer stores a scope (ADR-0028), so all three
+ *    derive from endpoint ancestry; the `direct/inherited` partition is
+ *    retired.
  *
  * Serialization is delegated to the pure `serializeGraph` (no `db`, no authz) —
  * the unit both front doors reuse without re-implementing the format.
@@ -68,14 +73,26 @@ interface SubtreeEdgeRow {
   id: string;
   sourceId: string;
   targetId: string;
+  interaction: PrismaInteraction;
   label: string | null;
 }
 
-interface BoundaryRow {
-  node_id: string;
-  title: string;
-  kind: PrismaNodeKind;
-  is_direct: boolean;
+/**
+ * One boundary-crossing Connection — exactly one endpoint is inside the
+ * exported subtree, the other is "far" (outside). Per-row, never coalesced
+ * by far Node (ADR-0031 extended to the export consumer at #67): a single
+ * external reached as the far end of N crossing Connections produces N rows.
+ * The `direct/inherited` partition is retired.
+ */
+interface BoundaryEdgeRow {
+  edge_id: string;
+  source_id: string;
+  target_id: string;
+  interaction: PrismaInteraction;
+  label: string | null;
+  far_endpoint_id: string;
+  far_title: string;
+  far_kind: PrismaNodeKind;
 }
 
 interface ResolvedProject {
@@ -104,7 +121,7 @@ async function serializeProjectScope(
 
   let nodes: SerializerNode[];
   let edges: SerializerEdge[];
-  let boundaryProxies: SerializerBoundaryProxy[];
+  let boundaryEdges: SerializerBoundaryEdge[];
 
   if (canvasNodeId === null) {
     const [nodeRows, edgeRows] = await Promise.all([
@@ -124,6 +141,7 @@ async function serializeProjectScope(
           id: true,
           sourceId: true,
           targetId: true,
+          interaction: true,
           label: true,
         },
       }),
@@ -133,10 +151,16 @@ async function serializeProjectScope(
       id: e.id,
       sourceId: e.sourceId,
       targetId: e.targetId,
+      interaction: e.interaction,
       label: e.label,
     }));
-    boundaryProxies = [];
+    boundaryEdges = [];
   } else {
+    // The export's subtree derivation walks descendants under a root; it is
+    // INTENTIONALLY separate from `getCanvas`'s whole-Project ancestry walk
+    // (ADR-0031 §"Scope of this ADR" sanctions the two derivations — two
+    // consumers, two purposes, no DRY). Re-introducing a DRY here would
+    // regress that decision.
     const [subtreeRows, subtreeEdgeRows, boundaryRows] = await Promise.all([
       db.$queryRaw<SubtreeNodeRow[]>`
         WITH RECURSIVE subtree AS (
@@ -173,18 +197,19 @@ async function serializeProjectScope(
             AND c."deletedAt" IS NULL
             AND s.depth < ${SUBTREE_DEPTH_CAP}
         )
-        SELECT e.id, e."sourceId", e."targetId", e.label
+        SELECT e.id, e."sourceId", e."targetId", e.interaction, e.label
         FROM "Edge" e
         WHERE e."projectId" = ${projectId}
           AND e."deletedAt" IS NULL
           AND e."sourceId" IN (SELECT id FROM subtree)
           AND e."targetId" IN (SELECT id FROM subtree)`,
-      // Boundary context: the far endpoint of any active Connection that
-      // crosses the subtree boundary (exactly one endpoint inside). Derived
-      // from endpoint membership, not the old transitive ancestor walk (#67
-      // owns the full cross-scope rewrite). `is_direct` marks a Connection
-      // incident to the subtree root R itself, vs a deeper descendant.
-      db.$queryRaw<BoundaryRow[]>`
+      // Boundary context: ONE row per active Connection that crosses the
+      // subtree boundary (exactly one endpoint inside). Per-edge — never
+      // coalesced by far Node (ADR-0031 amended onto the export consumer at
+      // #67); the `direct/inherited` partition is retired. The far endpoint's
+      // title and kind are denormalized so the pure serializer can render
+      // the row without reaching for the DB.
+      db.$queryRaw<BoundaryEdgeRow[]>`
         WITH RECURSIVE subtree AS (
           SELECT n.id, 0 AS depth
           FROM "Node" n
@@ -200,23 +225,34 @@ async function serializeProjectScope(
             AND s.depth < ${SUBTREE_DEPTH_CAP}
         )
         SELECT
-          proxy.id AS node_id,
-          proxy.title AS title,
-          proxy.kind AS kind,
-          BOOL_OR(inside.id = ${canvasNodeId}) AS is_direct
+          e.id AS edge_id,
+          e."sourceId" AS source_id,
+          e."targetId" AS target_id,
+          e.interaction AS interaction,
+          e.label AS label,
+          far.id AS far_endpoint_id,
+          far.title AS far_title,
+          far.kind AS far_kind
         FROM "Edge" e
-        JOIN subtree inside
-          ON inside.id = e."sourceId" OR inside.id = e."targetId"
-        JOIN "Node" proxy
-          ON proxy.id = CASE
-            WHEN e."sourceId" = inside.id THEN e."targetId"
+        JOIN "Node" src
+          ON src.id = e."sourceId" AND src."deletedAt" IS NULL
+        JOIN "Node" tgt
+          ON tgt.id = e."targetId" AND tgt."deletedAt" IS NULL
+        JOIN "Node" far
+          ON far.id = CASE
+            WHEN e."sourceId" IN (SELECT id FROM subtree) THEN e."targetId"
             ELSE e."sourceId"
           END
-          AND proxy."deletedAt" IS NULL
+          AND far."deletedAt" IS NULL
         WHERE e."projectId" = ${projectId}
           AND e."deletedAt" IS NULL
-          AND proxy.id NOT IN (SELECT id FROM subtree)
-        GROUP BY proxy.id, proxy.title, proxy.kind`,
+          AND (
+            (e."sourceId" IN (SELECT id FROM subtree)
+              AND e."targetId" NOT IN (SELECT id FROM subtree))
+            OR
+            (e."targetId" IN (SELECT id FROM subtree)
+              AND e."sourceId" NOT IN (SELECT id FROM subtree))
+          )`,
     ]);
 
     // Subtree existence check: the CTE always returns at least the anchor
@@ -239,13 +275,18 @@ async function serializeProjectScope(
       id: e.id,
       sourceId: e.sourceId,
       targetId: e.targetId,
+      interaction: e.interaction,
       label: e.label,
     }));
-    boundaryProxies = boundaryRows.map((r) => ({
-      nodeId: r.node_id,
-      title: r.title,
-      kind: r.kind,
-      origin: r.is_direct ? "direct" : "inherited",
+    boundaryEdges = boundaryRows.map((r) => ({
+      edgeId: r.edge_id,
+      sourceId: r.source_id,
+      targetId: r.target_id,
+      interaction: r.interaction,
+      label: r.label,
+      farEndpointId: r.far_endpoint_id,
+      farTitle: r.far_title,
+      farKind: r.far_kind,
     }));
   }
 
@@ -254,7 +295,7 @@ async function serializeProjectScope(
     rootCanvasNodeId: canvasNodeId,
     nodes,
     edges,
-    boundaryProxies,
+    boundaryEdges,
     mode,
   });
 

@@ -571,18 +571,17 @@ export type ApplyGraphConnectionInput = z.input<
 /**
  * Top-level input for the `apply_graph` MCP batch tool. Discriminated
  * top-level arrays (`components: []`, `connections: []`), not a flat
- * `entities: []` — Slice 5 / #38 appends `flows: []` and `routes: []` here
- * additively without renumbering, and discriminated arrays keep the wire
- * shape statically narrowable per arm. Per-arm length caps bound the
- * transaction-holding time the batch can monopolize (philosophy #1 — keep the
- * app feeling fast even when one agent ships a huge batch).
+ * `entities: []` — any future arm joins as its own typed array without
+ * renumbering, and discriminated arrays keep the wire shape statically
+ * narrowable per arm. Per-arm length caps bound the transaction-holding time
+ * the batch can monopolize (philosophy #1 — keep the app feeling fast even
+ * when one agent ships a huge batch).
  *
  * The `superRefine` enforces batch-wide `clientId` uniqueness across the
- * `components` array so the flat `idMap` shape Slice 5 will join on its own
- * arms cannot collide today. Connections do not carry a `clientId` in this
- * slice, so the check is component-only here; #38's additive arms will extend
- * the same `seen` map. See ADR-0026 for the shape decisions; CONTEXT.md
- * "Client id" for the glossary entry.
+ * `components` array so the flat `idMap` shape stays collision-free. Connections
+ * do not carry a `clientId` today, so the check is component-only here; any
+ * future arm that carries clientIds extends the same `seen` map. See ADR-0026
+ * for the shape decisions; CONTEXT.md "Client id" for the glossary entry.
  */
 export const applyGraphInput = z
   .object({
@@ -739,3 +738,20 @@ export const applySpecInput = z.object({
   dropped: z.array(specDroppedResolution).max(5000).default([]),
 });
 export type ApplySpecInput = z.input<typeof applySpecInput>;
+
+/**
+ * Typed output of the `apply_spec` MCP tool (#67). Mirrors `ApplySpecResult`
+ * from `~/server/architecture/spec.service.ts` so the MCP catalog's
+ * `outputSchema` (SDK 1.26.0) carries the same wire shape the service
+ * returns. Drives `structuredContent` on the response — the agent reads a
+ * typed object, not a JSON-encoded message blob (ADR-0026 §6 seam reused).
+ */
+export const applySpecOutput = z.object({
+  specId: z.string().min(1),
+  ownerNodeId: z.string().min(1),
+  created: z.number().int().nonnegative(),
+  overwritten: z.number().int().nonnegative(),
+  detached: z.number().int().nonnegative(),
+  deleted: z.number().int().nonnegative(),
+});
+export type ApplySpecOutput = z.infer<typeof applySpecOutput>;

@@ -11,9 +11,9 @@ import { WRITE_TOOLS } from "~/server/mcp/tool-catalog";
  * tool catalog from {@link WRITE_TOOLS} — the same sources the MCP server
  * registers from — keeping the doc and the live `resources/list` /
  * `tools/list` in lockstep. The origin is derived from the request
- * (proxy-aware) so no endpoint env var is needed. As #40/#42 append Flow /
- * FlowRoute tools and #38 appends Flow resources, this doc extends with them
- * automatically; each slice owns its vocabulary.
+ * (proxy-aware) so no endpoint env var is needed. As future tools and
+ * resources are added to either catalog, this doc extends with them
+ * automatically.
  *
  * Honesty (ADR-0021): the copy never claims a "read-only scope" the token does
  * not carry — a token acts on behalf of the minting user; tools mutate that
@@ -85,7 +85,7 @@ ${toolBlock}
 - A tool that fails on a state conflict (e.g. duplicate Connection, a Component
   with active Connections you tried to move) returns a readable message AND a
   structured \`archDetails\` field naming the blocking ids
-  (\`conflictingEdgeIds\`, \`conflictingFlowRouteIds\`, …) so you can decide
+  (\`conflictingEdgeIds\`, \`conflictingClientIds\`, …) so you can decide
   what to mutate before retrying.
 `;
 

@@ -17,6 +17,7 @@ These `.md` files are **byte-for-byte expected outputs** of `serializeGraph` /
 - Fixed Node / Project ids in the test seed make the output reproducible
   (cuid defaults are random — they would break byte-equality).
 
-- Flows / FlowRoutes are **not** present in these fixtures: Slice 5 (#38)
-  extends the format additively with its own Flow-bearing fixture without
-  re-baselining what's here.
+- The Flow model is retired (#62 / ADR-0027); the typed cross-scope rewrite
+  (#67 / ADR-0017 amendment) re-baselined these fixtures once — each Connection
+  serializes exactly once with its interaction glyph, and the subtree Boundary
+  section lists one row per crossing Connection (no direct/inherited partition).

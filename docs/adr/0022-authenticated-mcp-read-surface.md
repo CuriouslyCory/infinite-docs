@@ -118,7 +118,26 @@ endpoint env var. As #34/#38 append to the catalog, the doc extends automaticall
   non-trivial transport; `withMcpAuth` maps cleanly onto the Actor-resolution seam. The resolver and
   resource registry are kept transport-agnostic, so swapping to the SDK transport directly would be a
   localized change.
-- **Seams to siblings are left open additively.** Write tools (#19/#20) add a `tools/*` registry
-  beside the `resources/*` one and reuse `resolveActorFromToken`; #38's Flow resources append to
-  `READ_RESOURCES` and the `llms.txt` catalog; #23's dev-session path can add a *second* Actor
-  producer for the same route without reshaping it.
+- **Seams to siblings are left open additively.** Write tools (#19/#20/#67) add a `tools/*`
+  registry beside the `resources/*` one and reuse `resolveActorFromToken`; future read resources
+  append to `READ_RESOURCES` and the `llms.txt` catalog without touching the registration loop or
+  the route; #23's dev-session path can add a *second* Actor producer for the same route without
+  reshaping it.
+
+## Amendment — #67 (Flow resource scrub; `apply_spec` joins the tool catalog)
+
+The Flow capability model retired with #62 (ADR-0027/0028/0030); the
+forward-named `flow/:id` / `flow-route/:id` read resources from #38 will never
+ship. `READ_RESOURCES` stays frozen at `{ index, project, subtree }`. The
+subtree resource's description is unchanged in shape but its underlying
+boundary derivation moved to per-edge at #67 (ADR-0017 amendment): the
+subtree's Boundary section now lists one row per crossing Connection (no
+`direct/inherited` partition), so an agent reading a subtree resource sees
+each crossing Connection named with its `interaction` glyph and the far
+endpoint's anchor.
+
+`apply_spec` (#67) joined `WRITE_TOOLS` as the sixth descriptor — a thin
+adapter over `applySpec` (ADR-0029). No change to this ADR's route shape, auth
+gate, or non-disclosure rule; the addition is the additive `defineTool` seam
+ADR-0026 reserved. `llms.txt` picks it up via the dynamic catalog render — no
+route edit was needed.

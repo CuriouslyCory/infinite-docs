@@ -24,7 +24,7 @@ import { WRITE_TOOLS } from "./tool-catalog";
  * to one indistinguishable not-found (the read posture, ADR-0022); CONFLICT
  * and BAD_REQUEST keep their human message; CONFLICT additionally carries
  * the structured `details` as `data.archDetails` so the agent reads
- * `conflictingEdgeIds`/`conflictingFlowRouteIds`/… and self-corrects
+ * `conflictingEdgeIds`/`conflictingClientIds`/… and self-corrects
  * (ADR-0010 named pattern).
  */
 export function registerArchitectureTools(

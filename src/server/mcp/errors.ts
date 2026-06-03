@@ -51,9 +51,8 @@ export function toMcpReadError(error: unknown): McpError {
  * - CONFLICT and BAD_REQUEST surface the service's human message and (for
  *   CONFLICT) the structured `details` as `data.archDetails` — the same
  *   AI-readable channel the tRPC `errorFormatter` exposes
- *   (ADR-0010 named pattern). #19 ships four tools today, but the carrier is
- *   generic over {@link ConflictErrorDetails}, so #40 / #42's Flow / FlowRoute
- *   conflict ids ride through unchanged.
+ *   (ADR-0010 named pattern). The carrier is generic over
+ *   {@link ConflictErrorDetails}, so future detail keys ride through unchanged.
  * - NOT_FOUND and FORBIDDEN collapse to one non-disclosing failure — a missing
  *   project and a foreign project must not be distinguishable, the same posture
  *   reads use (ADR-0002 / ADR-0022). The owner-scoping rule is named in the
@@ -70,7 +69,7 @@ export function toMcpWriteError(error: unknown): McpError {
     }
     // BAD_REQUEST and CONFLICT: keep the human message; CONFLICT also carries
     // structured `details` as `archDetails` (ADR-0010). The agent reads the id
-    // arrays (`conflictingEdgeIds`, `conflictingFlowRouteIds`, …) to decide what
+    // arrays (`conflictingEdgeIds`, `conflictingClientIds`, …) to decide what
     // to mutate before retrying.
     return new McpError(
       ErrorCode.InvalidParams,

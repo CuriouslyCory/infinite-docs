@@ -59,10 +59,10 @@ describe("toMcpWriteError", () => {
     expect(error.message).toContain(
       "Disconnect the Connection first, then move.",
     );
-    // Generic carrier: the SAME envelope plugs in for future Flow / FlowRoute
-    // conflicts (#40 / #42) without changing this adapter. The agent reads
-    // `data.archDetails.conflictingEdgeIds` (or any other ConflictErrorDetails
-    // key) and self-corrects.
+    // Generic carrier: the SAME envelope plugs in for any additional
+    // ConflictErrorDetails key without changing this adapter. The agent reads
+    // `data.archDetails.conflictingEdgeIds` (or any other key) and
+    // self-corrects.
     expect(error.data).toEqual({
       archDetails: { conflictingEdgeIds: ["edge-1", "edge-2"] },
     });
