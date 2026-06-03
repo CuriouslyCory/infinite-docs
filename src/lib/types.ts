@@ -60,3 +60,23 @@ export type NodeConnection =
  * subset drifting out of sync.
  */
 export type CanvasData = RouterOutputs["architecture"]["getCanvas"];
+
+/**
+ * The full cross-layer **Trace view** payload (#58): the on-path Components and
+ * Connections of the **Trace subgraph**, the valid trace-point id subset, and
+ * the truncation flag/warning. Derived read-only by `getTraceView` over the
+ * unified undirected (Connection ∪ nesting) graph, capped at 500 Components
+ * (ADR-0034). The client consumes ONLY via this type (ADR-0004), never from
+ * `~/server`.
+ */
+export type TraceView = RouterOutputs["architecture"]["getTraceView"];
+
+/** A single on-path Component in the Trace subgraph — carries `parentId` so the
+ *  client builds the nested boxes, `documentation` so the read-only detail panel
+ *  opens with no click-time round trip, and `isTracePoint` to highlight the
+ *  endpoints distinctly from path-only intermediaries and ancestor containers. */
+export type TraceViewNode = TraceView["nodes"][number];
+
+/** A single on-path Connection in the Trace subgraph — real `sourceId`/`targetId`
+ *  (no boundary-proxy reprojection; every layer is on screen at once). */
+export type TraceViewEdge = TraceView["edges"][number];

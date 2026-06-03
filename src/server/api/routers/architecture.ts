@@ -29,6 +29,7 @@ import {
   updateEdgeInteraction,
 } from "~/server/architecture/edge.service";
 import { exportMarkdown } from "~/server/architecture/export.service";
+import { getTraceView } from "~/server/architecture/trace.service";
 import {
   applySpec,
   BULK_WRITE_TIMEOUT_MS,
@@ -44,6 +45,7 @@ import {
   exportMarkdownInput,
   getCanvasInput,
   getProjectBySlugInput,
+  getTraceViewInput,
   listNodeConnectionsInput,
   listProjectComponentsInput,
   previewSpecInput,
@@ -122,6 +124,22 @@ export const architectureRouter = createTRPCRouter({
         : null;
       try {
         return await getCanvas(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Public: the cross-layer Trace view read (#58). Slug is the read capability
+  // (ADR-0002) — same slug-bind posture as `getCanvas`; `nodeIds` are the
+  // working-trace point set, client state the RSC can't prefetch (ADR-0034).
+  getTraceView: publicProcedure
+    .input(getTraceViewInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor | null = ctx.session?.user
+        ? { userId: ctx.session.user.id, via: "session" }
+        : null;
+      try {
+        return await getTraceView(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }
