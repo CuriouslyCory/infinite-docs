@@ -9,7 +9,7 @@ import { assertCanWrite } from "./access";
 import { activeDuplicateWhere } from "./edge.service";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
-import { isEdgeDedupCollision } from "./prisma-errors";
+import { isEdgeDedupCollision, isPrismaUniqueViolation } from "./prisma-errors";
 import {
   createNodeInput,
   deleteNodeInput,
@@ -21,6 +21,7 @@ import {
   updateNodeInput,
   updateNodeKindInput,
   updatePositionsInput,
+  upsertBoundaryProxyPlacementInput,
   type CreateNodeInput,
   type DeleteNodeInput,
   type GetCanvasInput,
@@ -33,6 +34,7 @@ import {
   type UpdateNodeInput,
   type UpdateNodeKindInput,
   type UpdatePositionsInput,
+  type UpsertBoundaryProxyPlacementInput,
 } from "~/lib/schemas";
 
 // Compile-time parity guard: the client-safe Zod `nodeKind` enum (~/lib/schemas)
@@ -234,8 +236,16 @@ export interface CanvasInteriorEdge {
  * a Component reached as the far endpoint of three crossing Connections yields
  * three proxies that share `realEndpointId` but each carry a distinct synthetic
  * `nodeId` (`proxy_<edgeId>`), so React Flow keys never collide and a proxy stays
- * addressable by the edge that produced it. Persists no row of its own; the
- * client renders it as a passive node (#65).
+ * addressable by the edge that produced it.
+ *
+ * The first five fields are DERIVED from endpoint ancestry and persist no row of
+ * their own (ADR-0031 frozen identity). `posX`/`posY` are an ADDITIVE, nullable
+ * adjunct — the persisted VIEW coordinate from `BoundaryProxyPlacement` for this
+ * scope's proxy of `realEndpointId` (#91 / ADR-0036), `null` when the proxy has
+ * never been dragged on this scope (the client falls back to the left rail). They
+ * carry the COALESCED placement: every per-edge row sharing a `realEndpointId`
+ * gets the same coordinate, keyed by the endpoint, never by `proxy_<edgeId>`.
+ * The client renders the proxy as a passive node (#65).
  */
 export interface CanvasBoundaryProxy {
   nodeId: string;
@@ -243,6 +253,8 @@ export interface CanvasBoundaryProxy {
   kind: NodeKind;
   realEndpointId: string;
   edgeId: string;
+  posX: number | null;
+  posY: number | null;
 }
 
 // One row per active Connection whose endpoint ancestry makes it relevant to the
@@ -335,26 +347,33 @@ export async function getCanvas(
     throw new NotFoundError();
   }
 
-  // The three reads run in one `Promise.all` — no waterfall, no dependency on
+  // The four reads run in one `Promise.all` — no waterfall, no dependency on
   // `interiorNodes` resolving first (ADR-0001). The interior Nodes fall out of a
   // flat `parentId` filter; the cross-scope edge derivation and the breadcrumb
-  // trail are each ONE recursive CTE over endpoint / scope ancestry.
-  const [interiorNodes, crossScopeRows, breadcrumbs] = await Promise.all([
-    db.node.findMany({
-      where: { projectId: project.id, parentId: canvasNodeId, deletedAt: null },
-      orderBy: { createdAt: "asc" },
-    }),
-    // For every active Connection in the Project, walk BOTH endpoints' `parentId`
-    // ancestry toward the scope, emitting the on-scope representative of each end
-    // (`*_rep`, null when that end is off-scope). `live_edges` keeps only the
-    // Connections whose both endpoints are live (a soft-deleted endpoint hides
-    // the Connection — the same posture the prior interior-edges relation filter
-    // had). The recursive arm climbs only while the current node's parent is
-    // still distinct from the scope (so it STOPS at the representative) and under
-    // the depth cap; a clip sets `truncated`. The final filter drops the
-    // "both reps equal" collapse and the "neither present" case in SQL, leaving
-    // exactly the interior + cross-scope rows the service partitions below.
-    db.$queryRaw<CrossScopeEdgeRow[]>`
+  // trail are each ONE recursive CTE over endpoint / scope ancestry; the boundary-
+  // proxy placements are a flat read of this scope's persisted view coordinates
+  // (#91 / ADR-0036), joined onto the derived proxies below by `realEndpointId`.
+  const [interiorNodes, crossScopeRows, breadcrumbs, proxyPlacements] =
+    await Promise.all([
+      db.node.findMany({
+        where: {
+          projectId: project.id,
+          parentId: canvasNodeId,
+          deletedAt: null,
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      // For every active Connection in the Project, walk BOTH endpoints' `parentId`
+      // ancestry toward the scope, emitting the on-scope representative of each end
+      // (`*_rep`, null when that end is off-scope). `live_edges` keeps only the
+      // Connections whose both endpoints are live (a soft-deleted endpoint hides
+      // the Connection — the same posture the prior interior-edges relation filter
+      // had). The recursive arm climbs only while the current node's parent is
+      // still distinct from the scope (so it STOPS at the representative) and under
+      // the depth cap; a clip sets `truncated`. The final filter drops the
+      // "both reps equal" collapse and the "neither present" case in SQL, leaving
+      // exactly the interior + cross-scope rows the service partitions below.
+      db.$queryRaw<CrossScopeEdgeRow[]>`
       WITH RECURSIVE live_edges AS (
         SELECT
           e.id                AS edge_id,
@@ -440,15 +459,15 @@ export async function getCanvas(
           )
         )
       ORDER BY le.created_at ASC, le.edge_id ASC`,
-    // The breadcrumb trail walks `parentId` from the scope up to the root in
-    // one recursive CTE (ADR-0006). At the root scope there are no ancestors,
-    // so skip the query. `ANCESTRY_DEPTH_CAP` is belt-and-suspenders against a
-    // cycle-prevention regression (`moveNode` owns prevention, ADR-0024) and a
-    // real depth cap; a walk that reaches it is detected below and throws
-    // rather than returning a silently-truncated trail.
-    canvasNodeId === null
-      ? Promise.resolve<{ id: string; title: string; kind: NodeKind }[]>([])
-      : db.$queryRaw<{ id: string; title: string; kind: NodeKind }[]>`
+      // The breadcrumb trail walks `parentId` from the scope up to the root in
+      // one recursive CTE (ADR-0006). At the root scope there are no ancestors,
+      // so skip the query. `ANCESTRY_DEPTH_CAP` is belt-and-suspenders against a
+      // cycle-prevention regression (`moveNode` owns prevention, ADR-0024) and a
+      // real depth cap; a walk that reaches it is detected below and throws
+      // rather than returning a silently-truncated trail.
+      canvasNodeId === null
+        ? Promise.resolve<{ id: string; title: string; kind: NodeKind }[]>([])
+        : db.$queryRaw<{ id: string; title: string; kind: NodeKind }[]>`
           WITH RECURSIVE ancestry AS (
             SELECT n.id, n.title, n.kind, n."parentId", 0 AS depth
             FROM "Node" n
@@ -464,7 +483,27 @@ export async function getCanvas(
               AND a.depth < ${ANCESTRY_DEPTH_CAP}
           )
           SELECT id, title, kind FROM ancestry ORDER BY depth DESC`,
-  ]);
+      // This scope's persisted boundary-proxy placements (#91 / ADR-0036). A flat
+      // read keyed by the scope's container (`null` at the root scope, matching the
+      // `containerNodeId` natural-key column); joined onto the derived proxies below
+      // by `realEndpointId`. Stale rows for an endpoint no longer crossing this scope
+      // simply find no proxy to attach to and are ignored — harmless, and reclaimed
+      // by the FK cascade when either Node is hard-deleted.
+      db.boundaryProxyPlacement.findMany({
+        where: { containerNodeId: canvasNodeId },
+        select: { realEndpointId: true, posX: true, posY: true },
+      }),
+    ]);
+
+  // Index placements by the off-scope endpoint they pin — the COALESCED key (#90),
+  // so every per-edge proxy row sharing a `realEndpointId` reads the same stored
+  // coordinate.
+  const placementByEndpoint = new Map<string, { posX: number; posY: number }>(
+    proxyPlacements.map((p) => [
+      p.realEndpointId,
+      { posX: p.posX, posY: p.posY },
+    ]),
+  );
 
   // A walk that reached the depth ceiling returns a silently-truncated trail.
   // Surface it as a typed error rather than handing back a quietly-incomplete
@@ -517,12 +556,15 @@ export async function getCanvas(
     } else if (row.source_rep !== null) {
       // Target is off-scope → its boundary proxy stands in on this Canvas.
       const proxyNodeId = `proxy_${row.id}`;
+      const placement = placementByEndpoint.get(row.target_id);
       boundaryProxies.push({
         nodeId: proxyNodeId,
         title: row.target_title,
         kind: row.target_kind,
         realEndpointId: row.target_id,
         edgeId: row.id,
+        posX: placement?.posX ?? null,
+        posY: placement?.posY ?? null,
       });
       interiorEdges.push({
         ...base,
@@ -532,12 +574,15 @@ export async function getCanvas(
     } else if (row.target_rep !== null) {
       // Source is off-scope → its boundary proxy stands in on this Canvas.
       const proxyNodeId = `proxy_${row.id}`;
+      const placement = placementByEndpoint.get(row.source_id);
       boundaryProxies.push({
         nodeId: proxyNodeId,
         title: row.source_title,
         kind: row.source_kind,
         realEndpointId: row.source_id,
         edgeId: row.id,
+        posX: placement?.posX ?? null,
+        posY: placement?.posY ?? null,
       });
       interiorEdges.push({
         ...base,
@@ -879,6 +924,105 @@ export async function updatePositions(
       }),
     ),
   );
+}
+
+/**
+ * Persist where a boundary proxy sits on one scope's Canvas (#91 / ADR-0036). The
+ * proxy's IDENTITY stays fully derived (ADR-0031 emits no proxy row); this writes
+ * ONLY a view coordinate to `BoundaryProxyPlacement`, joined back additively by
+ * `getCanvas`. Owner-only (ADR-0001): authorization comes from the actor against
+ * the Project owner, never from `input`.
+ *
+ * The natural key is `(containerNodeId, realEndpointId)` — the SCOPE's container
+ * (null at the root scope) plus the off-scope endpoint, the COALESCED key (#90),
+ * never the per-edge `proxy_<edgeId>` view id. Both Node ids are confirmed live in
+ * THIS Project before writing (the `updatePositions` set-membership posture), so a
+ * foreign or soft-deleted id can never place a row; `containerNodeId === null` is
+ * the legitimate root scope and skips the container check.
+ *
+ * Upsert by hand, NOT via `db.boundaryProxyPlacement.upsert`: the uniqueness lives
+ * in a hand-authored `NULLS NOT DISTINCT` partial index (ADR-0010), not an
+ * `@@unique`, so Prisma generates NO compound `WhereUniqueInput` to upsert against,
+ * and even a generated one would not honour NULLS-NOT-DISTINCT for the root-scope
+ * `null` case. `findFirst` + branch is the service-primary path; the `P2002`
+ * backstop catches the READ-COMMITTED race where two concurrent first-drags of the
+ * same proxy both miss the find and one loses the insert — re-resolve and update
+ * the winner's row rather than surfacing a spurious conflict (ADR-0010
+ * service-primary + index-backstop).
+ */
+export async function upsertBoundaryProxyPlacement(
+  db: Db,
+  actor: Actor,
+  input: UpsertBoundaryProxyPlacementInput,
+): Promise<{ posX: number; posY: number }> {
+  const { projectId, containerNodeId, realEndpointId, posX, posY } =
+    upsertBoundaryProxyPlacementInput.parse(input);
+
+  const project = await db.project.findFirst({
+    where: { id: projectId, deletedAt: null },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanWrite(actor, project);
+
+  // Both endpoints must be live Nodes in this (owned) Project — the off-scope
+  // endpoint always, the container only when non-null (null is the root scope,
+  // which has no container Component). A foreign or soft-deleted id surfaces as
+  // not-found rather than placing an orphan row (mirrors `updatePositions`).
+  const requiredIds =
+    containerNodeId === null
+      ? [realEndpointId]
+      : [containerNodeId, realEndpointId];
+  const live = await db.node.findMany({
+    where: {
+      projectId: project.id,
+      id: { in: requiredIds },
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  if (live.length !== new Set(requiredIds).size) {
+    throw new NotFoundError();
+  }
+
+  const existing = await db.boundaryProxyPlacement.findFirst({
+    where: { containerNodeId, realEndpointId },
+    select: { id: true },
+  });
+  if (existing) {
+    const updated = await db.boundaryProxyPlacement.update({
+      where: { id: existing.id },
+      data: { posX, posY },
+      select: { posX: true, posY: true },
+    });
+    return updated;
+  }
+
+  try {
+    const created = await db.boundaryProxyPlacement.create({
+      data: { containerNodeId, realEndpointId, posX, posY },
+      select: { posX: true, posY: true },
+    });
+    return created;
+  } catch (error) {
+    // Lost the insert race against a concurrent first-drag of the same proxy:
+    // the row now exists, so update it instead of surfacing a phantom conflict.
+    if (isPrismaUniqueViolation(error)) {
+      const row = await db.boundaryProxyPlacement.findFirst({
+        where: { containerNodeId, realEndpointId },
+        select: { id: true },
+      });
+      if (row) {
+        return db.boundaryProxyPlacement.update({
+          where: { id: row.id },
+          data: { posX, posY },
+          select: { posX: true, posY: true },
+        });
+      }
+    }
+    throw error;
+  }
 }
 
 /**

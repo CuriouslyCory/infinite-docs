@@ -248,10 +248,47 @@ model Node {
     // Component is ignored (ADR-0035).
     tracePoints TracePoint[] @relation("NodeTracePoints")
 
+    // Per-scope boundary-proxy placements (#91 / ADR-0036). `containerPlacements`
+    // are the placements ON this Component's interior Canvas (keyed by the off-scope
+    // endpoint); `endpointPlacements` are the placements OF this Component as the
+    // off-scope endpoint, across every scope that draws a proxy for it. Both cascade
+    // on hard-delete; a placement is an adjunct view coordinate, never part of the
+    // boundary proxy's derived identity (ADR-0031, preserved).
+    containerPlacements BoundaryProxyPlacement[] @relation("ContainerPlacements")
+    endpointPlacements  BoundaryProxyPlacement[] @relation("EndpointPlacements")
+
     @@index([projectId, parentId])
     @@index([parentId])
     @@index([sourceSpecId])
     @@index([deletionId])
+}
+
+// A persisted VIEW coordinate for a boundary proxy — where, on one scope's Canvas,
+// the read-only stand-in for an off-scope Component sits (CONTEXT.md "Boundary
+// proxy"; #91 / ADR-0036, builds on ADR-0031). The boundary proxy's IDENTITY stays
+// fully derived from endpoint ancestry (ADR-0031 emits no proxy row); this table
+// persists ONLY the drag position, joined back at read time as additive nullable
+// `posX`/`posY` on each derived proxy. The natural key is `(containerNodeId,
+// realEndpointId)`: the scope's Canvas (its container Component, null at the root
+// scope) plus the off-scope endpoint the proxy stands in for — NEVER the
+// per-crossing-edge `proxy_<edgeId>` id, so coalesced proxies (#90) sharing one
+// `realEndpointId` resolve to ONE placement. The uniqueness over that pair is a
+// hand-authored `NULLS NOT DISTINCT` index in the migration (Prisma can't express
+// it, and a plain `@@unique` would treat the root-scope null `containerNodeId` as
+// distinct and admit duplicate root-scope rows); see ADR-0010 / ADR-0036.
+model BoundaryProxyPlacement {
+    id              String   @id @default(cuid())
+    // Null at the root scope (the proxy sits on the Project's root Canvas).
+    containerNodeId String?
+    container       Node?    @relation("ContainerPlacements", fields: [containerNodeId], references: [id], onDelete: Cascade)
+    realEndpointId  String
+    realEndpoint    Node     @relation("EndpointPlacements", fields: [realEndpointId], references: [id], onDelete: Cascade)
+    posX            Float    @default(0)
+    posY            Float    @default(0)
+    createdAt       DateTime @default(now())
+    updatedAt       DateTime @updatedAt
+
+    @@index([containerNodeId])
 }
 
 // The data-model representation of a Connection (see CONTEXT.md "Connection /

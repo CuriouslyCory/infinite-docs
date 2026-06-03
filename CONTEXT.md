@@ -60,7 +60,10 @@ Component is derived from a **Spec** — the generation that populates them is #
 a validated parent), `getCanvas` (with **breadcrumbs**), `updateNode` (title
 only), `updateNodeDocumentation` (the narrow owner-only autosave feeding the
 detail-panel markdown editor — ADR-0015), `updatePositions` (batched on
-drag-stop), `moveNode` (reparent to a new Canvas scope; cycle-creating moves
+drag-stop), `upsertBoundaryProxyPlacement` (the single owner-only write that
+persists where a **boundary proxy** sits on one scope's **Canvas**, keyed by
+`(containerNodeId, realEndpointId)` — #91 / ADR-0036), `moveNode` (reparent to a
+new Canvas scope; cycle-creating moves
 reject as `ValidationError` — the orphan-reject is retired now that Connections
 may span scopes, so a reparent never strands an incident Connection, ADR-0024 as
 amended by #62), and the cascading `deleteNode` / `restoreNode` pair (see
@@ -331,10 +334,21 @@ the far endpoint of three crossing Connections produces three `boundaryProxies` 
 addressable by the edge that produced it and React Flow keys never collide. On the Canvas these
 per-edge rows are **coalesced at render** — rows sharing a `realEndpointId` draw as one node with
 all crossing Connections routed to it (#90) — a view-only collapse that never touches the per-edge
-rows, the cache mirror, or the Connections list. They persist no rows of their own. Each row is `{ nodeId, title, kind, realEndpointId, edgeId }` — **no `origin`, no
-`direct`/`inherited` partition, no transitive walk** (that whole framing died with the Flow model;
-ADR-0031 supersedes the boundary halves of ADR-0012/0016). A boundary proxy is a **passive node**
-(no Component-detail panel, no Descent, no hover-prefetch). The code term is **boundary-proxy**.
+rows, the cache mirror, or the Connections list. The proxy's **identity is fully derived** — it
+persists no row of its own (ADR-0031); the only thing persisted is an adjunct **placement** (where
+it sits on this scope's Canvas), kept in the separate `BoundaryProxyPlacement` table and joined back
+at read time (#91 / ADR-0036, below). Each derived row is `{ nodeId, title, kind, realEndpointId,
+edgeId, posX, posY }` — the first five fields are the **frozen derived identity** (ADR-0031); `posX`
+/ `posY` are **additive, nullable** — the persisted view coordinate for this scope's proxy of
+`realEndpointId` (the coalesced key, so every per-edge row sharing it gets the same coordinate),
+`null` until the proxy is first dragged on this scope (the client then falls back to the off-scope
+left rail). Still **no `origin`, no `direct`/`inherited` partition, no transitive walk** (that whole
+framing died with the Flow model; ADR-0031 supersedes the boundary halves of ADR-0012/0016). A
+boundary proxy is a **passive node** — read-only everywhere except that an **editor may drag it** to
+persist its per-scope placement (the one passive-drag exception, #91 / ADR-0036); no
+Component-detail panel, no Descent, no hover-prefetch, never selectable/connectable/deletable. The
+drag/seed/persist key is always `realEndpointId`, never the per-edge `proxy_<edgeId>` view id. The
+code term is **boundary-proxy**.
 Never frame it as an "external" or "inherited" node — the system has no external Nodes, only
 off-scope ones. *(The cross-scope read is realized now via **getCanvas** (#63 / ADR-0031); client
 rendering of the proxy — as a passive node with a *go to real endpoint* affordance (navigating to
@@ -364,9 +378,13 @@ A derived, read-only React Flow node on a **Canvas** — the **boundary proxy** 
 excluded from the three interactive surfaces a **Component** participates in: the
 **Component-detail panel** (no editable record exists), **Descent** (no interior **Canvas scope**
 to open into), and hover-prefetch (nothing to warm). Passive nodes carry no **Node** row, are
-never `draggable`, `selectable`, or `deletable`, and are partitioned out of every interactive
-pointer handler by a single discriminator so a new passive kind composes by extension rather than
-by sprinkling fresh guards through the click / double-click / hover paths (ADR-0016). The term is
+never `selectable`, `connectable`, or `deletable`, and are partitioned out of every interactive
+*pointer* handler by a single discriminator so a new passive kind composes by extension rather than
+by sprinkling fresh guards through the click / double-click / hover paths (ADR-0016). The one
+interactive exception is **drag**: the **boundary proxy** is draggable for an **editor** so its
+per-scope **placement** persists (#91 / ADR-0036) — it inherits the Canvas's `nodesDraggable=canEdit`
+(so a **viewer** still cannot drag it) rather than pinning `draggable:false`, and `onNodeDragStop`
+is the sole interactive handler it participates in. The term is
 **passive** — not "read-only" (which is overloaded with the capability-URL viewer surface,
 owner-edit vs viewer-read) and not "non-interactive" (which over-claims — passive nodes still
 expand and collapse their own internals; they are inert *with respect to the Canvas's interactive

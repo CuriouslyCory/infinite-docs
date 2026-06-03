@@ -414,6 +414,32 @@ export const updatePositionsInput = z.object({
 export type UpdatePositionsInput = z.infer<typeof updatePositionsInput>;
 
 /**
+ * Input for persisting where a boundary proxy sits on one scope's Canvas (#91 /
+ * ADR-0036). Addressed by `projectId` (an internal handle, never the capability
+ * slug — writes are never slug-granted, ADR-0002): the service authorizes once
+ * against the Project owner, then confirms both Node ids belong to that Project
+ * before writing. The natural key is `(containerNodeId, realEndpointId)`:
+ *   - `containerNodeId` is the SCOPE's container Component, REQUIRED but NULLABLE —
+ *     `null` is the root Canvas (its proxies sit at the root scope), not "unset".
+ *   - `realEndpointId` is the off-scope Component the proxy stands in for — the
+ *     stable, coalesced key (#90), NEVER the per-edge `proxy_<edgeId>` view id.
+ * A single placement per call: a boundary proxy is `selectable:false`, so it can
+ * never be part of a multi-select drag, so there is no batch (unlike
+ * `updatePositions`). Persisting only a view coordinate keeps the proxy's identity
+ * fully derived (ADR-0031).
+ */
+export const upsertBoundaryProxyPlacementInput = z.object({
+  projectId: z.string().min(1),
+  containerNodeId: z.string().min(1).nullable(),
+  realEndpointId: z.string().min(1),
+  posX: z.number().finite(),
+  posY: z.number().finite(),
+});
+export type UpsertBoundaryProxyPlacementInput = z.infer<
+  typeof upsertBoundaryProxyPlacementInput
+>;
+
+/**
  * Input for deleting a Component. Addressed by the Node `id` — the natural key
  * for an existing row, and how a future MCP "delete" tool arrives: the service
  * loads the Node, resolves its Project, and enforces owner-only access

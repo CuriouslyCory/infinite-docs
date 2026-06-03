@@ -61,11 +61,22 @@ excluded from every interactive surface a Component participates in: the
 interior **Canvas scope** to open into), and hover-prefetch (nothing to
 warm). The current members are `boundary-proxy` (per-proxy stand-in, Slice 3)
 and `boundary-group` (the inherited-proxy container, Slice 4). Passive nodes
-carry no `Node` row, are never `draggable`, `selectable`, or `deletable`,
-and are recognized by a single discriminator — `isPassiveNode(node)` in
-`canvas.tsx` — that the three interactive pointer handlers
-(`onNodeClick`, `onNodeDoubleClick`, `onNodeMouseEnter`) call in identical
-shape (`if (isPassiveNode(node)) return;`).
+carry no `Node` row, are never `selectable` or `deletable`, and are recognized
+by a single discriminator — `isPassiveNode(node)` in `canvas.tsx` — that the
+three interactive *pointer* handlers (`onNodeClick`, `onNodeDoubleClick`,
+`onNodeMouseEnter`) call in identical shape (`if (isPassiveNode(node)) return;`).
+
+**Drag exception (amended by [ADR-0036](0036-boundary-proxy-placement-persistence.md),
+#91):** "never `draggable`" no longer holds for the boundary proxy. A boundary
+proxy is draggable for an **editor** so its per-scope placement can persist — it
+INHERITS the Canvas's `nodesDraggable={canEdit}` (so a viewer still cannot drag it)
+rather than pinning `draggable:false`, and `onNodeDragStop` is the sole interactive
+handler it participates in. This is a deliberately narrow widening of the
+passive-node contract: the proxy stays out of the three *pointer* handlers above and
+stays non-selectable / non-connectable / non-deletable — it is "passive" with
+respect to every interactive surface EXCEPT a single placement-persisting drag.
+ADR-0036 owns the persistence and the reviewable invariant that the drag key is
+`realEndpointId`, never `proxy_<edgeId>`.
 
 `isPassiveNode` takes `CanvasRFNode` (the discriminated union of the Canvas's
 three node kinds), not `{ type?: string }`. The tighter type does three

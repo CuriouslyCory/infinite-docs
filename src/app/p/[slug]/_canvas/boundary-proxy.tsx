@@ -34,13 +34,17 @@ export type BoundaryProxyNode = Node<BoundaryProxyNodeData, "boundary-proxy">;
  * are coalesced at render into a single node (#90), the row-per-edge data shape
  * unchanged. Registered under the `nodeTypes` key `boundary-proxy`.
  *
- * Passive (ADR-0016): it carries no `Node` row, is never draggable/selectable/
- * deletable, and is excluded from every interactive pointer handler by the
- * island's `isPassiveNode` guard. Its ONE affordance is "go to the real endpoint"
- * — which navigates to that off-scope Component's own scope (its interior Canvas)
- * via the shared Descent callback. We say "Go to", never "Descend"/"Open": the
- * real endpoint may be an ancestor (lineal/ingress), so the navigation can be
- * lateral or upward, not a true Descent.
+ * Passive (ADR-0016): it carries no `Node` row, is never selectable/connectable/
+ * deletable, and is excluded from every interactive pointer handler by the island's
+ * `isPassiveNode` guard. The ONE exception is DRAG (#91 / ADR-0036): an editor may
+ * drag it to persist its per-scope placement (keyed by `realEndpointId`), so it
+ * inherits the island's `nodesDraggable={canEdit}` rather than pinning
+ * `draggable:false` — drag-stop is the only interactive handler it participates in.
+ * Its ONE click affordance is "go to the real endpoint" — which navigates to that
+ * off-scope Component's own scope (its interior Canvas) via the shared Descent
+ * callback. We say "Go to", never "Descend"/"Open": the real endpoint may be an
+ * ancestor (lineal/ingress), so the navigation can be lateral or upward, not a true
+ * Descent.
  *
  * Client-only: domain types come from `~/lib` (never `~/server` or the generated
  * Prisma client), so the server graph stays out of the browser bundle (ADR-0004).

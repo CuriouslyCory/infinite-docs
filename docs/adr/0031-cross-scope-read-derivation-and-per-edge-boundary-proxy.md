@@ -155,19 +155,29 @@ different consumers, and are not to be DRY'd into one CTE.
   single round trip. Re-introducing a stored `Edge.canvasNodeId`, or splitting the
   walk into a per-endpoint / per-level query, regresses this ADR (it inverts
   ADR-0005 the same way ADR-0028 first did).
-- **Reviewable invariant:** a `boundaryProxies` row is exactly
+- **Reviewable invariant:** a `boundaryProxies` row's DERIVED identity is exactly
   `{ nodeId, title, kind, realEndpointId, edgeId }`. Re-introducing `origin`,
   `isDirect`, `inherited`, or any transitive-projection field regresses this ADR.
+  *(Realized in #91 → [ADR-0036](0036-boundary-proxy-placement-persistence.md):
+  the row gains additive nullable `posX`/`posY` — a persisted view coordinate
+  joined from a separate table — which leaves the five derived fields frozen and
+  is NOT a transitive-projection field.)*
 - **Reviewable invariant:** boundary proxies are **per crossing edge** — the data
   layer never de-dupes them by far Node. Visual coalescing belongs to the canvas
   client (#65).
 - **Reviewable invariant:** the depth-cap truncation is loud for the
   connection-ancestry walk too — a clip throws, never silently drops a
   Connection.
-- **Boundary proxies persist no rows.** They are derived on every read; no
-  `BoundaryProxy` table exists or should be added (a materialization proposal
-  would regress the "derived, not stored" posture this ADR shares with ADR-0016's
-  passive-node design).
+- **The boundary proxy's IDENTITY persists no rows.** It is derived on every read;
+  no `BoundaryProxy` table exists or should be added, and a proposal to materialize
+  the *identity* (title/kind/realEndpointId/edgeId) would regress the "derived, not
+  stored" posture this ADR shares with ADR-0016's passive-node design. *(Realized in
+  #91 → [ADR-0036](0036-boundary-proxy-placement-persistence.md): a separate
+  `BoundaryProxyPlacement` table persists ONLY a per-scope view coordinate, keyed by
+  `(containerNodeId, realEndpointId)` and joined back as the additive nullable
+  `posX`/`posY` above. This does not materialize the proxy — the proxy still exists
+  iff the cross-scope derivation emits it — so the "derived, not stored" identity
+  invariant holds; ADR-0036 reconciles the two.)*
 - **`pnpm check` cannot see into raw SQL** (ADR-0006): a wrong identifier or a
   rep-math error passes ESLint and `tsc` and fails only at runtime, so this
   slice's correctness rests on the service tests running against real Postgres
