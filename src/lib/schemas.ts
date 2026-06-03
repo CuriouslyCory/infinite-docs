@@ -240,6 +240,24 @@ export const getCanvasInput = z.object({
 export type GetCanvasInput = z.input<typeof getCanvasInput>;
 
 /**
+ * Input for the cross-layer **Trace view** read (#58). Addressed by the
+ * capability `slug` (the read grant, ADR-0002) plus the working-trace point set
+ * `nodeIds` — the trace points live in client `localStorage` (#57), so the
+ * server cannot prefetch this; the island passes them at query time. Narrow and
+ * required (CONTEXT.md "prefer narrow required inputs"): `min(1)` rejects an
+ * empty set at the edge, and `max(500)` bounds the input before any derivation
+ * runs (defense in depth with the service-side `TRACE_NODE_CAP`). The service
+ * itself filters to live, in-Project nodes and returns the empty shape below two
+ * survivors — so a stale / foreign / soft-deleted id is silently dropped, never
+ * an error.
+ */
+export const getTraceViewInput = z.object({
+  slug: z.string().min(1),
+  nodeIds: z.array(z.string().min(1)).min(1).max(500),
+});
+export type GetTraceViewInput = z.infer<typeof getTraceViewInput>;
+
+/**
  * Input for the project-wide Component list that powers the "Connect to…" search
  * (#66). Addressed by the capability `slug` (the read grant, ADR-0002) — a flat,
  * scope-independent read of every live Component, deliberately distinct from the

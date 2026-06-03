@@ -8,17 +8,23 @@ import { KIND_ICON, KIND_LABEL } from "~/lib/node-kinds";
 import type { ProjectComponent } from "~/lib/types";
 import { api } from "~/trpc/react";
 
+import { TraceFlow } from "~/app/p/[slug]/_trace/trace-flow";
+
 /**
- * The **Trace view** island (#57): renders the **working trace** as a
- * working-set manager / empty state. The cross-layer on-path graph is #58 and
- * is deliberately absent here.
+ * The **Trace view** island (#57 / #58): below two **trace points** it renders
+ * the **working trace** as a working-set manager / empty state; at two or more
+ * it renders the cross-layer **Trace subgraph** — every on-path Component and
+ * Connection, expanded across all layers at once, read-only (#58 / ADR-0034).
  *
- * Reads the per-Project trace-point id set from the working-trace store and
- * resolves each id to a `{ title, kind }` via the slug-readable
- * `listProjectComponents` (prefetched by the server shell, so no waterfall).
- * Storing only ids keeps the set small and never stale on rename/re-kind; an id
- * whose Component was soft-deleted resolves to nothing and renders as a muted
- * "Removed component" row with a remove control (#59 formalizes pruning).
+ * Reads the per-Project trace-point id set from the working-trace store. The
+ * working-set manager resolves each id to a `{ title, kind }` via the
+ * slug-readable `listProjectComponents` (prefetched by the server shell, so no
+ * waterfall). The cross-layer render fires `getTraceView({ slug, nodeIds })`
+ * once mounted — the trace points are client `localStorage`, so the RSC can't
+ * prefetch this; it is the only read that waits for the client, kept a single
+ * query with no waterfall (perf philosophy #1). Storing only ids keeps the set
+ * small and never stale on rename/re-kind; a soft-deleted id is silently dropped
+ * by the service (#59 formalizes pruning).
  *
  * Client-only and server-free: domain types come from `~/lib` via top-level
  * `import type` (ADR-0004), never `~/server`.
@@ -36,6 +42,10 @@ export function TraceView({ slug }: { slug: string }) {
   }, [components]);
 
   const points = useMemo(() => [...tracePoints], [tracePoints]);
+
+  if (count >= 2) {
+    return <TraceCrossLayer slug={slug} nodeIds={points} />;
+  }
 
   if (count === 0) {
     return (
@@ -79,6 +89,46 @@ export function TraceView({ slug }: { slug: string }) {
           />
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * The cross-layer render (#58): fires `getTraceView` for the working-trace point
+ * set and hands the derived Trace subgraph to the read-only `TraceFlow`. Below
+ * two SERVER-VALID points (stale/foreign/soft-deleted ids drop out), it shows
+ * the same insufficient-points empty state as the working-set manager (#57 copy)
+ * so a Trace built only from removed Components doesn't render a blank canvas.
+ */
+function TraceCrossLayer({ slug, nodeIds }: { slug: string; nodeIds: string[] }) {
+  const { data, isLoading } = api.architecture.getTraceView.useQuery({
+    slug,
+    nodeIds,
+  });
+
+  if (isLoading || !data) {
+    return (
+      <div className="px-6 py-20 text-center text-sm text-white/40">
+        Deriving trace…
+      </div>
+    );
+  }
+
+  if (data.tracePointIds.length < 2 || data.nodes.length === 0) {
+    return (
+      <div className="mx-auto flex max-w-md flex-col items-center gap-3 px-6 py-20 text-center">
+        <Route size={28} aria-hidden className="text-white/40" />
+        <h2 className="text-lg font-semibold text-white">Trace</h2>
+        <p className="text-sm text-white/60">
+          Add 2 or more trace points on live Components to see the graph.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full w-full">
+      <TraceFlow slug={slug} data={data} />
     </div>
   );
 }
