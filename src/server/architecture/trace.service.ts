@@ -466,19 +466,60 @@ export async function getTraceView(
   );
   addNestingAncestors(onPathNodeIds, byId);
 
-  // Enforce the node cap deterministically: sort by id so truncation is stable,
-  // slice, and keep only Connections whose BOTH endpoints survived. Truncate +
-  // surface — never hang, never throw (ADR-0034).
+  // Enforce the node cap, but the kept set MUST stay ancestor-closed: the client
+  // layout (`trace-layout.ts`) treats a node as a root when its `parentId` is
+  // absent from the set, so a kept node whose ancestor was sliced away would be
+  // flattened out of its boxes — a broken hierarchy. A naive `sort + slice` can
+  // also drop the trace-point endpoints themselves, which then trips the <2
+  // endpoints empty state. So truncation keeps (1) the valid endpoints + their
+  // full ancestor closure as mandatory, then (2) fills the remaining budget
+  // deterministically (id order) with other on-path nodes, pulling each fill
+  // node's ancestor closure in atomically and skipping it whole if it won't fit.
+  const ancestorClosure = (id: string): string[] => {
+    const chain: string[] = [];
+    let current: string | null = id;
+    let depth = 0;
+    while (current !== null && depth < ANCESTRY_DEPTH_CAP) {
+      chain.push(current);
+      current = byId.get(current)?.parentId ?? null;
+      depth++;
+    }
+    return chain;
+  };
+
   let truncated = false;
   let warning: string | null = null;
-  let keptIds = [...onPathNodeIds].sort();
-  if (keptIds.length > TRACE_NODE_CAP) {
-    truncated = true;
-    keptIds = keptIds.slice(0, TRACE_NODE_CAP);
-    warning = `Showing the first ${TRACE_NODE_CAP} Components on these paths — refine your trace points to narrow it.`;
-  }
-  const kept = new Set(keptIds);
+  const sortedOnPath = [...onPathNodeIds].sort();
   const validPointSet = new Set(validPoints);
+
+  let kept: Set<string>;
+  if (sortedOnPath.length <= TRACE_NODE_CAP) {
+    kept = onPathNodeIds;
+  } else {
+    truncated = true;
+    warning = `Showing the first ${TRACE_NODE_CAP} Components on these paths — refine your trace points to narrow it.`;
+
+    // Mandatory: the valid endpoints and the full ancestor closure of each. If
+    // even this exceeds the cap it is the genuine overflow — keep it (still
+    // ancestor-closed) and surface the warning rather than silently dropping
+    // endpoints.
+    kept = new Set<string>();
+    for (const point of [...validPoints].sort()) {
+      for (const id of ancestorClosure(point)) kept.add(id);
+    }
+
+    // Fill the remaining budget deterministically, each fill node together with
+    // its ancestor closure, so the set never gains a dangling parent.
+    for (const id of sortedOnPath) {
+      if (kept.size >= TRACE_NODE_CAP) break;
+      if (kept.has(id)) continue;
+      const closure = ancestorClosure(id);
+      const additions = closure.filter((c) => !kept.has(c));
+      if (kept.size + additions.length > TRACE_NODE_CAP) continue;
+      for (const c of additions) kept.add(c);
+    }
+  }
+  const keptIds = [...kept].sort();
 
   const resultNodes: TraceViewNode[] = keptIds
     .map((id) => byId.get(id))

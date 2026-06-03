@@ -33,7 +33,7 @@ slug-bound — possession of the capability slug IS the read grant.
 
 ## Context
 
-#57 shipped the **working trace**: a per-Project, client-only set of **trace
+Issue `#57` shipped the **working trace**: a per-Project, client-only set of **trace
 point** Node ids in `localStorage`, plus the working-set manager / empty state.
 The cross-layer derivation and render were explicitly deferred to this slice.
 

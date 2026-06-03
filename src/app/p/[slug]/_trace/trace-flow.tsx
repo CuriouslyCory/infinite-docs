@@ -18,7 +18,7 @@ import type { TraceView, TraceViewNode } from "~/lib/types";
 
 import { layoutTrace } from "./trace-layout";
 import { TraceConnectionEdgeView } from "./trace-edge";
-import { TraceComponentNodeView } from "./trace-node";
+import { TraceComponentNodeView, type TraceComponentNode } from "./trace-node";
 
 // Module-level so React Flow doesn't re-mount every node/edge each render (the
 // key perf guard, mirrors the canvas island).
@@ -62,9 +62,9 @@ function TraceFlowInner({ slug, data }: { slug: string; data: TraceView }) {
   );
 
   const onNodeClick = useCallback(
-    (_event: React.MouseEvent, node: { id: string }) => {
+    (_event: React.MouseEvent, node: TraceComponentNode) => {
       // Only leaf Components open the panel; a container box is structural.
-      if (byId.get(node.id)) setSelectedId(node.id);
+      if (!node.data.isContainer && byId.has(node.id)) setSelectedId(node.id);
     },
     [byId],
   );

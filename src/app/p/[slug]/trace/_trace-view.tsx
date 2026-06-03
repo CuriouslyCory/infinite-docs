@@ -101,15 +101,23 @@ export function TraceView({ slug }: { slug: string }) {
  * so a Trace built only from removed Components doesn't render a blank canvas.
  */
 function TraceCrossLayer({ slug, nodeIds }: { slug: string; nodeIds: string[] }) {
-  const { data, isLoading } = api.architecture.getTraceView.useQuery({
+  const { data, isLoading, isError } = api.architecture.getTraceView.useQuery({
     slug,
     nodeIds,
   });
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return (
       <div className="px-6 py-20 text-center text-sm text-white/40">
         Deriving trace…
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="px-6 py-20 text-center text-sm text-white/40">
+        Couldn’t derive this trace right now.
       </div>
     );
   }
