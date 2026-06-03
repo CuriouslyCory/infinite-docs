@@ -370,7 +370,12 @@ ADR-0016.)*
 ### Project
 The root container of one architecture graph. Owned by a single user (`ownerId`) and addressed
 by a unique, unguessable **capability-URL slug**. Holds the top-level **Canvas** and everything
-that descends from it. Soft-deletable (`deletedAt`). The first concrete model in the system.
+that descends from it. Soft-deletable (`deletedAt`). The first concrete model in the system. The
+owner deletes one from the dashboard via a **type-the-title-to-confirm** dialog; `deleteProject`
+is an owner-only **lone soft-delete** (resolve by slug → `assertCanWrite` → stamp `deletedAt`,
+no `deletionId` and no cascade — children keep their rows and simply stop resolving once the
+Project is hidden), mirroring `deleteEdge`. The typed-title match is a client-side friction gate
+only; the real authorization is `assertCanWrite` (ADR-0001).
 
 ### Capability URL / slug
 An unguessable, per-Project URL segment (`slug @unique`) that, by mere possession, grants

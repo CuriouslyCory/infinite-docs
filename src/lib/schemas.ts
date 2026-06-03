@@ -20,6 +20,11 @@ export const getProjectBySlugInput = z.object({
 });
 export type GetProjectBySlugInput = z.infer<typeof getProjectBySlugInput>;
 
+export const deleteProjectInput = z.object({
+  slug: z.string().min(1),
+});
+export type DeleteProjectInput = z.infer<typeof deleteProjectInput>;
+
 /**
  * The expiry choices the Connect-an-agent mint flow offers, in days. `null`
  * means a non-expiring token — an allowed owner choice that carries a standing

@@ -6,6 +6,7 @@ import {
 import { type Actor } from "~/server/architecture/actor";
 import {
   createProject,
+  deleteProject,
   getProjectBySlug,
   listProjects,
 } from "~/server/architecture/project.service";
@@ -50,6 +51,7 @@ import {
   createTraceInput,
   deleteEdgeInput,
   deleteNodeInput,
+  deleteProjectInput,
   deleteTraceInput,
   exportMarkdownInput,
   getCanvasInput,
@@ -97,6 +99,20 @@ export const architectureRouter = createTRPCRouter({
       throw toTRPCError(error);
     }
   }),
+
+  // Owner-only mutation: the service resolves the project by `slug` and enforces
+  // owner access via `assertCanWrite`. `protectedProcedure` is the transport gate
+  // (you must be signed in); the real authorization is in the service (ADR-0001).
+  deleteProject: protectedProcedure
+    .input(deleteProjectInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await deleteProject(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
 
   // Public: the slug is the read capability, so this must work without a session.
   getProjectBySlug: publicProcedure
