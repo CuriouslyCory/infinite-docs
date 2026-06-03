@@ -341,6 +341,22 @@ function messageForConnectFailure(error: unknown): string {
   return "Couldn’t add the connection. Please try again.";
 }
 
+/**
+ * True when a tRPC failure is a `NOT_FOUND`. `deleteEdge` is idempotent in
+ * spirit: an already-deleted Edge reads as not-found (edge.service.ts), so a
+ * concurrent or multi-tab delete surfaces `NOT_FOUND` while the desired end
+ * state — "deleted" — already holds. Both delete paths treat it as terminal
+ * success and keep the optimistic removal rather than resurrecting a stale row.
+ */
+function isNotFoundError(error: unknown): boolean {
+  return (
+    error != null &&
+    typeof error === "object" &&
+    "data" in error &&
+    (error as { data?: { code?: string } }).data?.code === "NOT_FOUND"
+  );
+}
+
 function CanvasInner({
   scope,
   slug,
@@ -1039,7 +1055,10 @@ function CanvasInner({
         patchCanvas((c) => ({
           interiorEdges: c.interiorEdges.filter((e) => e.id !== edge.id),
         }));
-        void removeEdge({ id: edge.id }).catch(() => {
+        void removeEdge({ id: edge.id }).catch((error: unknown) => {
+          // A NOT_FOUND means the Edge was already deleted (concurrent/multi-tab)
+          // — the removal already holds, so leave it dropped instead of re-adding.
+          if (isNotFoundError(error)) return;
           setEdges((es) =>
             es.some((e) => e.id === edge.id) ? es : [...es, edge],
           );
@@ -1098,7 +1117,11 @@ function CanvasInner({
         await removeEdge({ id: connectionId });
         void utils.architecture.getCanvas.invalidate(canvasInput);
         void utils.architecture.listProjectComponents.invalidate({ slug });
-      } catch {
+      } catch (error: unknown) {
+        // A NOT_FOUND means the Connection was already deleted (a concurrent or
+        // multi-tab delete) — the desired "deleted" state already holds, so keep
+        // the optimistic removal rather than resurrecting a stale row/edge/proxy.
+        if (isNotFoundError(error)) return;
         if (prevRow) {
           utils.architecture.listNodeConnections.setData(
             { slug, nodeId: ownerNodeId },
