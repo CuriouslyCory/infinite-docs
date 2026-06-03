@@ -141,3 +141,35 @@ adapter over `applySpec` (ADR-0029). No change to this ADR's route shape, auth
 gate, or non-disclosure rule; the addition is the additive `defineTool` seam
 ADR-0026 reserved. `llms.txt` picks it up via the dynamic catalog render — no
 route edit was needed.
+
+## Amendment — #60 (4th read resource: owner-gated saved Trace)
+
+`READ_RESOURCES` gains a 4th descriptor, **`trace`** —
+`architecture://trace/{traceId}` — that reads one saved **Trace** as
+deterministic markdown of its cross-layer on-path subgraph (#60). It is a pure
+APPEND to the catalog: no change to the auth gate, the single-401 path, or the
+non-disclosing error mapping.
+
+Two things differ from the project-scoped three, and both are deliberate:
+
+- **It is backed by a different service.** The three project resources call
+  `exportMarkdownForActor`; the trace resource calls a new owner-gated front
+  door `getTraceMarkdownForActor(db, actor, { traceId })` (in
+  `trace.service.ts`) — addressed by internal `traceId`, never a slug. The
+  service resolves the Trace → its Project's `ownerId` → `assertCanRead`
+  WITHOUT `viaCapabilitySlug` (owner-only, exactly as `exportMarkdownForActor`).
+  A foreign owner, a soft-deleted Trace, a Trace under a soft-deleted Project,
+  or an unknown id all collapse to one non-disclosing `toMcpReadError` message —
+  existence never leaks across owners. A real, owned, degenerate Trace (< 2 live
+  trace points) is NOT an error: it returns valid markdown with an
+  insufficient-points note (the markdown analogue of the web empty state).
+  This is the same slug-readable-in-app vs owner-gated-MCP asymmetry the
+  in-app saved route (#59) and `exportMarkdown` vs `exportMarkdownForActor`
+  already embody.
+- **The catalog stays data-only; dispatch lives in `resources.ts`.** The
+  descriptor carries a new `kind: "project" | "trace"` discriminant (no service
+  import in `catalog.ts`, so `llms.txt` still does not pull the MCP/Prisma
+  graph). `resources.ts` branches on `descriptor.kind` to pick the service.
+  `enumerateProjects: false` (like `subtree`) — no `resources/list` enumeration
+  of traces; agents learn the `traceId` from the saved route. `llms.txt` picks
+  the new resource up via the dynamic catalog render — no route edit.

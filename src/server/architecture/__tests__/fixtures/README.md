@@ -17,6 +17,11 @@ These `.md` files are **byte-for-byte expected outputs** of `serializeGraph` /
 - Fixed Node / Project ids in the test seed make the output reproducible
   (cuid defaults are random — they would break byte-equality).
 
+- `export-trace-full.md` (#60 / ADR-0017 Amendment) is the byte-expected output
+  of `serializeTrace` for a saved Trace's cross-layer on-path subgraph — the
+  serializer's trace-mode sibling of `serializeGraph`. Locked by the same
+  twice-equal + locale-mutation discipline; regenerate the same way.
+
 - The Flow model is retired (#62 / ADR-0027); the typed cross-scope rewrite
   (#67 / ADR-0017 amendment) re-baselined these fixtures once — each Connection
   serializes exactly once with its interaction glyph, and the subtree Boundary

@@ -157,3 +157,17 @@ canvas"** jump to that Component's real layer (its parent's interior canvas
 - **#60 — MCP trace resource + serializer trace mode.** #58 does not touch
   `markdown.ts`, `export.service.ts`, the MCP path, or `/llms.txt`. The Trace
   render is a React Flow view, not a markdown projection.
+
+## Amendment — #60 (the MCP/serializer consumer landed)
+
+The forward-referenced #60 consumer is realized. The MCP trace resource reads a
+saved Trace by internal `traceId` (owner-gated) and recomputes the on-path
+subgraph — never storing it — by reusing this ADR's exported pure primitives
+(`buildUnifiedGraph` / `onPathUnion` / `addNestingAncestors`) and the
+`TRACE_NODE_CAP` rule, which #60 extracted into a private `capTraceNodes` helper
+shared by both the in-app `getTraceView` and the new
+`getTraceMarkdownForActor`, so the cap (and its ancestor-closed truncation)
+cannot drift between the React Flow view and the markdown. `getTraceView`'s
+algorithm and observable behavior are unchanged (pure code-motion). The markdown
+projection lives in `markdown.ts`'s new `serializeTrace` sibling (see ADR-0017
+Amendment — #60).

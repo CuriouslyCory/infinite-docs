@@ -3,13 +3,17 @@ import { resolve } from "node:path";
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { NotFoundError } from "../errors";
+import { type Actor } from "../actor";
+import { ForbiddenError, NotFoundError } from "../errors";
 import { exportMarkdown } from "../export.service";
 import {
   serializeGraph,
+  serializeTrace,
   type SerializerEdge,
   type SerializerInput,
+  type SerializerTraceInput,
 } from "../markdown";
+import { getTraceMarkdownForActor } from "../trace.service";
 import { resetDb, testDb } from "./helpers/test-db";
 
 beforeEach(async () => {
@@ -384,6 +388,118 @@ describe("serializeGraph (pure, deterministic)", () => {
 });
 
 /**
+ * A fixed-id Trace serializer input (cuids would break byte-equality). Two
+ * trace points across DIFFERENT layers (`n-users` is nested under `n-api`,
+ * `n-db` is a root) so the multi-layer Components ordering and `path:` lines are
+ * exercised; the on-path closure pulls in the intermediate `n-api` and its
+ * ancestor. One Component carries authored docs with a `#`-line inside a fenced
+ * code block (the AST heading-shift round-trip guard).
+ */
+function buildTraceInput(): SerializerTraceInput {
+  return {
+    project: { title: "Test System" },
+    traceName: "Auth → DB",
+    nodes: [
+      {
+        id: "n-api",
+        parentId: null,
+        title: "API Gateway",
+        kind: "SERVICE",
+        documentation:
+          "# Overview\n\nRoutes requests.\n\n```\n# not a heading\n```\n",
+      },
+      {
+        id: "n-users",
+        parentId: "n-api",
+        title: "Users Module",
+        kind: "SERVICE",
+        documentation: "",
+      },
+      {
+        id: "n-db",
+        parentId: null,
+        title: "Postgres",
+        kind: "DATABASE",
+        documentation: "",
+      },
+    ],
+    edges: [
+      {
+        id: "e-users-db",
+        sourceId: "n-users",
+        targetId: "n-db",
+        interaction: "REQUEST",
+        label: "reads from",
+      },
+    ],
+    tracePointIds: ["n-users", "n-db"],
+    truncated: false,
+    warning: null,
+  };
+}
+
+describe("serializeTrace (pure, deterministic)", () => {
+  it("renders the trace export byte-equal to the golden fixture", () => {
+    assertGolden(serializeTrace(buildTraceInput()), "export-trace-full.md");
+  });
+
+  it("is deterministic: the same trace serializes to the same bytes twice", () => {
+    expect(serializeTrace(buildTraceInput())).toBe(
+      serializeTrace(buildTraceInput()),
+    );
+  });
+
+  it("is locale-invariant: mutating process locale does not change the output", () => {
+    const before = serializeTrace(buildTraceInput());
+    const prior = {
+      LANG: process.env.LANG,
+      LC_ALL: process.env.LC_ALL,
+      LC_COLLATE: process.env.LC_COLLATE,
+    };
+    try {
+      process.env.LANG = "fr_FR.UTF-8";
+      process.env.LC_ALL = "fr_FR.UTF-8";
+      process.env.LC_COLLATE = "fr_FR.UTF-8";
+      expect(serializeTrace(buildTraceInput())).toBe(before);
+    } finally {
+      process.env.LANG = prior.LANG;
+      process.env.LC_ALL = prior.LC_ALL;
+      process.env.LC_COLLATE = prior.LC_COLLATE;
+    }
+  });
+
+  it("surfaces a truncation warning blockquote when truncated", () => {
+    const md = serializeTrace({
+      ...buildTraceInput(),
+      truncated: true,
+      warning: "Showing the first 500 Components — refine your trace points.",
+    });
+    expect(md).toContain(
+      "> ⚠ Showing the first 500 Components — refine your trace points.",
+    );
+  });
+
+  it("heading-shifts authored docs via AST, never via regex", () => {
+    const md = serializeTrace(buildTraceInput());
+    expect(md).toContain("#### Overview");
+    expect(md).toContain("```\n# not a heading\n```");
+  });
+
+  it("shows an insufficient-points note for a degenerate (< 2 live points) trace", () => {
+    const md = serializeTrace({
+      project: { title: "P" },
+      traceName: "Lonely",
+      nodes: [],
+      edges: [],
+      tracePointIds: ["n-only"],
+      truncated: false,
+      warning: null,
+    });
+    expect(md).toContain("Fewer than two live trace points");
+  });
+});
+
+/**
  * Integration: the fetch service plumbs the same shape into `serializeGraph`
  * that the pure tests above pin. Uses the real test DB (ADR-0003) and direct
  * inserts with fixed ids so the output matches the golden fixtures byte-for-
@@ -625,5 +741,147 @@ describe("exportMarkdown (service, real DB)", () => {
     expect(markdown).toContain("### List pets {#n-gen-endpoint}");
     expect(markdown).toContain("- kind: Endpoint");
     expect(markdown).not.toMatch(/sourceSpec|specKey|generated/i);
+  });
+});
+
+/**
+ * Integration: the owner-gated MCP Trace read (#60). Seeds a user + project +
+ * nodes + edges + a saved Trace with two cross-layer trace points (direct
+ * inserts, fixed ids — ADR-0003) and asserts the owner-scoping + non-disclosure
+ * posture end-to-end, plus the degenerate empty state.
+ */
+async function seedTrace(ownerId: string): Promise<{
+  traceId: string;
+  usersNodeId: string;
+}> {
+  await testDb.project.create({
+    data: { id: "p-trace", title: "Test System", slug: "trace-slug", ownerId },
+  });
+  await testDb.node.createMany({
+    data: [
+      { id: "tn-api", projectId: "p-trace", parentId: null, title: "API Gateway", kind: "SERVICE" },
+      { id: "tn-users", projectId: "p-trace", parentId: "tn-api", title: "Users Module", kind: "SERVICE" },
+      { id: "tn-db", projectId: "p-trace", parentId: null, title: "Postgres", kind: "DATABASE" },
+    ],
+  });
+  await testDb.edge.create({
+    data: {
+      id: "te-users-db",
+      projectId: "p-trace",
+      sourceId: "tn-users",
+      targetId: "tn-db",
+      interaction: "REQUEST",
+      label: "reads from",
+    },
+  });
+  const trace = await testDb.trace.create({
+    data: {
+      projectId: "p-trace",
+      name: "Auth → DB",
+      points: { create: [{ nodeId: "tn-users" }, { nodeId: "tn-db" }] },
+    },
+    select: { id: true },
+  });
+  return { traceId: trace.id, usersNodeId: "tn-users" };
+}
+
+describe("getTraceMarkdownForActor (service, real DB)", () => {
+  it("renders the owner's own Trace as deterministic markdown", async () => {
+    const owner = await testDb.user.create({ data: { name: "Owner" } });
+    const { traceId } = await seedTrace(owner.id);
+
+    const { markdown } = await getTraceMarkdownForActor(
+      testDb,
+      { userId: owner.id, via: "token" },
+      { traceId },
+    );
+
+    expect(markdown).toContain("# Test System — Trace: Auth → DB");
+    expect(markdown).toContain("## Trace points");
+    expect(markdown).toContain("{#tn-users}");
+    expect(markdown).toContain("{#tn-db}");
+    // The intermediate on-path Component and the Connection are present.
+    expect(markdown).toContain("### Users Module {#tn-users}");
+    expect(markdown).toContain(
+      "Users Module {#tn-users} → Postgres {#tn-db} · reads from",
+    );
+  });
+
+  it("forbids reading a Trace in another user's project (headline cross-owner test)", async () => {
+    const owner = await testDb.user.create({ data: { name: "Owner" } });
+    const intruder = await testDb.user.create({ data: { name: "Intruder" } });
+    const { traceId } = await seedTrace(owner.id);
+
+    await expect(
+      getTraceMarkdownForActor(
+        testDb,
+        { userId: intruder.id, via: "token" },
+        { traceId },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("reports a soft-deleted Trace as not-found", async () => {
+    const owner = await testDb.user.create({ data: { name: "Owner" } });
+    const { traceId } = await seedTrace(owner.id);
+    await testDb.trace.update({
+      where: { id: traceId },
+      data: { deletedAt: new Date() },
+    });
+
+    await expect(
+      getTraceMarkdownForActor(
+        testDb,
+        { userId: owner.id, via: "token" },
+        { traceId },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("reports a Trace under a soft-deleted Project as not-found", async () => {
+    const owner = await testDb.user.create({ data: { name: "Owner" } });
+    const { traceId } = await seedTrace(owner.id);
+    await testDb.project.update({
+      where: { id: "p-trace" },
+      data: { deletedAt: new Date() },
+    });
+
+    await expect(
+      getTraceMarkdownForActor(
+        testDb,
+        { userId: owner.id, via: "token" },
+        { traceId },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("reports an unknown traceId as not-found", async () => {
+    const owner = await testDb.user.create({ data: { name: "Owner" } });
+
+    await expect(
+      getTraceMarkdownForActor(
+        testDb,
+        { userId: owner.id, via: "token" },
+        { traceId: "does-not-exist" },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("returns valid markdown with an insufficient-points note when < 2 live points remain", async () => {
+    const owner = await testDb.user.create({ data: { name: "Owner" } });
+    const { traceId, usersNodeId } = await seedTrace(owner.id);
+    // Soft-delete one endpoint out from under an otherwise-valid owned Trace.
+    await testDb.node.update({
+      where: { id: usersNodeId },
+      data: { deletedAt: new Date() },
+    });
+
+    const actor: Actor = { userId: owner.id, via: "token" };
+    const { markdown } = await getTraceMarkdownForActor(testDb, actor, {
+      traceId,
+    });
+
+    expect(markdown).toContain("# Test System — Trace: Auth → DB");
+    expect(markdown).toContain("Fewer than two live trace points");
   });
 });

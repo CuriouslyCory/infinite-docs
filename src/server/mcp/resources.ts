@@ -6,8 +6,14 @@ import {
 import type { Db } from "~/server/architecture/actor";
 import { exportMarkdownForActor } from "~/server/architecture/export.service";
 import { listProjects } from "~/server/architecture/project.service";
+import { getTraceMarkdownForActor } from "~/server/architecture/trace.service";
 import { actorFromAuthInfo } from "./auth";
-import { MARKDOWN_MIME, READ_RESOURCES, RESOURCE_SCHEME } from "./catalog";
+import {
+  MARKDOWN_MIME,
+  READ_RESOURCES,
+  RESOURCE_SCHEME,
+  uriVar,
+} from "./catalog";
 import { toMcpReadError } from "./errors";
 
 /**
@@ -53,11 +59,21 @@ export function registerArchitectureResources(server: McpServer, db: Db): void {
       async (uri, variables, extra) => {
         const actor = actorFromAuthInfo(extra.authInfo);
         try {
-          const { markdown } = await exportMarkdownForActor(
-            db,
-            actor,
-            descriptor.toInput(variables),
-          );
+          // Each descriptor owns its read service (catalog stays data-only): a
+          // `trace` reads a saved Trace by internal id via the owner-gated
+          // `getTraceMarkdownForActor`; everything else reads a project scope.
+          // Both reuse the same token Actor and the same non-disclosing error
+          // mapping below — only the service + input differ (ADR-0022).
+          const { markdown } =
+            descriptor.kind === "trace"
+              ? await getTraceMarkdownForActor(db, actor, {
+                  traceId: uriVar(variables, "traceId"),
+                })
+              : await exportMarkdownForActor(
+                  db,
+                  actor,
+                  descriptor.toInput!(variables),
+                );
           return {
             contents: [
               { uri: uri.href, mimeType: MARKDOWN_MIME, text: markdown },
