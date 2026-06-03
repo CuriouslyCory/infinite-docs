@@ -289,3 +289,31 @@ determinism contract is enforced format-agnostically.
 - *The export's subtree boundary CTE stays separate from `getCanvas`'s
   ancestry CTE* (ADR-0031 §"Scope of this ADR" — two derivations, two
   purposes, no DRY).
+
+## Amendment — #60 (serializer trace mode)
+
+The serializer gains a **`serializeTrace`** sibling of `serializeGraph` that
+renders a saved **Trace**'s cross-layer on-path subgraph (#60). It is a new
+exported pure function — NOT a widened `SerializerMode` and NOT a branch inside
+`serializeGraph` — because the trace input carries no `rootCanvasNodeId` /
+`boundaryEdges` and adds `tracePointIds` / `traceName` / `truncated`; folding
+those onto `SerializerInput` would force the existing modes to carry trace-only
+fields (or make them optional) and risk shifting the frozen fixtures.
+
+The sibling reuses every clause of the determinism contract **verbatim** by
+importing the same module-private primitives — the codepoint `cmp`, the AST
+`shiftHeadings` over the pinned `mdProcessor`, `interactionGlyph`, `KIND_LABEL`,
+`buildPaths` — so ordering is codepoint-only (every sort through `cmp`; no
+`Set`/`Map` iteration drives output order), no timestamps appear, headings shift
+via AST, and the output ends in a single trailing newline. There is **no
+Boundary section** (a Trace spans all layers at once — every endpoint has a real
+box, ADR-0034). Section order: header (with a server-authored truncation
+warning blockquote when capped) → `## Trace points` (endpoints sorted by
+`cmp(id)`; a degenerate < 2-live-point Trace shows an insufficient-points note)
+→ `## Components` (same ordering/shape as `renderComponentsFull`) →
+`## Connections` (same ordering/shape as `renderConnections`).
+
+The three existing modes (`full` / `index`) and their three golden fixtures are
+**byte-untouched**. A 4th golden fixture (`export-trace-full.md`) plus a
+twice-equal determinism test and a `LANG`/`LC_ALL`/`LC_COLLATE` locale-mutation
+test lock the new mode, in the same harness (ADR-0003) as the existing modes.

@@ -6,6 +6,7 @@ import {
   getTraceInput,
   getTraceViewInput,
   listTracesInput,
+  mcpTraceReadInput,
   renameTraceInput,
   type CreateTraceInput,
   type DeleteTraceInput,
@@ -13,12 +14,14 @@ import {
   type GetTraceViewInput,
   type Interaction,
   type ListTracesInput,
+  type McpTraceReadInput,
   type NodeKind,
   type RenameTraceInput,
 } from "~/lib/schemas";
 import type { Actor, Db } from "./actor";
-import { assertCanWrite } from "./access";
+import { assertCanRead, assertCanWrite } from "./access";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
+import { serializeTrace, type SerializerNode } from "./markdown";
 import { isTraceNameCollision } from "./prisma-errors";
 
 /**
@@ -419,31 +422,21 @@ export function addNestingAncestors(
   }
 }
 
-export async function getTraceView(
+/**
+ * The live node + Connection universe for a Project: both flat findManys on
+ * indexed columns (no CTE needed). Shared by the slug-bound {@link getTraceView}
+ * and the owner-gated {@link getTraceMarkdownForActor} so the two consumers
+ * derive over byte-identical inputs (the on-path subgraph is recomputed, never
+ * stored — ADR-0034). `projectId` is the already-resolved id; authorization is
+ * the caller's responsibility (this helper is fetch-only).
+ */
+async function fetchProjectGraph(
   db: Db,
-  _actor: Actor | null,
-  input: GetTraceViewInput,
-): Promise<TraceView> {
-  const { slug, nodeIds: requestedIds } = getTraceViewInput.parse(input);
-
-  // Slug-bind gate, in parity with `getCanvas` (ADR-0002 / ADR-0034): possession
-  // of the slug IS the read grant, so `_actor` is accepted only to match the
-  // readable-procedure signature and never consulted. Both owner and slug-only
-  // viewer reach this read.
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-
-  // Single round trip (ADR-0001): the live node universe (drives nesting links,
-  // ancestors, and display) and the live Connection set, both flat findManys on
-  // indexed columns — no CTE needed for the fetch.
+  projectId: string,
+): Promise<{ nodes: RawNode[]; edges: RawEdge[] }> {
   const [nodes, edges] = await Promise.all([
     db.node.findMany({
-      where: { projectId: project.id, deletedAt: null },
+      where: { projectId, deletedAt: null },
       select: {
         id: true,
         title: true,
@@ -453,7 +446,7 @@ export async function getTraceView(
       },
     }) as Promise<RawNode[]>,
     db.edge.findMany({
-      where: { projectId: project.id, deletedAt: null },
+      where: { projectId, deletedAt: null },
       select: {
         id: true,
         sourceId: true,
@@ -463,32 +456,31 @@ export async function getTraceView(
       },
     }) as Promise<RawEdge[]>,
   ]);
+  return { nodes, edges };
+}
 
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-
-  // Filter trace points to live, in-Project nodes; dedupe. A stale / foreign /
-  // soft-deleted id is silently dropped (ADR-0034).
-  const validPoints = [...new Set(requestedIds)].filter((id) => byId.has(id));
-  if (validPoints.length < 2) {
-    return EMPTY_TRACE(validPoints);
-  }
-
-  const graph = buildUnifiedGraph(nodes, edges);
-  const { nodeIds: onPathNodeIds, edgeIds: onPathEdgeIds } = onPathUnion(
-    graph,
-    validPoints,
-  );
-  addNestingAncestors(onPathNodeIds, byId);
-
-  // Enforce the node cap, but the kept set MUST stay ancestor-closed: the client
-  // layout (`trace-layout.ts`) treats a node as a root when its `parentId` is
-  // absent from the set, so a kept node whose ancestor was sliced away would be
-  // flattened out of its boxes — a broken hierarchy. A naive `sort + slice` can
-  // also drop the trace-point endpoints themselves, which then trips the <2
-  // endpoints empty state. So truncation keeps (1) the valid endpoints + their
-  // full ancestor closure as mandatory, then (2) fills the remaining budget
-  // deterministically (id order) with other on-path nodes, pulling each fill
-  // node's ancestor closure in atomically and skipping it whole if it won't fit.
+/**
+ * Enforce the `TRACE_NODE_CAP` on the on-path node set while keeping it
+ * ancestor-closed. The kept set MUST stay ancestor-closed: the client layout
+ * (`trace-layout.ts`) treats a node as a root when its `parentId` is absent from
+ * the set, so a kept node whose ancestor was sliced away would be flattened out
+ * of its boxes — a broken hierarchy. A naive `sort + slice` can also drop the
+ * trace-point endpoints themselves, which then trips the <2 endpoints empty
+ * state. So truncation keeps (1) the valid endpoints + their full ancestor
+ * closure as mandatory, then (2) fills the remaining budget deterministically
+ * (id order) with other on-path nodes, pulling each fill node's ancestor closure
+ * in atomically and skipping it whole if it won't fit.
+ *
+ * Pure code-motion of what was inline in {@link getTraceView}; extracted so the
+ * cap rule cannot drift between the in-app Trace view and the MCP markdown
+ * (ADR-0034). `byId` is the live-node map; `validPoints` are the (already
+ * filtered) live, in-Project trace-point ids.
+ */
+function capTraceNodes(
+  onPathNodeIds: Set<string>,
+  byId: Map<string, RawNode>,
+  validPoints: string[],
+): { kept: Set<string>; keptIds: string[]; truncated: boolean; warning: string | null } {
   const ancestorClosure = (id: string): string[] => {
     const chain: string[] = [];
     let current: string | null = id;
@@ -504,7 +496,6 @@ export async function getTraceView(
   let truncated = false;
   let warning: string | null = null;
   const sortedOnPath = [...onPathNodeIds].sort();
-  const validPointSet = new Set(validPoints);
 
   let kept: Set<string>;
   if (sortedOnPath.length <= TRACE_NODE_CAP) {
@@ -533,7 +524,52 @@ export async function getTraceView(
       for (const c of additions) kept.add(c);
     }
   }
-  const keptIds = [...kept].sort();
+  return { kept, keptIds: [...kept].sort(), truncated, warning };
+}
+
+export async function getTraceView(
+  db: Db,
+  _actor: Actor | null,
+  input: GetTraceViewInput,
+): Promise<TraceView> {
+  const { slug, nodeIds: requestedIds } = getTraceViewInput.parse(input);
+
+  // Slug-bind gate, in parity with `getCanvas` (ADR-0002 / ADR-0034): possession
+  // of the slug IS the read grant, so `_actor` is accepted only to match the
+  // readable-procedure signature and never consulted. Both owner and slug-only
+  // viewer reach this read.
+  const project = await db.project.findFirst({
+    where: { slug, deletedAt: null },
+    select: { id: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+
+  const { nodes, edges } = await fetchProjectGraph(db, project.id);
+
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+
+  // Filter trace points to live, in-Project nodes; dedupe. A stale / foreign /
+  // soft-deleted id is silently dropped (ADR-0034).
+  const validPoints = [...new Set(requestedIds)].filter((id) => byId.has(id));
+  if (validPoints.length < 2) {
+    return EMPTY_TRACE(validPoints);
+  }
+
+  const graph = buildUnifiedGraph(nodes, edges);
+  const { nodeIds: onPathNodeIds, edgeIds: onPathEdgeIds } = onPathUnion(
+    graph,
+    validPoints,
+  );
+  addNestingAncestors(onPathNodeIds, byId);
+
+  const validPointSet = new Set(validPoints);
+  const { kept, keptIds, truncated, warning } = capTraceNodes(
+    onPathNodeIds,
+    byId,
+    validPoints,
+  );
 
   const resultNodes: TraceViewNode[] = keptIds
     .map((id) => byId.get(id))
@@ -849,4 +885,131 @@ export async function deleteTrace(
     throw new NotFoundError();
   }
   return { id: traceId, deletionId };
+}
+
+// --- Owner-gated MCP read of a saved Trace (#60 / ADR-0017 + ADR-0022) -------
+
+/**
+ * getTraceMarkdownForActor — the owner-gated MCP front door for one saved Trace,
+ * addressed by **internal `traceId`** (never a slug). The owner-only peer of the
+ * slug-bound `getTrace`/`getTraceView`: it resolves the Trace → its Project's
+ * `ownerId` → `assertCanRead` WITHOUT a capability slug, so possession of the
+ * slug can never reach this path. This mirrors `exportMarkdownForActor` exactly
+ * (the deliberate slug-readable-in-app vs owner-gated-MCP asymmetry, ADR-0022).
+ *
+ * A soft-deleted Trace, a Trace under a soft-deleted Project, an unknown id, or
+ * a Trace owned by another user all surface as `NotFoundError`/`ForbiddenError`,
+ * which the MCP adapter collapses to one non-disclosing "not found" — existence
+ * never leaks across owners. A real, owned, but degenerate Trace (< 2 live trace
+ * points, its Components soft-deleted out from under it) is NOT an error: it
+ * returns valid markdown with an insufficient-points note (the markdown analogue
+ * of the web empty state).
+ *
+ * The on-path subgraph is recomputed on every read (never stored, ADR-0034),
+ * reusing the same pure primitives (`buildUnifiedGraph`/`onPathUnion`/
+ * `addNestingAncestors`) and the same `capTraceNodes` cap rule as the in-app
+ * Trace view, then serialized by the deterministic `serializeTrace`.
+ */
+export async function getTraceMarkdownForActor(
+  db: Db,
+  actor: Actor,
+  input: McpTraceReadInput,
+): Promise<{ markdown: string }> {
+  const { traceId } = mcpTraceReadInput.parse(input);
+
+  const trace = await db.trace.findFirst({
+    where: { id: traceId, deletedAt: null },
+    select: {
+      id: true,
+      name: true,
+      project: {
+        select: { id: true, title: true, ownerId: true, deletedAt: true },
+      },
+      points: {
+        select: { nodeId: true, node: { select: { deletedAt: true } } },
+      },
+    },
+  });
+  // A missing Trace, a soft-deleted Trace (filtered above), or a Trace under a
+  // soft-deleted Project all collapse to one non-disclosing not-found.
+  if (!trace) {
+    throw new NotFoundError();
+  }
+  if (trace.project.deletedAt !== null) {
+    throw new NotFoundError();
+  }
+  assertCanRead(actor, { ownerId: trace.project.ownerId });
+
+  const { nodes, edges } = await fetchProjectGraph(db, trace.project.id);
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+
+  const liveIds = livePointIds(trace.points);
+  const validPoints = [...new Set(liveIds)].filter((id) => byId.has(id));
+
+  const toSerializerNode = (n: RawNode): SerializerNode => ({
+    id: n.id,
+    parentId: n.parentId,
+    title: n.title,
+    kind: n.kind,
+    documentation: n.documentation,
+  });
+
+  // Degenerate-but-owned Trace: valid markdown with the insufficient-points note
+  // (NOT a 404 — that would conflate "not yours" with "currently empty").
+  if (validPoints.length < 2) {
+    return {
+      markdown: serializeTrace({
+        project: { title: trace.project.title },
+        traceName: trace.name,
+        nodes: [],
+        edges: [],
+        tracePointIds: validPoints,
+        truncated: false,
+        warning: null,
+      }),
+    };
+  }
+
+  const graph = buildUnifiedGraph(nodes, edges);
+  const { nodeIds: onPathNodeIds, edgeIds: onPathEdgeIds } = onPathUnion(
+    graph,
+    validPoints,
+  );
+  addNestingAncestors(onPathNodeIds, byId);
+
+  const { kept, keptIds, truncated, warning } = capTraceNodes(
+    onPathNodeIds,
+    byId,
+    validPoints,
+  );
+
+  const nodesOut = keptIds
+    .map((id) => byId.get(id))
+    .filter((n): n is RawNode => n !== undefined)
+    .map(toSerializerNode);
+
+  const edgeById = new Map(edges.map((e) => [e.id, e]));
+  const edgesOut = [...onPathEdgeIds]
+    .map((id) => edgeById.get(id))
+    .filter((e): e is RawEdge => e !== undefined)
+    .filter((e) => kept.has(e.sourceId) && kept.has(e.targetId))
+    .map((e) => ({
+      id: e.id,
+      sourceId: e.sourceId,
+      targetId: e.targetId,
+      interaction: e.interaction,
+      label: e.label,
+    }));
+
+  return {
+    markdown: serializeTrace({
+      project: { title: trace.project.title },
+      traceName: trace.name,
+      nodes: nodesOut,
+      edges: edgesOut,
+      tracePointIds: validPoints.filter((id) => kept.has(id)),
+      truncated,
+      warning,
+    }),
+  };
 }

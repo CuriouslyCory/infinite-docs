@@ -99,6 +99,36 @@ export interface SerializerBoundaryEdge {
 
 export type SerializerMode = "full" | "index";
 
+/**
+ * Input for the deterministic **trace mode** (#60). A saved Trace's cross-layer
+ * on-path subgraph: the kept on-path Components + their nesting-ancestor
+ * closure, the on-path Connections, and which kept nodes are the trace-point
+ * endpoints. Deliberately a SIBLING of {@link SerializerInput}, not a widened
+ * mode: the trace output has no `rootCanvasNodeId`/`boundaryEdges` (a Trace
+ * spans all layers at once — there is no boundary projection, ADR-0034) and
+ * adds `tracePointIds`/`traceName`/`truncated`. Folding these onto
+ * `SerializerInput` would force the existing modes to carry trace-only fields
+ * (or make them optional — against "prefer narrow required inputs"), and risk
+ * shifting the three frozen golden fixtures. The sibling reuses every shared
+ * ADR-0017 primitive (`cmp`, `shiftHeadings`, `buildPaths`, `interactionGlyph`,
+ * `KIND_LABEL`, `mdProcessor`) so determinism stays DRY while the existing
+ * fixtures stay untouched.
+ */
+export interface SerializerTraceInput {
+  project: SerializerProject;
+  /** The kept on-path + nesting-ancestor closure set (already capped). */
+  nodes: SerializerNode[];
+  /** On-path Connections, at their real `(source, target)` endpoints. */
+  edges: SerializerEdge[];
+  /** Which kept nodes are the (live, on-path) trace-point endpoints. */
+  tracePointIds: string[];
+  truncated: boolean;
+  /** Server-authored truncation warning (never user content), or `null`. */
+  warning: string | null;
+  /** The saved Trace's name (header). */
+  traceName: string;
+}
+
 export interface SerializerInput {
   project: SerializerProject;
   // The scope being exported. `null` = the whole Project (no Boundary
@@ -443,6 +473,116 @@ export function serializeGraph(input: SerializerInput): string {
     const connections = renderConnections(input);
     if (connections.length > 0) parts.push(connections);
   }
+  // Single trailing newline; never double-newline at EOF.
+  return parts.join("\n").replace(/\n+$/, "") + "\n";
+}
+
+/**
+ * Renders a saved **Trace** to deterministic markdown (#60): its cross-layer
+ * on-path subgraph — every Component and Connection between its trace points,
+ * expanded across all layers — with the trace-point endpoints listed
+ * distinctly. A SIBLING of {@link serializeGraph} that reuses the same
+ * ADR-0017 primitives verbatim (codepoint `cmp`, mdast `shiftHeadings`,
+ * pinned `mdProcessor`, `interactionGlyph`, `KIND_LABEL`, `buildPaths`) so the
+ * determinism contract is shared while the `full`/`index` modes and their
+ * golden fixtures stay byte-untouched.
+ *
+ * Section order (every ordering via `cmp`, never `Set`/`Map` iteration order):
+ *   1. Header: `# <project> — Trace: <name>`, a summary line, and — when
+ *      `truncated` — a server-authored warning blockquote.
+ *   2. `## Trace points`: the live endpoints, sorted by `cmp(id)`. A degenerate
+ *      owned Trace (< 2 live points) shows an insufficient-points note here
+ *      instead of a subgraph (the markdown analogue of the web empty state).
+ *   3. `## Components`: identical ordering + shape to `renderComponentsFull`.
+ *   4. `## Connections`: identical ordering + shape to `renderConnections`.
+ * No Boundary section (a Trace has no single root scope to project across).
+ */
+export function serializeTrace(input: SerializerTraceInput): string {
+  // No single root scope: paths climb to the project root (`null`), so the
+  // `path:` line shows each Component's full nesting, matching the Trace view's
+  // nested boxes.
+  const paths = buildPaths(input.nodes, null);
+  const byId = new Map(input.nodes.map((n) => [n.id, n]));
+
+  const parts: string[] = [];
+
+  const headerLines = [
+    `# ${input.project.title} — Trace: ${input.traceName}`,
+    "",
+    renderSummary(input.nodes.length, input.edges.length),
+  ];
+  if (input.truncated && input.warning !== null) {
+    headerLines.push(`> ⚠ ${input.warning}`);
+  }
+  headerLines.push("");
+  parts.push(headerLines.join("\n"));
+
+  const tracePointLines = ["## Trace points", ""];
+  const orderedPoints = [...input.tracePointIds].sort(cmp);
+  if (orderedPoints.length < 2) {
+    tracePointLines.push(
+      "_Fewer than two live trace points; no subgraph to show._",
+    );
+  } else {
+    for (const id of orderedPoints) {
+      const node = byId.get(id);
+      const title = node?.title ?? id;
+      const kindSuffix = node ? ` · ${KIND_LABEL[node.kind]}` : "";
+      tracePointLines.push(`- ${title} {#${id}}${kindSuffix}`);
+    }
+  }
+  tracePointLines.push("");
+  parts.push(tracePointLines.join("\n"));
+
+  // Components — exact ordering of `renderComponentsFull`: depth ASC,
+  // cmp(title), cmp(id). A trace-point endpoint is an ordinary Component here;
+  // the distinct list is the `## Trace points` section above.
+  const orderedNodes = [...input.nodes].sort((a, b) => {
+    const pa = paths.get(a.id)!;
+    const pb = paths.get(b.id)!;
+    return pa.depth - pb.depth || cmp(a.title, b.title) || cmp(a.id, b.id);
+  });
+  const componentLines = ["## Components", ""];
+  for (const node of orderedNodes) {
+    const p = paths.get(node.id)!;
+    componentLines.push(`### ${node.title} {#${node.id}}`);
+    componentLines.push(`- kind: ${KIND_LABEL[node.kind]}`);
+    componentLines.push(`- path: ${renderPath(p.titles)}`);
+    componentLines.push("");
+    const docs = shiftHeadings(node.documentation, 3);
+    if (docs.length > 0) {
+      componentLines.push(docs.trimEnd());
+      componentLines.push("");
+    }
+  }
+  parts.push(componentLines.join("\n"));
+
+  // Connections — exact ordering of `renderConnections`:
+  // (cmp sourceId, cmp targetId, cmp interaction, cmp id).
+  if (input.edges.length > 0) {
+    const orderedEdges = [...input.edges].sort(
+      (a, b) =>
+        cmp(a.sourceId, b.sourceId) ||
+        cmp(a.targetId, b.targetId) ||
+        cmp(a.interaction, b.interaction) ||
+        cmp(a.id, b.id),
+    );
+    const connectionLines = ["## Connections", ""];
+    for (const e of orderedEdges) {
+      const source = byId.get(e.sourceId);
+      const target = byId.get(e.targetId);
+      const sTitle = source?.title ?? e.sourceId;
+      const tTitle = target?.title ?? e.targetId;
+      const glyph = interactionGlyph(e.interaction);
+      const labelPart = e.label ? ` · ${e.label}` : "";
+      connectionLines.push(
+        `- ${sTitle} {#${e.sourceId}} ${glyph} ${tTitle} {#${e.targetId}}${labelPart}`,
+      );
+    }
+    connectionLines.push("");
+    parts.push(connectionLines.join("\n"));
+  }
+
   // Single trailing newline; never double-newline at EOF.
   return parts.join("\n").replace(/\n+$/, "") + "\n";
 }

@@ -136,3 +136,13 @@ toast as Load, for consistency.
 - Editing a saved Trace's point set is future work; today the working-trace +
   re-save covers it. `restoreTrace` is additive (the `deletionId` is already
   stamped).
+
+## Amendment — #60 (the MCP consumer landed)
+
+The MCP trace resource (#60) reads a saved Trace's persisted point set by
+internal `traceId` under an OWNER gate (`getTraceMarkdownForActor` →
+`assertCanRead` without a capability slug), distinct from this ADR's slug-bound
+`getTrace`/`listTraces` reads. Only the point set persists; the on-path subgraph
+is recomputed on read (never stored) and serialized to deterministic markdown.
+The owner-only MCP posture vs the slug-readable in-app saved route is the same
+deliberate asymmetry as `exportMarkdownForActor` vs `exportMarkdown` (ADR-0022).

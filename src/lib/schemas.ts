@@ -571,6 +571,17 @@ export const mcpReadInput = z.object({
 export type McpReadInput = z.input<typeof mcpReadInput>;
 
 /**
+ * Input for the owner-gated MCP **trace** read resource (#60). Addressed by the
+ * internal `traceId` only — no slug (a parallel bearer grant, ADR-0002) and no
+ * user id (the Actor carries identity; ADR-0022 §3 — no resource accepts a user
+ * id). The service resolves the Trace → its Project's `ownerId` →
+ * `assertCanRead` (owner-only), so the key here must be the internal id. Narrow
+ * and required.
+ */
+export const mcpTraceReadInput = z.object({ traceId: z.string().min(1) });
+export type McpTraceReadInput = z.input<typeof mcpTraceReadInput>;
+
+/**
  * A reference to a Node inside an `apply_graph` batch — either an existing
  * server-minted id (already in the DB) or a `clientId` the agent picked for a
  * sibling Component in this same batch. Tagged-union discriminator, NOT a
