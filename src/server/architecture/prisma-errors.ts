@@ -69,3 +69,32 @@ export function isEdgeDedupCollision(error: unknown): boolean {
     EDGE_DEDUP_INDEX_NAMES.some((name) => originalMessage.includes(name))
   );
 }
+
+// The partial unique index enforcing live-only unique Trace names per Project
+// (#59 / ADR-0035). Narrowed on the constraint name so an unrelated future P2002
+// on Trace is not swallowed as a name collision; carried on both Prisma error
+// shapes (legacy `meta.target` and the `@prisma/adapter-pg` driver path's
+// `meta.driverAdapterError.cause.originalMessage`), mirroring isEdgeDedupCollision.
+const TRACE_NAME_INDEX_NAME = "idx_trace_name_per_project_live";
+
+export function isTraceNameCollision(error: unknown): boolean {
+  if (!isPrismaUniqueViolation(error)) return false;
+  const meta = error.meta;
+  if (!meta || typeof meta !== "object") return false;
+
+  const target = (meta as { target?: unknown }).target;
+  if (typeof target === "string" && target === TRACE_NAME_INDEX_NAME) {
+    return true;
+  }
+
+  const driverCause = (meta as { driverAdapterError?: { cause?: unknown } })
+    .driverAdapterError?.cause;
+  if (!driverCause || typeof driverCause !== "object") return false;
+
+  const originalMessage = (driverCause as { originalMessage?: unknown })
+    .originalMessage;
+  return (
+    typeof originalMessage === "string" &&
+    originalMessage.includes(TRACE_NAME_INDEX_NAME)
+  );
+}

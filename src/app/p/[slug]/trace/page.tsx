@@ -55,7 +55,7 @@ export default async function TraceViewPage({
           canEdit={canEdit}
         />
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <TraceIsland projectId={project.id} slug={slug} />
+          <TraceIsland projectId={project.id} slug={slug} canEdit={canEdit} />
         </div>
       </main>
     </HydrateClient>

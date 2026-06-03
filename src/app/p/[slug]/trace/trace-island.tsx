@@ -25,13 +25,17 @@ const TraceView = dynamic(
 export function TraceIsland({
   projectId,
   slug,
+  canEdit,
+  seedTraceId,
 }: {
   projectId: string;
   slug: string;
+  canEdit: boolean;
+  seedTraceId?: string;
 }) {
   return (
     <WorkingTraceProvider projectId={projectId}>
-      <TraceView slug={slug} />
+      <TraceView slug={slug} canEdit={canEdit} seedTraceId={seedTraceId} />
     </WorkingTraceProvider>
   );
 }

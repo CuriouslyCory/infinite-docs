@@ -1,11 +1,25 @@
+import { randomUUID } from "node:crypto";
+
 import {
+  createTraceInput,
+  deleteTraceInput,
+  getTraceInput,
   getTraceViewInput,
+  listTracesInput,
+  renameTraceInput,
+  type CreateTraceInput,
+  type DeleteTraceInput,
+  type GetTraceInput,
   type GetTraceViewInput,
   type Interaction,
+  type ListTracesInput,
   type NodeKind,
+  type RenameTraceInput,
 } from "~/lib/schemas";
 import type { Actor, Db } from "./actor";
-import { NotFoundError } from "./errors";
+import { assertCanWrite } from "./access";
+import { ConflictError, NotFoundError, ValidationError } from "./errors";
+import { isTraceNameCollision } from "./prisma-errors";
 
 /**
  * The cross-layer **Trace view** derivation (#58). Given a working trace of 2+
@@ -553,4 +567,284 @@ export async function getTraceView(
     truncated,
     warning,
   };
+}
+
+// --- Named, saved Traces (#59 / ADR-0035) -----------------------------------
+//
+// Only the POINT SET persists; the on-path subgraph is recomputed on read by
+// `getTraceView` (derived, ADR-0034). Reads (`listTraces`/`getTrace`) are
+// slug-bound — possession of the capability slug IS the read grant (ADR-0002,
+// parity with `getTraceView`); they deliberately do NOT call `assertCanRead`.
+// Writes (`createTrace`/`renameTrace`/`deleteTrace`) resolve the Project's
+// `ownerId` and call `assertCanWrite` — an authenticated NON-owner holding the
+// slug is rejected HERE, at the service layer, not merely by hidden UI (ADR-0001).
+
+/**
+ * One saved Trace as the CRUD surface returns it. `nodeIds` is the LIVE point set
+ * only (points to soft-deleted Components are filtered at read time), so a Trace
+ * can legitimately return fewer than two points — the derived view then shows the
+ * insufficient-points empty state.
+ */
+export interface SavedTrace {
+  id: string;
+  name: string;
+  nodeIds: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Resolve a Project by its capability slug for an owner-only write: returns
+ * `{ id, ownerId }` and runs `assertCanWrite`. The slug is the only handle a
+ * write carries; the ownerId it resolves is the authz subject (ADR-0001/0002).
+ */
+async function resolveWritableProject(
+  db: Db,
+  actor: Actor,
+  slug: string,
+): Promise<{ id: string; ownerId: string }> {
+  const project = await db.project.findFirst({
+    where: { slug, deletedAt: null },
+    select: { id: true, ownerId: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  assertCanWrite(actor, project);
+  return project;
+}
+
+/** Resolve a Project id by slug for a slug-bound read (no owner check). */
+async function resolveReadableProjectId(
+  db: Db,
+  slug: string,
+): Promise<string> {
+  const project = await db.project.findFirst({
+    where: { slug, deletedAt: null },
+    select: { id: true },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+  return project.id;
+}
+
+/**
+ * createTrace — owner-only. Resolve the Project by slug → `assertCanWrite`, filter
+ * `nodeIds` to LIVE, in-Project Components (dedup) BEFORE writing; fewer than two
+ * survivors → `ValidationError` (no useless 1-point Trace). Creates the Trace +
+ * its `TracePoint` rows; the router wraps this in `db.$transaction` so they are
+ * atomic. Name uniqueness among live Traces is enforced service-primary
+ * (findFirst pre-check → `ConflictError`) with the partial unique index as a
+ * TOCTOU backstop (P2002 narrowed via `isTraceNameCollision` → same
+ * `ConflictError`) (ADR-0010).
+ */
+export async function createTrace(
+  db: Db,
+  actor: Actor,
+  input: CreateTraceInput,
+): Promise<SavedTrace> {
+  const { slug, name, nodeIds } = createTraceInput.parse(input);
+  const project = await resolveWritableProject(db, actor, slug);
+
+  const liveNodes = await db.node.findMany({
+    where: { projectId: project.id, deletedAt: null, id: { in: nodeIds } },
+    select: { id: true },
+  });
+  const liveIds = liveNodes.map((n) => n.id);
+  if (liveIds.length < 2) {
+    throw new ValidationError(
+      "A Trace needs at least two live trace points.",
+    );
+  }
+
+  const existing = await db.trace.findFirst({
+    where: { projectId: project.id, name, deletedAt: null },
+    select: { id: true },
+  });
+  if (existing) {
+    throw new ConflictError(`A Trace named “${name}” already exists.`);
+  }
+
+  try {
+    const trace = await db.trace.create({
+      data: {
+        projectId: project.id,
+        name,
+        points: { create: liveIds.map((nodeId) => ({ nodeId })) },
+      },
+      select: { id: true, name: true, createdAt: true, updatedAt: true },
+    });
+    return { ...trace, nodeIds: liveIds };
+  } catch (error) {
+    if (isTraceNameCollision(error)) {
+      throw new ConflictError(`A Trace named “${name}” already exists.`);
+    }
+    throw error;
+  }
+}
+
+/** Drop points whose Component is soft-deleted: a point survives only when its
+ *  joined `node` is live (`deletedAt: null`). The FK row may still exist (the
+ *  normal removal path is the Node soft-delete, not a hard delete), so this
+ *  read-time filter is what realizes the "ignore soft-deleted points" rule. */
+function livePointIds(
+  points: { nodeId: string; node: { deletedAt: Date | null } | null }[],
+): string[] {
+  return points
+    .filter((p) => p.node !== null && p.node.deletedAt === null)
+    .map((p) => p.nodeId);
+}
+
+/**
+ * listTraces — slug-readable. The Project's live Traces (newest first), each with
+ * its LIVE `nodeIds` so the UI can show a count and load. Soft-deleted-Component
+ * points are filtered out (see `livePointIds`).
+ */
+export async function listTraces(
+  db: Db,
+  _actor: Actor | null,
+  input: ListTracesInput,
+): Promise<SavedTrace[]> {
+  const { slug } = listTracesInput.parse(input);
+  const projectId = await resolveReadableProjectId(db, slug);
+
+  const traces = await db.trace.findMany({
+    where: { projectId, deletedAt: null },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      name: true,
+      createdAt: true,
+      updatedAt: true,
+      points: { select: { nodeId: true, node: { select: { deletedAt: true } } } },
+    },
+  });
+
+  return traces.map(({ points, ...trace }) => ({
+    ...trace,
+    nodeIds: livePointIds(points),
+  }));
+}
+
+/**
+ * getTrace — slug-readable. One live Trace by id, scoped to the slug's Project (a
+ * foreign or soft-deleted traceId is `NotFound` — no existence disclosure).
+ * Returns its LIVE `nodeIds`. This is what the saved route reads.
+ */
+export async function getTrace(
+  db: Db,
+  _actor: Actor | null,
+  input: GetTraceInput,
+): Promise<SavedTrace> {
+  const { slug, traceId } = getTraceInput.parse(input);
+  const projectId = await resolveReadableProjectId(db, slug);
+
+  const trace = await db.trace.findFirst({
+    where: { id: traceId, projectId, deletedAt: null },
+    select: {
+      id: true,
+      name: true,
+      createdAt: true,
+      updatedAt: true,
+      points: { select: { nodeId: true, node: { select: { deletedAt: true } } } },
+    },
+  });
+  if (!trace) {
+    throw new NotFoundError();
+  }
+
+  const { points, ...rest } = trace;
+  return { ...rest, nodeIds: livePointIds(points) };
+}
+
+/**
+ * renameTrace — owner-only. `assertCanWrite`, then rename the live Trace scoped to
+ * the Project. Re-checks live-name uniqueness (pre-check + P2002 catch). Does NOT
+ * change the point set — #59 keeps rename narrow; editing points is future work.
+ */
+export async function renameTrace(
+  db: Db,
+  actor: Actor,
+  input: RenameTraceInput,
+): Promise<SavedTrace> {
+  const { slug, traceId, name } = renameTraceInput.parse(input);
+  const project = await resolveWritableProject(db, actor, slug);
+
+  const existing = await db.trace.findFirst({
+    where: { id: traceId, projectId: project.id, deletedAt: null },
+    select: { id: true },
+  });
+  if (!existing) {
+    throw new NotFoundError();
+  }
+
+  const collision = await db.trace.findFirst({
+    where: {
+      projectId: project.id,
+      name,
+      deletedAt: null,
+      id: { not: traceId },
+    },
+    select: { id: true },
+  });
+  if (collision) {
+    throw new ConflictError(`A Trace named “${name}” already exists.`);
+  }
+
+  try {
+    const trace = await db.trace.update({
+      where: { id: traceId },
+      data: { name },
+      select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        updatedAt: true,
+        points: {
+          select: { nodeId: true, node: { select: { deletedAt: true } } },
+        },
+      },
+    });
+    const { points, ...rest } = trace;
+    return { ...rest, nodeIds: livePointIds(points) };
+  } catch (error) {
+    if (isTraceNameCollision(error)) {
+      throw new ConflictError(`A Trace named “${name}” already exists.`);
+    }
+    throw error;
+  }
+}
+
+/**
+ * deleteTrace — owner-only soft-delete. `assertCanWrite`, then stamp `deletedAt`
+ * + a fresh `deletionId` on the live Trace (mirroring `deleteNode`'s stamped
+ * batch, ADR-0030). `TracePoint` rows are not separately stamped — they have no
+ * `deletedAt` and ride the Trace (hard-cascade only). Idempotent: deleting an
+ * already-deleted Trace is `NotFound` (it is not in the live set). Returns
+ * `{ id, deletionId }` for a future undo — #59 ships no `restoreTrace` UI, but the
+ * stamped id keeps that path forward-compatible (ADR-0030).
+ */
+export async function deleteTrace(
+  db: Db,
+  actor: Actor,
+  input: DeleteTraceInput,
+): Promise<{ id: string; deletionId: string }> {
+  const { slug, traceId } = deleteTraceInput.parse(input);
+  const project = await resolveWritableProject(db, actor, slug);
+
+  const trace = await db.trace.findFirst({
+    where: { id: traceId, projectId: project.id, deletedAt: null },
+    select: { id: true },
+  });
+  if (!trace) {
+    throw new NotFoundError();
+  }
+
+  const deletionId = randomUUID();
+  await db.trace.update({
+    where: { id: traceId },
+    data: { deletedAt: new Date(), deletionId },
+  });
+  return { id: traceId, deletionId };
 }

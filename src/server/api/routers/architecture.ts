@@ -29,7 +29,14 @@ import {
   updateEdgeInteraction,
 } from "~/server/architecture/edge.service";
 import { exportMarkdown } from "~/server/architecture/export.service";
-import { getTraceView } from "~/server/architecture/trace.service";
+import {
+  createTrace,
+  deleteTrace,
+  getTrace,
+  getTraceView,
+  listTraces,
+  renameTrace,
+} from "~/server/architecture/trace.service";
 import {
   applySpec,
   BULK_WRITE_TIMEOUT_MS,
@@ -40,14 +47,19 @@ import {
   connectNodesInput,
   createNodeInput,
   createProjectInput,
+  createTraceInput,
   deleteEdgeInput,
   deleteNodeInput,
+  deleteTraceInput,
   exportMarkdownInput,
   getCanvasInput,
   getProjectBySlugInput,
+  getTraceInput,
   getTraceViewInput,
   listNodeConnectionsInput,
   listProjectComponentsInput,
+  listTracesInput,
+  renameTraceInput,
   previewSpecInput,
   restoreEdgeInput,
   restoreNodeInput,
@@ -140,6 +152,81 @@ export const architectureRouter = createTRPCRouter({
         : null;
       try {
         return await getTraceView(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Public: the Project's saved Traces (#59 / ADR-0035). Slug is the read
+  // capability (ADR-0002) — same posture as `getTraceView`; both owner and viewer
+  // see the list. The viewer's missing Save/Rename/Delete is UI; the real
+  // owner-only gate is `assertCanWrite` in the write services.
+  listTraces: publicProcedure
+    .input(listTracesInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor | null = ctx.session?.user
+        ? { userId: ctx.session.user.id, via: "session" }
+        : null;
+      try {
+        return await listTraces(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Public: one saved Trace by id, scoped to the slug's Project (#59). Slug is the
+  // read capability — this is what the saved route `/p/[slug]/trace/[traceId]`
+  // reads (ADR-0035).
+  getTrace: publicProcedure
+    .input(getTraceInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor | null = ctx.session?.user
+        ? { userId: ctx.session.user.id, via: "session" }
+        : null;
+      try {
+        return await getTrace(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: save the working trace as a named Trace (#59 / ADR-0035).
+  // Wrapped in $transaction so the Trace + its TracePoint rows commit atomically
+  // (like deleteNode). `protectedProcedure` is the transport gate; the real
+  // owner-only authz is `assertCanWrite` in the service (ADR-0001).
+  createTrace: protectedProcedure
+    .input(createTraceInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await ctx.db.$transaction((tx) => createTrace(tx, actor, input));
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: rename a saved Trace (name only; #59). Owner authz is in
+  // the service (ADR-0001).
+  renameTrace: protectedProcedure
+    .input(renameTraceInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await renameTrace(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Owner-only mutation: soft-delete a saved Trace, stamping a deletionId for a
+  // future undo (no restoreTrace UI in #59; ADR-0030/0035). Owner authz is in the
+  // service (ADR-0001).
+  deleteTrace: protectedProcedure
+    .input(deleteTraceInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await deleteTrace(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }
