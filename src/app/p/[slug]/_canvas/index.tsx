@@ -2,6 +2,8 @@
 
 import dynamic from "next/dynamic";
 
+import { WorkingTraceProvider } from "~/app/p/[slug]/_trace/use-working-trace";
+
 /**
  * Client wrapper for the Canvas island. Its only jobs: load the canvas with
  * `ssr: false` (the diagramming library is not server-renderable, and
@@ -39,13 +41,18 @@ export function CanvasIsland({
   // server modules — so no server graph crosses into this client island.
   // `canEdit` gates owner-only edit affordances (add, rename, delete, drag,
   // connect).
+  // The working-trace store wraps the canvas island (not the keyed Canvas) so
+  // the trace-point set survives a Descent remount; it is keyed by `projectId`
+  // and reads the same `localStorage` set the Trace view reads (#57).
   return (
-    <Canvas
-      key={canvasScope}
-      scope={canvasScope}
-      slug={slug}
-      projectId={projectId}
-      canEdit={canEdit}
-    />
+    <WorkingTraceProvider projectId={projectId}>
+      <Canvas
+        key={canvasScope}
+        scope={canvasScope}
+        slug={slug}
+        projectId={projectId}
+        canEdit={canEdit}
+      />
+    </WorkingTraceProvider>
   );
 }

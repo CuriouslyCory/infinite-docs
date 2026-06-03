@@ -1,11 +1,8 @@
 import { TRPCError } from "@trpc/server";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
 
 import { CanvasIsland } from "~/app/p/[slug]/_canvas";
-import { Breadcrumbs } from "~/app/p/[slug]/_canvas/breadcrumbs";
-import { ViewOnlyBadge } from "~/app/p/[slug]/_components/view-only-badge";
+import { ProjectHeader } from "~/app/p/[slug]/_components/project-header";
 import { auth } from "~/server/auth";
 import { HydrateClient, api } from "~/trpc/server";
 
@@ -55,30 +52,12 @@ export default async function InteriorCanvasPage({
   return (
     <HydrateClient>
       <main className="flex h-dvh flex-col bg-[#15162c] text-white">
-        <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
-          <Link
-            href="/"
-            className="text-sm text-white/60 no-underline transition hover:text-white"
-          >
-            ← Projects
-          </Link>
-          {/* The breadcrumb bar reads the same hydrated getCanvas query the
-              Canvas island reads (ADR-0007); the Project title is the
-              presentational root crumb and the trail's last entry is the
-              current scope. */}
-          <Suspense
-            fallback={
-              <span className="text-sm font-medium">{project.title}</span>
-            }
-          >
-            <Breadcrumbs
-              slug={slug}
-              canvasNodeId={nodeId}
-              projectTitle={project.title}
-            />
-          </Suspense>
-          {!canEdit && <ViewOnlyBadge />}
-        </header>
+        <ProjectHeader
+          slug={slug}
+          projectTitle={project.title}
+          canvasNodeId={nodeId}
+          canEdit={canEdit}
+        />
         <div className="min-h-0 flex-1">
           <CanvasIsland
             canvasScope={nodeId}
