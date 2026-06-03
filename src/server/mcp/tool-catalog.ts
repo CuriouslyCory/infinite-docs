@@ -18,7 +18,10 @@ import {
   moveNode,
   updateNodeDocumentation,
 } from "~/server/architecture/node.service";
-import { applySpec } from "~/server/architecture/spec.service";
+import {
+  applySpec,
+  BULK_WRITE_TIMEOUT_MS,
+} from "~/server/architecture/spec.service";
 
 /**
  * The MCP write-tool catalog as plain data — NO SDK imports — so the SDK
@@ -64,6 +67,14 @@ export interface McpWriteToolDescriptor<Schema extends z.ZodType> {
   /** Optional Zod output schema — when present, registerArchitectureTools passes it to SDK 1.26.0's `outputSchema` so the result's `structured` field rides as MCP `structuredContent`. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   outputSchema?: z.ZodType<any>;
+  /**
+   * Optional interactive-transaction timeout (ms) for this tool's
+   * `db.$transaction` wrapper. Omit for the default — only the bulk writers
+   * (`apply_spec`, `apply_graph`) raise it ({@link BULK_WRITE_TIMEOUT_MS}) as a
+   * margin over the largest input we accept; the work itself is bounded by bulk
+   * inserts, not by this ceiling.
+   */
+  timeoutMs?: number;
   /** Service-layer call; the registry wraps it in `db.$transaction`. */
   invoke: (
     db: Db,
@@ -178,6 +189,7 @@ This tool is NOT idempotent. If your transport call fails or times out, READ the
 ${PROMPT_INJECTION_NOTE}`,
     inputSchema: applyGraphInput,
     outputSchema: applyGraphOutput,
+    timeoutMs: BULK_WRITE_TIMEOUT_MS,
     invoke: async (db, actor, args) => {
       const result = await applyGraph(db, actor, args);
       const componentLabel =
@@ -193,26 +205,33 @@ ${PROMPT_INJECTION_NOTE}`,
   defineTool({
     name: "apply_spec",
     title: "Generate Components from a Spec on an owner Component",
-    description: `Attach an OpenAPI / SQL DDL / AsyncAPI / GraphQL / TypeScript-signature / CUSTOM Spec to an existing Component and materialize a tree of derived child Components from it. The parser is chosen by \`kind\` (\`OPENAPI\`, \`SQL_DDL\`, etc.). An OpenAPI document attached to an EXTERNAL_API Component creates ENDPOINT children (with parameter sub-Components); a SQL DDL document attached to a DATABASE creates TABLE children (with column sub-Components).
+    description: `Attach an OpenAPI / SQL DDL / AsyncAPI / GraphQL / TypeScript-signature / CUSTOM Spec to an existing Component and materialize a tree of derived child Components from it. The parser is chosen by \`kind\` (\`OPENAPI\`, \`SQL_DDL\`, etc.). An OpenAPI document attached to an EXTERNAL_API Component creates ENDPOINT children (with parameter sub-Components); a SQL DDL document attached to a DATABASE creates TABLE children (with column sub-Components) AND draws a directional REQUEST Connection between tables for each foreign key (referencing → referenced; one per table pair, self-references skipped).
 
 The server PARSES and DIFFS server-side from \`source\` — your client-side parse (if any) is never trusted. On first attach (no prior Spec on this Component) the parsed tree applies directly: every parsed entry becomes a new generated Component. On RE-attach (an updated Spec), the diff classifies parsed entries as NEW (always created), CHANGED (matched by stable \`specKey\` but with differing derived fields), or DROPPED (in the graph, gone from the new parse). DEFAULTS are SAFE: a CHANGED row absent from \`changed[]\` is SKIPPED (no overwrite); a DROPPED row absent from \`dropped[]\` is KEPT and DETACHED (becomes a user-owned Component, never deleted). To explicitly accept a change, pass \`{specKey, action:"overwrite", wipeDocumentation?:false}\` in \`changed[]\`; to delete a dropped subtree (and its incident Connections — soft-deleted, recoverable), pass \`{nodeId, action:"delete"}\` in \`dropped[]\`. Position and incident Connections are ALWAYS preserved on matched Components; their Node ids stay stable across re-parse so Connections drawn to a generated Component survive.
 
 The whole apply runs in ONE transaction — a per-row reject rolls the whole batch back, never a partial apply. \`source\` is bounded (size / node-count / depth caps); a breach surfaces a single \`parseError\` and writes nothing.
 
-Re-running with the same \`source\` and empty \`changed[]\`/\`dropped[]\` is effectively a no-op (every entry matches by \`specKey\`, defaults skip / keep). If the transport call fails or times out, READ the architecture (via the \`subtree\` resource for the owner Component) before retrying — a successful but lost response means the apply DID land. Returns \`{specId, ownerNodeId, created, overwritten, detached, deleted}\` counts.
+FK Connections are AUTO-reconciled (no per-Connection resolution — an FK carries no user content): re-parse draws new ones, removes those whose FK vanished, and refreshes changed ones. A Connection drawn into a slot already held by a hand-drawn Connection adopts that edge rather than duplicating it.
+
+Re-running with the same \`source\` and empty \`changed[]\`/\`dropped[]\` is effectively a no-op (every entry matches by \`specKey\`, defaults skip / keep). If the transport call fails or times out, READ the architecture (via the \`subtree\` resource for the owner Component) before retrying — a successful but lost response means the apply DID land. Returns \`{specId, ownerNodeId, created, overwritten, detached, deleted, connectionsCreated, connectionsRemoved}\` counts.
 
 ${PROMPT_INJECTION_NOTE}`,
     inputSchema: applySpecInput,
     outputSchema: applySpecOutput,
+    timeoutMs: BULK_WRITE_TIMEOUT_MS,
     invoke: async (db, actor, args) => {
       const result = await applySpec(db, actor, args);
       const parts: string[] = [];
       if (result.created > 0) parts.push(`created ${result.created}`);
-      if (result.overwritten > 0)
-        parts.push(`overwrote ${result.overwritten}`);
+      if (result.overwritten > 0) parts.push(`overwrote ${result.overwritten}`);
       if (result.detached > 0) parts.push(`detached ${result.detached}`);
       if (result.deleted > 0) parts.push(`deleted ${result.deleted}`);
-      const summary = parts.length > 0 ? parts.join(", ") : "no-op (no changes)";
+      if (result.connectionsCreated > 0)
+        parts.push(`drew ${result.connectionsCreated} connection(s)`);
+      if (result.connectionsRemoved > 0)
+        parts.push(`removed ${result.connectionsRemoved} connection(s)`);
+      const summary =
+        parts.length > 0 ? parts.join(", ") : "no-op (no changes)";
       return {
         message: `Applied Spec ${result.specId} on Component ${result.ownerNodeId}: ${summary}.`,
         structured: result,

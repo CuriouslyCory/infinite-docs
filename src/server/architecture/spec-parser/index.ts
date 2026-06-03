@@ -67,17 +67,20 @@ export function parseSpec(kind: SpecKind, source: string): ParseResult {
   const result = parser.parse(source);
   if (!result.ok) return result;
 
-  const bounded = enforceBounds(result.tree);
+  const bounded = enforceBounds(result.tree, result.connections);
   if (!bounded.ok) return { ok: false, parseError: bounded.parseError };
   return result;
 }
 
 export {
+  diffConnections,
   flattenParsed,
   parseSpecDiff,
   type ExistingGeneratedComponent,
+  type ExistingGeneratedConnection,
   type FlatParsedComponent,
   type SpecChangedField,
+  type SpecConnectionDiff,
   type SpecDiff,
   type SpecDiffChanged,
   type SpecDiffDropped,

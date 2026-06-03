@@ -132,9 +132,30 @@ export function SpecConflictModal({
             />
           )}
 
+          {(preview.connectionsToCreate > 0 ||
+            preview.connectionsToRemove > 0) && (
+            <p className="text-xs text-white/50">
+              Foreign keys:{" "}
+              {preview.connectionsToCreate > 0 &&
+                `${preview.connectionsToCreate} connection${
+                  preview.connectionsToCreate === 1 ? "" : "s"
+                } will be drawn`}
+              {preview.connectionsToCreate > 0 &&
+                preview.connectionsToRemove > 0 &&
+                ", "}
+              {preview.connectionsToRemove > 0 &&
+                `${preview.connectionsToRemove} connection${
+                  preview.connectionsToRemove === 1 ? "" : "s"
+                } will be removed`}
+              . Connections are reconciled automatically.
+            </p>
+          )}
+
           {preview.new.length === 0 &&
             preview.changed.length === 0 &&
-            preview.dropped.length === 0 && (
+            preview.dropped.length === 0 &&
+            preview.connectionsToCreate === 0 &&
+            preview.connectionsToRemove === 0 && (
               <p className="text-sm text-white/60">
                 Spec parses cleanly with no changes. Confirming will refresh the
                 stored source without altering any components.

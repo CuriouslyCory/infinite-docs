@@ -1,4 +1,4 @@
-import type { ParsedComponent } from "~/lib/schemas";
+import type { ParsedComponent, ParsedConnection } from "~/lib/schemas";
 
 /**
  * Anti-OOM safety bounds, NOT feature limits (#64 / ADR-0029). A pasted Spec is
@@ -9,6 +9,9 @@ import type { ParsedComponent } from "~/lib/schemas";
  */
 export const MAX_PARSED_NODES = 5_000;
 export const MAX_TREE_DEPTH = 8;
+// Connections can outnumber nodes (a table may have many FKs), so this cap is
+// looser than the node cap — still a hard anti-OOM ceiling (#76).
+export const MAX_PARSED_CONNECTIONS = 10_000;
 
 class BoundError extends Error {}
 
@@ -16,11 +19,15 @@ class BoundError extends Error {}
  * Validates a parsed tree against the safety bounds AND the cross-tree `specKey`
  * uniqueness invariant the diff relies on (a key is a Component's identity for
  * re-parse matching, so two nodes cannot share one — child keys are qualified by
- * their parent's to guarantee this). Returns a `parseError` string on any breach
- * rather than throwing past the parser boundary.
+ * their parent's to guarantee this). Also validates the parsed `connections`
+ * (#76): a count cap, unique connection `specKey`s, and the closure invariant the
+ * applier relies on — every connection endpoint references a node `specKey`
+ * present in the tree. Returns a `parseError` string on any breach rather than
+ * throwing past the parser boundary.
  */
 export function enforceBounds(
   tree: ParsedComponent[],
+  connections: ParsedConnection[],
 ): { ok: true } | { ok: false; parseError: string } {
   let count = 0;
   const seen = new Set<string>();
@@ -50,8 +57,41 @@ export function enforceBounds(
     }
   };
 
+  const checkConnections = (): void => {
+    if (connections.length > MAX_PARSED_CONNECTIONS) {
+      throw new BoundError(
+        `Spec describes more than the ${MAX_PARSED_CONNECTIONS}-connection safety bound.`,
+      );
+    }
+    const seenConn = new Set<string>();
+    for (const connection of connections) {
+      if (seenConn.has(connection.specKey)) {
+        throw new BoundError(
+          `Spec produced a duplicate connection identity "${connection.specKey}" — cannot match it on re-parse.`,
+        );
+      }
+      seenConn.add(connection.specKey);
+      // A Connection cannot link a Component to itself (the no-self-link
+      // invariant `connectNodes` enforces). A parser must DROP self-references at
+      // the source (the SQL-DDL parser skips self-referential FKs); emitting one
+      // is malformed output, so fail loud here — every parser gets the invariant,
+      // and the preview can never count a self-link it would then fail to draw.
+      if (connection.sourceKey === connection.targetKey) {
+        throw new BoundError(
+          `Spec connection "${connection.specKey}" links a component to itself.`,
+        );
+      }
+      if (!seen.has(connection.sourceKey) || !seen.has(connection.targetKey)) {
+        throw new BoundError(
+          `Spec connection "${connection.specKey}" references a component absent from the parse.`,
+        );
+      }
+    }
+  };
+
   try {
     walk(tree, 1);
+    checkConnections();
     return { ok: true };
   } catch (error) {
     if (error instanceof BoundError) {

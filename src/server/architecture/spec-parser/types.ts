@@ -1,14 +1,17 @@
-import type { ParsedComponent } from "~/lib/schemas";
+import type { ParsedComponent, ParsedConnection } from "~/lib/schemas";
 
 /**
  * The outcome of parsing a Spec's `source`. A parser NEVER throws on malformed
  * input or on exceeding a safety bound — it returns `{ ok: false, parseError }`
  * so the caller can record the error on the Spec row and generate nothing
  * (never a partial tree; #64 / ADR-0029). `ok: true` carries the recursive
- * Component tree (top-level nodes attach under the Spec's owner Component).
+ * Component `tree` (top-level nodes attach under the Spec's owner Component) and
+ * the flat `connections` the parser materialized between tree nodes (#76 — e.g.
+ * FK edges from SQL DDL; empty for parsers that emit none). Both `sourceKey` and
+ * `targetKey` of every connection reference a `specKey` present in `tree`.
  */
 export type ParseResult =
-  | { ok: true; tree: ParsedComponent[] }
+  | { ok: true; tree: ParsedComponent[]; connections: ParsedConnection[] }
   | { ok: false; parseError: string };
 
 /**

@@ -1,12 +1,15 @@
 import { Prisma } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
+import { activeDuplicateWhere } from "./edge.service";
 import { NotFoundError, ValidationError } from "./errors";
-import { createNode, deleteNode } from "./node.service";
+import { deleteNode } from "./node.service";
 import {
+  diffConnections,
   parseSpec,
   parseSpecDiff,
   type ExistingGeneratedComponent,
+  type ExistingGeneratedConnection,
   type SpecChangedField,
 } from "./spec-parser";
 import {
@@ -14,6 +17,7 @@ import {
   previewSpecInput,
   type ApplySpecInput,
   type NodeKind,
+  type ParsedConnection,
   type PreviewSpecInput,
   type SpecKind,
 } from "~/lib/schemas";
@@ -60,6 +64,11 @@ export interface SpecPreview {
   new: SpecPreviewNew[];
   changed: SpecPreviewChanged[];
   dropped: SpecPreviewDropped[];
+  // FK Connections the apply will auto-reconcile (#76). Informational only —
+  // Connections carry no user content, so they are never user-resolved like
+  // Components; surfaced so the modal can say what will be drawn/removed.
+  connectionsToCreate: number;
+  connectionsToRemove: number;
 }
 
 export interface ApplySpecResult {
@@ -69,7 +78,21 @@ export interface ApplySpecResult {
   overwritten: number;
   detached: number;
   deleted: number;
+  connectionsCreated: number;
+  connectionsRemoved: number;
 }
+
+/**
+ * Interactive-transaction margin for the bulk Spec/graph appliers, shared by the
+ * tRPC router and the MCP tool catalog so the two cannot drift. Sized well above
+ * the worst-case parse + bulk-insert cost for a `MAX_PARSED_NODES`-sized Spec; it
+ * is a safety ceiling on a cold connection, NOT the performance fix — `applySpec`
+ * bulk-inserts level by level (a handful of round trips), so the apply never
+ * approaches this bound on the happy path. (The pre-fix per-node `createNode`
+ * loop tripped the 5 s default at ~50 queries; this margin would only have
+ * deferred that, hence the rewrite below is the real fix.)
+ */
+export const BULK_WRITE_TIMEOUT_MS = 30_000;
 
 // A simple sibling grid so newly-generated Components don't pile up at the
 // origin on first attach (philosophy #2 — good defaults). Layout is a canvas
@@ -123,6 +146,118 @@ async function loadGeneratedChildren(
     kind: row.kind,
     metadata: row.metadata,
   }));
+}
+
+async function loadGeneratedConnections(
+  db: Db,
+  specId: string,
+): Promise<ExistingGeneratedConnection[]> {
+  const rows = await db.edge.findMany({
+    where: { sourceSpecId: specId, deletedAt: null, specKey: { not: null } },
+    select: { id: true, specKey: true, interaction: true, label: true },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    specKey: row.specKey!,
+    interaction: row.interaction,
+    label: row.label,
+  }));
+}
+
+/**
+ * Auto-reconciles a Spec's FK Connections (#76 / ADR-0033). Resolves each parsed
+ * connection's endpoint `specKey`s to live Node ids via `keyToId` (built from the
+ * Component reconcile), then: creates the new ones with Spec provenance,
+ * soft-deletes the ones whose FK vanished, and refreshes interaction/label on the
+ * changed ones. Endpoints always resolve (bounds guarantees both are tree nodes,
+ * all of which are matched/created and so in `keyToId`); a stray unresolved or
+ * self-pair endpoint is skipped rather than failing the merge.
+ *
+ * Slot-adoption: the directional de-dupe index forbids a second active edge in a
+ * `(projectId, source, target, interaction)` slot. If a slot is already occupied
+ * (a hand-drawn Connection, or one from another Spec), STAMP that edge with this
+ * Spec's provenance and refresh its label instead of inserting a duplicate the
+ * index would reject — so the Spec adopts the existing arrow and reconciles it on
+ * future re-parses.
+ */
+async function reconcileConnections(
+  db: Db,
+  projectId: string,
+  specId: string,
+  keyToId: Record<string, string>,
+  parsedConnections: ParsedConnection[],
+): Promise<{ connectionsCreated: number; connectionsRemoved: number }> {
+  const existing = await loadGeneratedConnections(db, specId);
+  const diff = diffConnections(parsedConnections, existing);
+
+  let connectionsCreated = 0;
+  const freshRows: Prisma.EdgeCreateManyInput[] = [];
+  for (const connection of diff.new) {
+    const sourceId = keyToId[connection.sourceKey];
+    const targetId = keyToId[connection.targetKey];
+    if (!sourceId || !targetId || sourceId === targetId) continue;
+    const label = connection.label ?? null;
+
+    const occupant = await db.edge.findFirst({
+      where: activeDuplicateWhere(
+        projectId,
+        sourceId,
+        targetId,
+        connection.interaction,
+      ),
+      select: { id: true },
+    });
+    if (occupant) {
+      await db.edge.update({
+        where: { id: occupant.id },
+        data: { sourceSpecId: specId, specKey: connection.specKey, label },
+      });
+      connectionsCreated += 1;
+    } else {
+      freshRows.push({
+        projectId,
+        sourceId,
+        targetId,
+        interaction: connection.interaction,
+        label,
+        sourceSpecId: specId,
+        specKey: connection.specKey,
+      });
+    }
+  }
+  if (freshRows.length > 0) {
+    const result = await db.edge.createMany({ data: freshRows });
+    connectionsCreated += result.count;
+  }
+
+  // An in-place update is safe ONLY while it cannot move the Edge into an
+  // occupied de-dupe slot. The de-dupe key is (projectId, source, target,
+  // interaction); endpoints never change under a stable specKey (see
+  // diffConnections' CONTRACT), so the only slot-moving field is `interaction`.
+  // The sole emitter today (SQL-DDL) always uses REQUEST, so `diff.changed` is
+  // label-only and the key is untouched. A future parser that varies a
+  // Connection's interaction MUST adopt an occupant here the way the `diff.new`
+  // path above does, or this update can trip the unique index and roll back.
+  for (const change of diff.changed) {
+    await db.edge.update({
+      where: { id: change.id },
+      data: {
+        interaction: change.parsed.interaction,
+        label: change.parsed.label ?? null,
+      },
+    });
+  }
+
+  let connectionsRemoved = 0;
+  if (diff.dropped.length > 0) {
+    const result = await db.edge.updateMany({
+      where: { id: { in: diff.dropped.map((d) => d.id) }, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    connectionsRemoved = result.count;
+  }
+
+  return { connectionsCreated, connectionsRemoved };
 }
 
 /**
@@ -212,6 +347,8 @@ export async function previewSpec(
       new: [],
       changed: [],
       dropped: [],
+      connectionsToCreate: 0,
+      connectionsToRemove: 0,
     };
   }
 
@@ -224,6 +361,17 @@ export async function previewSpec(
     db,
     owner.projectId,
     diff.dropped.map((d) => d.nodeId),
+  );
+
+  // FK Connection reconcile is auto (no user resolution), so the preview only
+  // counts what will change. Endpoints are guaranteed present by the parse bound,
+  // so `new`/`dropped` counts need no node-id resolution here.
+  const existingConnections = existingSpec
+    ? await loadGeneratedConnections(db, existingSpec.id)
+    : [];
+  const connectionDiff = diffConnections(
+    parsed.connections,
+    existingConnections,
   );
 
   return {
@@ -249,6 +397,8 @@ export async function previewSpec(
       title: d.title,
       hasIncidentConnections: flagged.has(d.nodeId),
     })),
+    connectionsToCreate: connectionDiff.new.length,
+    connectionsToRemove: connectionDiff.dropped.length,
   };
 }
 
@@ -328,49 +478,113 @@ export async function applySpec(
     deleted += 1;
   }
 
-  // 3) DROPPED keep (default) → detach, unless already cascaded by a delete.
-  let detached = 0;
-  for (const drop of diff.dropped) {
-    if (droppedByNode.get(drop.nodeId)?.action === "delete") continue;
-    if (cascaded.has(drop.nodeId)) continue;
-    await db.node.update({
-      where: { id: drop.nodeId },
+  // 3) DROPPED keep (default) → detach in ONE batch, excluding any already
+  //    cascaded by a delete above. One updateMany instead of a write per row.
+  const detachIds = diff.dropped
+    .filter(
+      (drop) =>
+        droppedByNode.get(drop.nodeId)?.action !== "delete" &&
+        !cascaded.has(drop.nodeId),
+    )
+    .map((drop) => drop.nodeId);
+  if (detachIds.length > 0) {
+    await db.node.updateMany({
+      where: { id: { in: detachIds } },
       data: { sourceSpecId: null, specKey: null },
     });
-    detached += 1;
   }
+  const detached = detachIds.length;
 
-  // 4) NEW, in pre-order so every parent id is resolved before its children. A
-  //    new node's parent is the owner (top-level), an existing matched
-  //    Component, or another new node created earlier in this loop.
+  // 4) NEW. Bulk-insert level by level rather than one self-validating
+  //    `createNode` per node. `applySpec` already authorized the owner once
+  //    (`loadOwnerForWrite`), every parent is the owner or a node matched /
+  //    created in THIS transaction, and the Spec was just upserted — exactly the
+  //    invariants `createNode`'s per-row guards (project / parent / spec
+  //    existence) re-check, so skipping them here is safe, not a shortcut. A
+  //    "wave" is the set of new nodes whose parent id is already known;
+  //    `createManyAndReturn` yields the fresh ids (matched back by `specKey` —
+  //    its return order is NOT guaranteed), which unlock the next wave. Over a
+  //    network DB this turns ~4 round trips per node into one per tree level
+  //    (philosophy #1) — the fix for the apply-phase timeout, not the raised
+  //    transaction bound.
   const keyToId: Record<string, string> = { ...diff.matchedKeyToId };
   const gridCounts = new Map<string, number>();
   let created = 0;
-  for (const node of diff.new) {
-    const parentId =
-      node.parentSpecKey === null
-        ? ownerNodeId
-        : (keyToId[node.parentSpecKey] ?? ownerNodeId);
-    const slot = gridCounts.get(parentId) ?? 0;
-    gridCounts.set(parentId, slot + 1);
+  let pending = diff.new;
+  while (pending.length > 0) {
+    let ready = pending.filter(
+      (node) =>
+        node.parentSpecKey === null ||
+        keyToId[node.parentSpecKey] !== undefined,
+    );
+    let next = pending.filter(
+      (node) =>
+        node.parentSpecKey !== null &&
+        keyToId[node.parentSpecKey] === undefined,
+    );
+    // No progress means a parent key never resolves (a parsed parent that
+    // dropped out of the tree). Flush the remainder under the owner, mirroring
+    // the `?? ownerNodeId` fallback, so the loop can never spin forever.
+    if (ready.length === 0) {
+      ready = pending;
+      next = [];
+    }
 
-    const newNode = await createNode(db, actor, {
-      projectId: owner.projectId,
-      parentId,
-      kind: node.kind,
-      title: node.title,
-      documentation: node.documentation,
-      metadata: node.metadata,
-      sourceSpecId: specId,
-      specKey: node.specKey,
-      posX: (slot % GRID_COLS) * GRID_DX,
-      posY: Math.floor(slot / GRID_COLS) * GRID_DY,
+    const rows = ready.map((node) => {
+      const parentId =
+        node.parentSpecKey === null
+          ? ownerNodeId
+          : (keyToId[node.parentSpecKey] ?? ownerNodeId);
+      const slot = gridCounts.get(parentId) ?? 0;
+      gridCounts.set(parentId, slot + 1);
+      const row: Prisma.NodeCreateManyInput = {
+        projectId: owner.projectId,
+        parentId,
+        kind: node.kind,
+        title: node.title,
+        sourceSpecId: specId,
+        specKey: node.specKey,
+        posX: (slot % GRID_COLS) * GRID_DX,
+        posY: Math.floor(slot / GRID_COLS) * GRID_DY,
+      };
+      if (node.documentation !== undefined)
+        row.documentation = node.documentation;
+      if (node.metadata !== undefined) row.metadata = node.metadata;
+      return row;
     });
-    keyToId[node.specKey] = newNode.id;
-    created += 1;
+
+    const inserted = await db.node.createManyAndReturn({
+      data: rows,
+      select: { id: true, specKey: true },
+    });
+    for (const row of inserted) {
+      if (row.specKey !== null) keyToId[row.specKey] = row.id;
+    }
+    created += inserted.length;
+    pending = next;
   }
 
-  return { specId, ownerNodeId, created, overwritten, detached, deleted };
+  // 5) FK Connections (#76). `keyToId` now holds every endpoint candidate — the
+  //    matched tables (seeded) and the freshly-created ones — so reconcile draws
+  //    new FK edges, drops vanished ones, and refreshes changed ones in one pass.
+  const { connectionsCreated, connectionsRemoved } = await reconcileConnections(
+    db,
+    owner.projectId,
+    specId,
+    keyToId,
+    parsed.connections,
+  );
+
+  return {
+    specId,
+    ownerNodeId,
+    created,
+    overwritten,
+    detached,
+    deleted,
+    connectionsCreated,
+    connectionsRemoved,
+  };
 }
 
 // The live Spec on a Component is 1:1 (partial index `idx_spec_owner_live`), so

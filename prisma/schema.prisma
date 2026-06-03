@@ -293,9 +293,23 @@ model Edge {
     // ADR-0030).
     deletionId   String?
 
+    // Spec-derived Connection provenance (#76), the Edge analogue of
+    // Node.sourceSpecId/specKey. A Connection materialized from a Spec (today: a
+    // foreign key in a SQL DDL Spec) carries `sourceSpecId` (the Spec that
+    // generated it) and a stable `specKey` (the per-FK identity the parser
+    // anchors on — the constraint name, else a derived endpoint key). Both null
+    // for a hand-drawn Connection. They let a re-parse RECONCILE the edges a Spec
+    // owns — create new FKs, drop vanished ones — without disturbing user-drawn
+    // Connections (ADR-0033). onDelete: SetNull so deleting the Spec orphans the
+    // provenance, never the Connection.
+    sourceSpecId String?
+    spec         Spec?     @relation("SpecDerivedConnections", fields: [sourceSpecId], references: [id], onDelete: SetNull)
+    specKey      String?
+
     @@index([sourceId])
     @@index([targetId])
     @@index([deletionId])
+    @@index([sourceSpecId])
 }
 
 // The imported contract on a Component (CONTEXT.md "Spec"; ADR-0011, ADR-0025)
@@ -329,6 +343,9 @@ model Spec {
     // Child Components derived from this Spec (#64). The back-relation to
     // `Node.sourceSpecId`.
     derivedComponents Node[] @relation("SpecDerivedComponents")
+    // Connections derived from this Spec (#76) — e.g. FK edges from a SQL DDL
+    // Spec. The back-relation to `Edge.sourceSpecId`.
+    derivedConnections Edge[] @relation("SpecDerivedConnections")
 
     @@index([projectId])
     @@index([deletionId])

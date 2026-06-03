@@ -38,6 +38,107 @@ describe("sqlDdlParser", () => {
     expect(orgId?.metadata?.primaryKey).toBe(true);
   });
 
+  it("materializes out-of-line ALTER TABLE foreign keys as REQUEST connections", () => {
+    const result = sqlDdlParser.parse(`
+      CREATE TABLE "User" ( "id" TEXT NOT NULL, CONSTRAINT "User_pkey" PRIMARY KEY ("id") );
+      CREATE TABLE "Post" ( "id" TEXT NOT NULL, "createdById" TEXT NOT NULL, CONSTRAINT "Post_pkey" PRIMARY KEY ("id") );
+      ALTER TABLE "Post" ADD CONSTRAINT "Post_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+    `);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Identity is the ordered table pair, not the constraint name (so multiple
+    // FKs between the same pair collapse to one dependency arrow).
+    expect(result.connections).toEqual([
+      {
+        specKey: "Post->User",
+        sourceKey: "Post",
+        targetKey: "User",
+        interaction: "REQUEST",
+        label: "createdById",
+      },
+    ]);
+  });
+
+  it("merges multiple FKs between the same table pair into one connection", () => {
+    const result = sqlDdlParser.parse(`
+      CREATE TABLE "Node" ( "id" TEXT NOT NULL, CONSTRAINT "Node_pkey" PRIMARY KEY ("id") );
+      CREATE TABLE "Edge" ( "id" TEXT NOT NULL, "sourceId" TEXT NOT NULL, "targetId" TEXT NOT NULL, CONSTRAINT "Edge_pkey" PRIMARY KEY ("id") );
+      ALTER TABLE "Edge" ADD CONSTRAINT "Edge_sourceId_fkey" FOREIGN KEY ("sourceId") REFERENCES "Node"("id");
+      ALTER TABLE "Edge" ADD CONSTRAINT "Edge_targetId_fkey" FOREIGN KEY ("targetId") REFERENCES "Node"("id");
+    `);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.connections).toEqual([
+      {
+        specKey: "Edge->Node",
+        sourceKey: "Edge",
+        targetKey: "Node",
+        interaction: "REQUEST",
+        label: "sourceId, targetId",
+      },
+    ]);
+  });
+
+  it("skips a self-referential foreign key (no self-link connection)", () => {
+    const result = sqlDdlParser.parse(`
+      CREATE TABLE "Node" ( "id" TEXT NOT NULL, "parentId" TEXT, CONSTRAINT "Node_pkey" PRIMARY KEY ("id") );
+      ALTER TABLE "Node" ADD CONSTRAINT "Node_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "Node"("id");
+    `);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.connections).toEqual([]);
+  });
+
+  it("materializes a column-level REFERENCES foreign key", () => {
+    const result = sqlDdlParser.parse(`
+      CREATE TABLE users ( id INT PRIMARY KEY );
+      CREATE TABLE posts (
+        id INT PRIMARY KEY,
+        author_id INT REFERENCES users(id)
+      );
+    `);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.connections).toHaveLength(1);
+    expect(result.connections[0]).toMatchObject({
+      sourceKey: "posts",
+      targetKey: "users",
+      interaction: "REQUEST",
+    });
+  });
+
+  it("materializes a table-level FOREIGN KEY constraint inside CREATE TABLE", () => {
+    const result = sqlDdlParser.parse(`
+      CREATE TABLE users ( id INT PRIMARY KEY );
+      CREATE TABLE posts (
+        id INT PRIMARY KEY,
+        author_id INT NOT NULL,
+        CONSTRAINT posts_author_fk FOREIGN KEY (author_id) REFERENCES users (id)
+      );
+    `);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.connections).toHaveLength(1);
+    expect(result.connections[0]).toMatchObject({
+      specKey: "posts->users",
+      sourceKey: "posts",
+      targetKey: "users",
+      interaction: "REQUEST",
+      label: "author_id",
+    });
+  });
+
+  it("drops a foreign key that references a table absent from the parse", () => {
+    const result = sqlDdlParser.parse(`
+      CREATE TABLE "Post" ( "id" TEXT NOT NULL, "authorId" TEXT NOT NULL, CONSTRAINT "Post_pkey" PRIMARY KEY ("id") );
+      ALTER TABLE "Post" ADD CONSTRAINT "Post_authorId_fkey" FOREIGN KEY ("authorId") REFERENCES "User"("id");
+    `);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.connections).toEqual([]);
+  });
+
   it("returns parseError when no CREATE TABLE is found", () => {
     const result = sqlDdlParser.parse("SELECT 1;");
     expect(result.ok).toBe(false);

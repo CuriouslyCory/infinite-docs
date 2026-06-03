@@ -117,7 +117,8 @@ function parse(source: string): ParseResult {
     }
   }
 
-  return { ok: true, tree: endpoints };
+  // OpenAPI emits no inter-Component Connections today (#76 is FK-only).
+  return { ok: true, tree: endpoints, connections: [] };
 }
 
 // Parameters become child Components. There is no dedicated parameter NodeKind,

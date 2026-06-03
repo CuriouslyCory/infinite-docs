@@ -677,6 +677,35 @@ export const parsedComponent: z.ZodType<ParsedComponent> = z.lazy(() =>
 );
 
 /**
+ * One Connection a parser materializes alongside its component tree (#76) — today
+ * a foreign key in a SQL DDL Spec. The applier resolves `sourceKey`/`targetKey`
+ * to the generated Components' Node ids and draws an Edge carrying Spec
+ * provenance (ADR-0033). Fields:
+ *  - `specKey` — the STABLE per-Connection identity (the FK constraint name, else
+ *    a derived `sourceKey→targetKey` key), UNIQUE across the parsed connections,
+ *    so a re-parse re-identifies the same Connection and reconciles it.
+ *  - `sourceKey` / `targetKey` — the `specKey`s of the two endpoint Components
+ *    this Connection links (the referencing and referenced tables).
+ *  - `interaction` — the Connection type (REQUEST for an FK: referencing →
+ *    referenced).
+ *  - `label` — optional display label (the FK column(s)). UNTRUSTED, verbatim.
+ */
+export interface ParsedConnection {
+  specKey: string;
+  sourceKey: string;
+  targetKey: string;
+  interaction: Interaction;
+  label?: string;
+}
+export const parsedConnection = z.object({
+  specKey: z.string().min(1).max(512),
+  sourceKey: z.string().min(1).max(512),
+  targetKey: z.string().min(1).max(512),
+  interaction,
+  label: z.string().max(200).optional(),
+});
+
+/**
  * Input for the read-only preview that powers the attach/merge UX (#64). The
  * service parses `source` with the `kind`'s parser and diffs the result against
  * the owner Component's existing generated children — WITHOUT writing anything
@@ -753,5 +782,9 @@ export const applySpecOutput = z.object({
   overwritten: z.number().int().nonnegative(),
   detached: z.number().int().nonnegative(),
   deleted: z.number().int().nonnegative(),
+  // FK Connections auto-reconciled this apply (#76): drawn (incl. adopted) and
+  // soft-deleted because their FK vanished from the spec.
+  connectionsCreated: z.number().int().nonnegative(),
+  connectionsRemoved: z.number().int().nonnegative(),
 });
 export type ApplySpecOutput = z.infer<typeof applySpecOutput>;

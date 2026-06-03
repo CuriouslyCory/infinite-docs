@@ -181,6 +181,16 @@ GREATEST(sourceId, targetId))` (`A↔B` and `B↔A` are one Association). Both a
 `A→B PUSH` coexist) but **`label` is not** (re-labeling edits the existing Connection).
 Service-primary `findFirst` with the index as backstop, both translating to `ConflictError`.
 
+**Spec-derived Connection provenance** (#76, ADR-0033): an Edge carries optional `sourceSpecId` +
+`specKey` (the Edge analogue of the **Node** provenance columns), set when a Connection is
+materialized from a **Spec** — today, a foreign key in a SQL DDL Spec. Both null for a hand-drawn
+Connection. They let a re-parse *reconcile* the Connections a Spec owns (draw new FKs, drop vanished
+ones, refresh changed ones) without disturbing user-drawn Connections. One Connection is drawn per
+ordered table pair (multiple FKs between the same pair merge into one `REQUEST` arrow whose label
+lists the columns; a self-referential FK is skipped — no self-link). When an FK would occupy a slot
+a hand-drawn Connection already holds, that Edge is *adopted* (stamped with the Spec's provenance)
+rather than duplicated.
+
 Never surfaced to users by this name. *(The `Edge` model with `interaction`, `connectNodes`
 (cross-scope + typed) / `updateEdge` / `deleteEdge`, and the **getCanvas** `interiorEdges` read
 are realized now; Connection removal as part of a Component delete is undoable now (see **Deletion
@@ -570,11 +580,15 @@ The imported contract — an OpenAPI/AsyncAPI/GraphQL/SQL-DDL/TypeScript documen
 `Node.specKey` provenance columns. A pasted **OpenAPI** doc on an API Component creates
 **Endpoint** children (params as nested generic children, request bodies summarized into
 `metadata`); pasted **SQL-DDL** on a Database creates **Table** children (columns as nested generic
-children with type/nullability/PK in `metadata`). Re-paste is a **user-resolved merge**: nothing
-writes until the user confirms the conflict-modal decisions (skip / overwrite [keep|wipe docs] for
-changed rows; keep [detach] / delete for dropped rows). Position and incident Connections are
-**always preserved**; matched Components keep their Node id, so Connections drawn to a generated
-Component survive re-parse. The default for an unresolved row is the **safe** action (skip /
+children with type/nullability/PK in `metadata`). SQL-DDL **foreign keys** additionally
+materialize as **Connections** between the Table Components — a directional `REQUEST` Edge per
+ordered table pair, carrying **Edge** spec provenance (#76 / ADR-0033; see **Edge**). Re-paste is a
+**user-resolved merge** for Components: nothing writes until the user confirms the conflict-modal
+decisions (skip / overwrite [keep|wipe docs] for changed rows; keep [detach] / delete for dropped
+rows). FK **Connections**, by contrast, are **auto-reconciled** (they hold no user content — created,
+dropped, and refreshed without per-Connection prompts; the modal shows only counts). Position and
+incident Connections are **always preserved**; matched Components keep their Node id, so Connections
+drawn to a generated Component survive re-parse. The default for an unresolved row is the **safe** action (skip /
 keep). `source` is **UNTRUSTED user-pasted content** — stored verbatim, parsed only by a
 bounded loader (size + node-count + depth caps; bound breach surfaces one `parseError` and
 generates nothing — never partial). No user/code split (it rides the exception — "Spec" / `Spec`).

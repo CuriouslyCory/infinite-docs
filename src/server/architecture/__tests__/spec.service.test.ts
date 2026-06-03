@@ -313,3 +313,185 @@ describe("applySpec", () => {
     expect(live).toHaveLength(1);
   });
 });
+
+// Post→User, Comment→Post, and a self-referential Comment→Comment (skipped).
+const DDL_V1 = `
+  CREATE TABLE "User" ( "id" TEXT NOT NULL, CONSTRAINT "User_pkey" PRIMARY KEY ("id") );
+  CREATE TABLE "Post" ( "id" TEXT NOT NULL, "authorId" TEXT NOT NULL, CONSTRAINT "Post_pkey" PRIMARY KEY ("id") );
+  CREATE TABLE "Comment" ( "id" TEXT NOT NULL, "postId" TEXT NOT NULL, "parentId" TEXT, CONSTRAINT "Comment_pkey" PRIMARY KEY ("id") );
+  ALTER TABLE "Post" ADD CONSTRAINT "Post_authorId_fkey" FOREIGN KEY ("authorId") REFERENCES "User"("id");
+  ALTER TABLE "Comment" ADD CONSTRAINT "Comment_postId_fkey" FOREIGN KEY ("postId") REFERENCES "Post"("id");
+  ALTER TABLE "Comment" ADD CONSTRAINT "Comment_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "Comment"("id");
+`;
+
+// Same tables, but the Comment→Post FK is gone (Post→User remains).
+const DDL_V2 = `
+  CREATE TABLE "User" ( "id" TEXT NOT NULL, CONSTRAINT "User_pkey" PRIMARY KEY ("id") );
+  CREATE TABLE "Post" ( "id" TEXT NOT NULL, "authorId" TEXT NOT NULL, CONSTRAINT "Post_pkey" PRIMARY KEY ("id") );
+  CREATE TABLE "Comment" ( "id" TEXT NOT NULL, "postId" TEXT NOT NULL, CONSTRAINT "Comment_pkey" PRIMARY KEY ("id") );
+  ALTER TABLE "Post" ADD CONSTRAINT "Post_authorId_fkey" FOREIGN KEY ("authorId") REFERENCES "User"("id");
+`;
+
+// The three tables with NO foreign keys — for the slot-adoption test.
+const DDL_TABLES_ONLY = `
+  CREATE TABLE "User" ( "id" TEXT NOT NULL, CONSTRAINT "User_pkey" PRIMARY KEY ("id") );
+  CREATE TABLE "Post" ( "id" TEXT NOT NULL, "authorId" TEXT NOT NULL, CONSTRAINT "Post_pkey" PRIMARY KEY ("id") );
+`;
+
+async function seedDbOwner() {
+  const user = await testDb.user.create({ data: { name: "Owner" } });
+  const actor: Actor = { userId: user.id, via: "session" };
+  const project = await createProject(
+    testDb,
+    { userId: user.id },
+    { title: "DB" },
+  );
+  const owner = await createNode(testDb, actor, {
+    projectId: project.id,
+    kind: "DATABASE",
+    title: "App DB",
+  });
+  return { actor, project, owner };
+}
+
+describe("applySpec — FK connections (#76)", () => {
+  it("first attach draws an FK Connection per ordered table pair, with provenance, skipping self-FKs", async () => {
+    const { actor, owner } = await seedDbOwner();
+    const result = await applySpec(testDb, actor, {
+      ownerNodeId: owner.id,
+      kind: "SQL_DDL",
+      source: DDL_V1,
+    });
+    // Post→User and Comment→Post; the self-referential Comment→Comment is skipped.
+    expect(result.connectionsCreated).toBe(2);
+    expect(result.connectionsRemoved).toBe(0);
+
+    const spec = await testDb.spec.findFirstOrThrow({
+      where: { ownerNodeId: owner.id, deletedAt: null },
+    });
+    const edges = await testDb.edge.findMany({
+      where: { sourceSpecId: spec.id, deletedAt: null },
+    });
+    expect(edges).toHaveLength(2);
+    expect(edges.every((e) => e.interaction === "REQUEST")).toBe(true);
+
+    const byKey = new Map(edges.map((e) => [e.specKey, e]));
+    const tables = await testDb.node.findMany({
+      where: { sourceSpecId: spec.id, deletedAt: null, kind: "TABLE" },
+    });
+    const tableId = (title: string) =>
+      tables.find((t) => t.title === title)!.id;
+
+    const postUser = byKey.get("Post->User")!;
+    expect(postUser.sourceId).toBe(tableId("Post"));
+    expect(postUser.targetId).toBe(tableId("User"));
+    expect(postUser.label).toBe("authorId");
+
+    expect(byKey.has("Comment->Post")).toBe(true);
+    // No self-link Connection was drawn.
+    expect(edges.some((e) => e.sourceId === e.targetId)).toBe(false);
+  });
+
+  it("re-applying the same spec is idempotent (no duplicate Connections)", async () => {
+    const { actor, owner } = await seedDbOwner();
+    await applySpec(testDb, actor, {
+      ownerNodeId: owner.id,
+      kind: "SQL_DDL",
+      source: DDL_V1,
+    });
+    const again = await applySpec(testDb, actor, {
+      ownerNodeId: owner.id,
+      kind: "SQL_DDL",
+      source: DDL_V1,
+    });
+    expect(again.connectionsCreated).toBe(0);
+    expect(again.connectionsRemoved).toBe(0);
+
+    const spec = await testDb.spec.findFirstOrThrow({
+      where: { ownerNodeId: owner.id, deletedAt: null },
+    });
+    const edges = await testDb.edge.findMany({
+      where: { sourceSpecId: spec.id, deletedAt: null },
+    });
+    expect(edges).toHaveLength(2);
+  });
+
+  it("removes a Connection whose FK vanished from the re-parsed spec", async () => {
+    const { actor, owner } = await seedDbOwner();
+    await applySpec(testDb, actor, {
+      ownerNodeId: owner.id,
+      kind: "SQL_DDL",
+      source: DDL_V1,
+    });
+
+    const preview = await previewSpec(testDb, actor, {
+      ownerNodeId: owner.id,
+      kind: "SQL_DDL",
+      source: DDL_V2,
+    });
+    expect(preview.connectionsToRemove).toBe(1);
+
+    const result = await applySpec(testDb, actor, {
+      ownerNodeId: owner.id,
+      kind: "SQL_DDL",
+      source: DDL_V2,
+      // Comment loses a column on V2 → a CHANGED/dropped child; default-keep is fine.
+      dropped: [],
+    });
+    expect(result.connectionsRemoved).toBe(1);
+
+    const spec = await testDb.spec.findFirstOrThrow({
+      where: { ownerNodeId: owner.id, deletedAt: null },
+    });
+    const live = await testDb.edge.findMany({
+      where: { sourceSpecId: spec.id, deletedAt: null },
+    });
+    expect(live.map((e) => e.specKey)).toEqual(["Post->User"]);
+  });
+
+  it("adopts a hand-drawn Connection occupying the same slot instead of duplicating", async () => {
+    const { actor, owner } = await seedDbOwner();
+    // First attach a spec with tables only (no FKs), then hand-draw Post→User.
+    await applySpec(testDb, actor, {
+      ownerNodeId: owner.id,
+      kind: "SQL_DDL",
+      source: DDL_TABLES_ONLY,
+    });
+    const post = await testDb.node.findFirstOrThrow({
+      where: { specKey: "Post", deletedAt: null },
+    });
+    const user = await testDb.node.findFirstOrThrow({
+      where: { specKey: "User", deletedAt: null },
+    });
+    const handDrawn = await connectNodes(testDb, actor, {
+      projectId: owner.projectId,
+      sourceId: post.id,
+      targetId: user.id,
+      interaction: "REQUEST",
+      label: "hand",
+    });
+    expect(handDrawn.sourceSpecId).toBeNull();
+
+    // Re-apply with the FK present → the existing slot is adopted, not duplicated.
+    const result = await applySpec(testDb, actor, {
+      ownerNodeId: owner.id,
+      kind: "SQL_DDL",
+      source: DDL_TABLES_ONLY.replace(
+        /;\s*$/,
+        `; ALTER TABLE "Post" ADD CONSTRAINT "Post_authorId_fkey" FOREIGN KEY ("authorId") REFERENCES "User"("id");`,
+      ),
+    });
+    expect(result.connectionsCreated).toBe(1);
+
+    const postUserEdges = await testDb.edge.findMany({
+      where: { sourceId: post.id, targetId: user.id, deletedAt: null },
+    });
+    // Exactly one edge (adopted, not duplicated), now carrying Spec provenance
+    // and the FK-derived label (refreshed from the spec, replacing "hand").
+    expect(postUserEdges).toHaveLength(1);
+    expect(postUserEdges[0]!.id).toBe(handDrawn.id);
+    expect(postUserEdges[0]!.specKey).toBe("Post->User");
+    expect(postUserEdges[0]!.sourceSpecId).not.toBeNull();
+    expect(postUserEdges[0]!.label).toBe("authorId");
+  });
+});
