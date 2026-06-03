@@ -29,8 +29,10 @@ export type BoundaryProxyNode = Node<BoundaryProxyNodeData, "boundary-proxy">;
 /**
  * The boundary-proxy node type for the Canvas — the read-only **passive** stand-in
  * for the off-scope endpoint of a cross-scope Connection (CONTEXT.md "Boundary
- * proxy"; ADR-0031). One per crossing Edge, keyed by the synthetic `proxy_<edgeId>`
- * id `getCanvas` derives. Registered under the `nodeTypes` key `boundary-proxy`.
+ * proxy"; ADR-0031). `getCanvas` derives ONE proxy ROW per crossing Edge, keyed by
+ * the synthetic `proxy_<edgeId>` id; on the Canvas, rows sharing a `realEndpointId`
+ * are coalesced at render into a single node (#90), the row-per-edge data shape
+ * unchanged. Registered under the `nodeTypes` key `boundary-proxy`.
  *
  * Passive (ADR-0016): it carries no `Node` row, is never draggable/selectable/
  * deletable, and is excluded from every interactive pointer handler by the

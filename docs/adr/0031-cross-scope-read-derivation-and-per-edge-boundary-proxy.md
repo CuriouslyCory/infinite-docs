@@ -194,5 +194,16 @@ navigates to the off-scope Component's **own scope** (`/p/[slug]/n/[realEndpoint
 the meaning of "a node's scope" everywhere in this codebase), so no `parentId`-class
 field was added. The lineal/ingress case is detected client-side — a proxy whose
 `realEndpointId` is on the scope's breadcrumb trail — and labelled as an inbound
-boundary; no server data carries the distinction. Per-edge proxies render
-individually (no visual coalescing in this slice, as ADR-0031 sanctions).
+boundary; no server data carries the distinction. Per-edge proxies rendered
+individually in this slice (no visual coalescing then, as ADR-0031 sanctions).
+
+**Render-time coalescing later landed in #90:** the canvas seed groups per-edge
+proxy rows by `realEndpointId` and draws ONE node per off-scope Component, routing
+every crossing edge to it (a `proxy_<edgeId>` → representative remap threaded
+through `toRFEdge`). This exercises the client-owned coalescing this ADR explicitly
+left open (Decision §"The return shape"; Consequences invariant 3) — it supersedes
+the "render individually" sentence above but changes nothing below the seed: the
+service still emits one row per crossing edge, the `{ nodeId, title, kind,
+realEndpointId, edgeId }` shape and `proxy_<edgeId>` id are unchanged, and the
+query-cache mirror stays strictly per-edge so a remount re-seeds from authoritative
+per-edge data and the ADR-0032 `temp_ → real` reconcile still keys on `proxy_<edgeId>`.

@@ -145,13 +145,21 @@ const ARROW_MARKER = { type: MarkerType.ArrowClosed } as const;
 // id, which may not have a node on this Canvas. Arrowheads derive from the
 // interaction via `arrowEnds`; draw order is honored by binding `atSource` to
 // `markerStart` (the source end) and `atTarget` to `markerEnd` (ADR-0027).
-function toRFEdge(e: CanvasEdge): ConnectionEdge {
+//
+// `remap` folds a per-edge proxy repr (`proxy_<edgeId>`) onto the COALESCED node
+// that stands in for its `realEndpointId` (#90); a same-Canvas/altitude repr is a
+// real node id absent from the map, so `?? repr` is an identity no-op. A proxy may
+// stand in for the source OR target off-scope end, so BOTH ends pass through it.
+function toRFEdge(
+  e: CanvasEdge,
+  remap?: ReadonlyMap<string, string>,
+): ConnectionEdge {
   const ends = arrowEnds(e.interaction);
   return {
     id: e.id,
     type: "connection",
-    source: e.sourceRepr,
-    target: e.targetRepr,
+    source: remap?.get(e.sourceRepr) ?? e.sourceRepr,
+    target: remap?.get(e.targetRepr) ?? e.targetRepr,
     markerStart: ends.atSource ? ARROW_MARKER : undefined,
     markerEnd: ends.atTarget ? ARROW_MARKER : undefined,
     data: {
@@ -162,11 +170,35 @@ function toRFEdge(e: CanvasEdge): ConnectionEdge {
   };
 }
 
+// Restyle an existing RF edge from an updated row, PRESERVING its `source`/`target`
+// (already the coalesced rep, #90). Label/interaction edits never move endpoints, so
+// rebuilding through `toRFEdge` — which re-derives the ends from the per-edge reprs —
+// would detach a cross-scope edge from its shared node; this keeps it attached while
+// flipping the interaction-derived arrowheads (ADR-0027) this frame.
+function restyledRFEdge(
+  existing: ConnectionEdge,
+  next: CanvasEdge,
+): ConnectionEdge {
+  const ends = arrowEnds(next.interaction);
+  return {
+    ...existing,
+    markerStart: ends.atSource ? ARROW_MARKER : undefined,
+    markerEnd: ends.atTarget ? ARROW_MARKER : undefined,
+    data: {
+      label: next.label,
+      interaction: next.interaction,
+      optimistic: next.id.startsWith("temp_"),
+    },
+  };
+}
+
 // A boundary proxy renders as a passive, read-only stand-in for the off-scope
 // endpoint of a cross-scope Connection (ADR-0031). `lineal` is true when the real
 // endpoint is an ANCESTOR of this scope (it appears on the breadcrumb trail) — the
 // ingress case the proxy must label distinctly so it doesn't read as "the host
-// inside itself". Non-draggable / non-selectable / non-connectable: passive.
+// inside itself". Non-draggable / non-selectable / non-connectable: passive. Maps
+// a single proxy ROW; coalescing rows that share a `realEndpointId` is the seed's
+// concern (`coalesceProxies`, #90), not this helper's.
 function toProxyRFNode(
   p: CanvasBoundaryProxy,
   breadcrumbIds: ReadonlySet<string>,
@@ -187,6 +219,66 @@ function toProxyRFNode(
       lineal: breadcrumbIds.has(p.realEndpointId),
     },
   };
+}
+
+// Render-time coalescing (#90): getCanvas emits ONE boundary-proxy row per
+// crossing edge (`proxy_<edgeId>`, ADR-0031), so several interior Components
+// connecting to the SAME off-scope Component yield several rows sharing a
+// `realEndpointId`. Group them so the Canvas draws ONE node per distinct off-scope
+// Component, and return a `remap` from every member's `nodeId` to that group's
+// representative so each crossing edge routes to the shared node (`toRFEdge`).
+//
+// This is a VIEW-ONLY fold: the cache mirror, getCanvas, and the sidebar
+// CONNECTIONS list stay strictly per-edge (ADR-0031's per-crossing-edge
+// invariant) — de-duping them to match the view would strip the per-edge keys
+// `removeComponent`/undo and the Connections list depend on.
+//
+// The representative is the lexicographically-smallest `nodeId` among the group's
+// REAL (non-`temp_`) members, falling back to a temp member only when the whole
+// group is still optimistic — so a second connection reconciling temp → real never
+// churns the rep id out from under the edges already routed to it. `title` / `kind`
+// / `realEndpointId` / `lineal` are identical across a group (same real Node, same
+// breadcrumbs), so any member is a valid representative for display + navigation.
+function coalesceProxies(proxies: readonly CanvasBoundaryProxy[]): {
+  reps: CanvasBoundaryProxy[];
+  remap: ReadonlyMap<string, string>;
+} {
+  const groups = new Map<string, CanvasBoundaryProxy[]>();
+  for (const p of proxies) {
+    const g = groups.get(p.realEndpointId);
+    if (g) g.push(p);
+    else groups.set(p.realEndpointId, [p]);
+  }
+  const reps: CanvasBoundaryProxy[] = [];
+  const remap = new Map<string, string>();
+  // Sort the distinct endpoints so rail order is deterministic regardless of edge
+  // insertion order (and so a remount re-seeds the same rail layout).
+  for (const realEndpointId of [...groups.keys()].sort()) {
+    const members = groups.get(realEndpointId)!;
+    const real = members.filter((m) => !m.edgeId.startsWith("temp_"));
+    const pool = real.length > 0 ? real : members;
+    const rep = pool.reduce((a, b) => (a.nodeId <= b.nodeId ? a : b));
+    reps.push(rep);
+    for (const m of members) remap.set(m.nodeId, rep.nodeId);
+  }
+  return { reps, remap };
+}
+
+// The id of the coalesced boundary-proxy node currently standing in for
+// `realEndpointId` in the RF store, or null if none (#90). The RF store — not the
+// cache mirror — is the routing source of truth: a joined edge's reconcile can
+// leave the mirror's chosen representative ahead of the node actually rendered, so
+// incremental paths resolve "is there already a node for this endpoint?" against
+// the live nodes, never the per-edge mirror.
+function existingProxyNodeIdFor(
+  nodes: readonly CanvasRFNode[],
+  realEndpointId: string,
+): string | null {
+  const hit = nodes.find(
+    (n) =>
+      n.type === "boundary-proxy" && n.data.realEndpointId === realEndpointId,
+  );
+  return hit ? hit.id : null;
 }
 
 function optimisticCanvasNode(
@@ -403,18 +495,26 @@ function CanvasInner({
   // Persistence flows through one batched/single mutation per gesture (below),
   // with the query cache kept in lockstep so a remount re-seeds it. Boundary
   // proxies (which carry no stored position) seed onto a vertical rail off the
-  // left edge so they read as off-scope stand-ins rather than free Components.
+  // left edge so they read as off-scope stand-ins rather than free Components;
+  // rows sharing a `realEndpointId` coalesce to ONE rail node (#90), so the rail
+  // index `i` counts distinct off-scope Components, not crossing edges, and every
+  // crossing edge is routed to its shared node through `seedRemap`.
+  const { reps: seedProxyReps, remap: seedRemap } =
+    coalesceProxies(boundaryProxies);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasRFNode>([
     ...interiorNodes.map(toRFNode),
-    ...boundaryProxies.map((p, i) =>
+    ...seedProxyReps.map((p, i) =>
       toProxyRFNode(p, breadcrumbIds, { x: -280, y: i * 72 }),
     ),
   ]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<ConnectionEdge>(
-    interiorEdges.map(toRFEdge),
+    interiorEdges.map((e) => toRFEdge(e, seedRemap)),
   );
 
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, getNodes } = useReactFlow<
+    CanvasRFNode,
+    ConnectionEdge
+  >();
   const createNode = api.architecture.createNode.useMutation();
   // Destructured so the stable `mutateAsync` can be a dep of the context values
   // below without dragging the whole (per-render) mutation object into them.
@@ -826,9 +926,11 @@ function CanvasInner({
   // The "Connect to…" gesture (#66): wire the selected Component to ANY other
   // Component the project-wide search returns — same-Canvas, cross-scope, or
   // lineal. Generalizes `handleConnect`'s optimistic pattern to the off-scope
-  // case, inserting the far-end boundary proxy this frame, then reconciling
-  // temp → real ids on success (the RF store is seeded once and is NOT re-seeded
-  // by a query refetch, so the reconcile is manual, exactly like `handleConnect`).
+  // case, inserting the far-end boundary proxy row this frame (the new edge
+  // coalesces onto an existing far node if one is already on the rail — no
+  // duplicate, #90), then reconciling temp → real ids on success (the RF store is
+  // seeded once and is NOT re-seeded by a query refetch, so the reconcile is
+  // manual, exactly like `handleConnect`).
   //
   // Where the connection renders on THIS scope follows the SAME `rep(N, S)`
   // partition `getCanvas` derives server-side (ADR-0031), computed client-side
@@ -876,6 +978,14 @@ function CanvasInner({
       const tempId = `temp_${crypto.randomUUID()}`;
       const proxyNodeId = `proxy_${tempId}`;
 
+      // If this scope already draws a boundary proxy for the off-scope target, the
+      // new crossing edge routes to that EXISTING coalesced node instead of
+      // spawning a duplicate (#90). The edge still gains its own per-edge proxy row
+      // below (faithful to getCanvas) — only the VIEW coalesces.
+      const existingRepNodeId = offScope
+        ? existingProxyNodeIdFor(getNodes(), target.id)
+        : null;
+
       // The optimistic Connection-list row (the panel updates this frame). The
       // selected Component is the source, so `sourceIsSelf` is true.
       const optimisticListRow = {
@@ -914,28 +1024,43 @@ function CanvasInner({
             }
           : null;
 
+      // View remap for this gesture: fold this edge's own per-edge proxy onto the
+      // existing coalesced node when one already stands in for the target (#90);
+      // identity otherwise (this edge becomes the group's representative).
+      const viewRemap = new Map<string, string>();
+      if (offScope)
+        viewRemap.set(proxyNodeId, existingRepNodeId ?? proxyNodeId);
+
       if (optimisticEdge) {
-        setEdges((es) => addEdge(toRFEdge(optimisticEdge), es));
+        setEdges((es) => addEdge(toRFEdge(optimisticEdge, viewRemap), es));
         patchCanvas((c) => ({
           interiorEdges: [...c.interiorEdges, optimisticEdge],
         }));
       }
       if (optimisticProxy) {
-        // Seed the far-end stand-in onto the left rail below any already there,
-        // the same placement the delete-undo path uses (ADR-0031).
-        setNodes((ns) => {
-          const railBase = ns.filter((n) => n.type === "boundary-proxy").length;
-          return [
-            ...ns,
-            toProxyRFNode(optimisticProxy, breadcrumbIds, {
-              x: -280,
-              y: railBase * 72,
-            }),
-          ];
-        });
+        // Cache mirror: the per-edge proxy row, ALWAYS (faithful to getCanvas,
+        // ADR-0031). RF node: only when no coalesced node yet stands in for this
+        // endpoint — otherwise the edge above already routed to the existing one,
+        // so adding a node would be the transient duplicate #90 forbids.
         patchCanvas((c) => ({
           boundaryProxies: [...c.boundaryProxies, optimisticProxy],
         }));
+        if (existingRepNodeId === null) {
+          // Seed the far-end stand-in onto the left rail below any already there,
+          // the same placement the delete-undo path uses (ADR-0031).
+          setNodes((ns) => {
+            const railBase = ns.filter(
+              (n) => n.type === "boundary-proxy",
+            ).length;
+            return [
+              ...ns,
+              toProxyRFNode(optimisticProxy, breadcrumbIds, {
+                x: -280,
+                y: railBase * 72,
+              }),
+            ];
+          });
+        }
       }
 
       try {
@@ -963,9 +1088,23 @@ function CanvasInner({
           ? { ...optimisticProxy, nodeId: realProxyNodeId, edgeId: real.id }
           : null;
 
+        // Keep the edge on its coalesced node across reconcile (#90): if this edge
+        // owns the rep, the rep's id moves temp → real with it (identity remap);
+        // if it joined an existing rep, route the reconciled own-proxy id back onto
+        // that rep so the edge stays attached.
+        const reconcileRemap = new Map<string, string>();
+        if (offScope) {
+          reconcileRemap.set(
+            realProxyNodeId,
+            existingRepNodeId ?? realProxyNodeId,
+          );
+        }
+
         if (reconciledEdge) {
           setEdges((es) =>
-            es.map((e) => (e.id === tempId ? toRFEdge(reconciledEdge) : e)),
+            es.map((e) =>
+              e.id === tempId ? toRFEdge(reconciledEdge, reconcileRemap) : e,
+            ),
           );
           patchCanvas((c) => ({
             interiorEdges: c.interiorEdges.map((e) =>
@@ -974,18 +1113,22 @@ function CanvasInner({
           }));
         }
         if (reconciledProxy) {
-          setNodes((ns) =>
-            ns.map((n) =>
-              n.id === proxyNodeId
-                ? toProxyRFNode(reconciledProxy, breadcrumbIds, n.position)
-                : n,
-            ),
-          );
+          // Cache mirror reconciles the per-edge row always; the RF rep node is
+          // renamed temp → real only when THIS edge owns it (no pre-existing rep).
           patchCanvas((c) => ({
             boundaryProxies: c.boundaryProxies.map((p) =>
               p.nodeId === proxyNodeId ? reconciledProxy : p,
             ),
           }));
+          if (existingRepNodeId === null) {
+            setNodes((ns) =>
+              ns.map((n) =>
+                n.id === proxyNodeId
+                  ? toProxyRFNode(reconciledProxy, breadcrumbIds, n.position)
+                  : n,
+              ),
+            );
+          }
         }
         utils.architecture.listNodeConnections.setData(
           { slug, nodeId: sourceNodeId },
@@ -1013,12 +1156,16 @@ function CanvasInner({
           }));
         }
         if (optimisticProxy) {
-          setNodes((ns) => ns.filter((n) => n.id !== proxyNodeId));
+          // Mirror: drop the per-edge row always. RF node: remove it only if THIS
+          // edge added it (a joined edge shares another edge's rep node — leave it).
           patchCanvas((c) => ({
             boundaryProxies: c.boundaryProxies.filter(
               (p) => p.nodeId !== proxyNodeId,
             ),
           }));
+          if (existingRepNodeId === null) {
+            setNodes((ns) => ns.filter((n) => n.id !== proxyNodeId));
+          }
         }
         utils.architecture.listNodeConnections.setData(
           { slug, nodeId: sourceNodeId },
@@ -1033,6 +1180,7 @@ function CanvasInner({
       canvasInput,
       canvasNodeId,
       breadcrumbIds,
+      getNodes,
       setEdges,
       setNodes,
       patchCanvas,
@@ -1105,12 +1253,28 @@ function CanvasInner({
         }));
       }
       if (prevProxy) {
-        setNodes((ns) => ns.filter((n) => n.id !== prevProxy.nodeId));
+        // Mirror: drop this edge's per-edge row always. RF node: remove the
+        // coalesced stand-in only if NO other crossing edge still reaches the same
+        // off-scope Component (#90) — else surviving edges would orphan.
+        const survivesElsewhere = (cached?.boundaryProxies ?? []).some(
+          (p) =>
+            p.edgeId !== connectionId &&
+            p.realEndpointId === prevProxy.realEndpointId,
+        );
         patchCanvas((c) => ({
           boundaryProxies: c.boundaryProxies.filter(
             (p) => p.edgeId !== connectionId,
           ),
         }));
+        if (!survivesElsewhere) {
+          const repNodeId = existingProxyNodeIdFor(
+            getNodes(),
+            prevProxy.realEndpointId,
+          );
+          if (repNodeId) {
+            setNodes((ns) => ns.filter((n) => n.id !== repNodeId));
+          }
+        }
       }
 
       try {
@@ -1131,38 +1295,58 @@ function CanvasInner({
                 : [...(old ?? []), prevRow],
           );
         }
-        if (prevEdge) {
-          setEdges((es) =>
-            es.some((e) => e.id === connectionId)
-              ? es
-              : addEdge(toRFEdge(prevEdge), es),
-          );
-          patchCanvas((c) => ({
-            interiorEdges: c.interiorEdges.some((e) => e.id === connectionId)
-              ? c.interiorEdges
-              : [...c.interiorEdges, prevEdge],
-          }));
-        }
+        // Restore the proxy BEFORE the edge so the edge can route to the coalesced
+        // node it must re-attach to (#90). Mirror row re-adds always (if absent);
+        // the RF node re-adds only when no node yet stands in for this endpoint —
+        // otherwise the restored edge folds onto the existing coalesced node.
+        let repForEdge: string | null = null;
         if (prevProxy) {
-          setNodes((ns) => {
-            if (ns.some((n) => n.id === prevProxy.nodeId)) return ns;
-            const railBase = ns.filter(
-              (n) => n.type === "boundary-proxy",
-            ).length;
-            return [
-              ...ns,
-              toProxyRFNode(prevProxy, breadcrumbIds, {
-                x: -280,
-                y: railBase * 72,
-              }),
-            ];
-          });
           patchCanvas((c) => ({
             boundaryProxies: c.boundaryProxies.some(
               (p) => p.edgeId === connectionId,
             )
               ? c.boundaryProxies
               : [...c.boundaryProxies, prevProxy],
+          }));
+          const existing = existingProxyNodeIdFor(
+            getNodes(),
+            prevProxy.realEndpointId,
+          );
+          if (existing) {
+            repForEdge = existing;
+          } else {
+            repForEdge = prevProxy.nodeId;
+            setNodes((ns) => {
+              if (ns.some((n) => n.id === prevProxy.nodeId)) return ns;
+              const railBase = ns.filter(
+                (n) => n.type === "boundary-proxy",
+              ).length;
+              return [
+                ...ns,
+                toProxyRFNode(prevProxy, breadcrumbIds, {
+                  x: -280,
+                  y: railBase * 72,
+                }),
+              ];
+            });
+          }
+        }
+        if (prevEdge) {
+          // Fold this edge's per-edge proxy repr onto the coalesced node; a
+          // same-Canvas edge has no proxy end, so the map is then never consulted.
+          const remap =
+            prevProxy && repForEdge
+              ? new Map([[prevProxy.nodeId, repForEdge]])
+              : undefined;
+          setEdges((es) =>
+            es.some((e) => e.id === connectionId)
+              ? es
+              : addEdge(toRFEdge(prevEdge, remap), es),
+          );
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.some((e) => e.id === connectionId)
+              ? c.interiorEdges
+              : [...c.interiorEdges, prevEdge],
           }));
         }
         toast.error("Couldn’t remove the connection. Please try again.");
@@ -1172,12 +1356,89 @@ function CanvasInner({
       utils,
       slug,
       canvasInput,
+      getNodes,
       setEdges,
       setNodes,
       patchCanvas,
       removeEdge,
       breadcrumbIds,
     ],
+  );
+
+  // Re-add incident cross-scope edges + their per-edge boundary proxies to the RF
+  // store AND the cache mirror, coalesced per #90: per off-scope endpoint, reuse
+  // the rep node a surviving edge already keeps (resolved against the LIVE nodes,
+  // never the mirror), else add ONE node for the group; every re-added edge folds
+  // onto that rep. The mirror always re-gains every per-edge row (faithful to
+  // getCanvas). Returns the rep node ids THIS call added, so a later rollback
+  // removes only those — never a reused survivor node other live edges still need.
+  const readdCrossScope = useCallback(
+    (
+      incidentEdges: CanvasEdge[],
+      incidentProxies: CanvasBoundaryProxy[],
+    ): ReadonlySet<string> => {
+      const liveNodes = getNodes();
+      const repByEndpoint = new Map<string, string>();
+      const proxiesToAdd: CanvasBoundaryProxy[] = [];
+      for (const p of incidentProxies) {
+        if (repByEndpoint.has(p.realEndpointId)) continue;
+        const existing = existingProxyNodeIdFor(liveNodes, p.realEndpointId);
+        if (existing) {
+          repByEndpoint.set(p.realEndpointId, existing);
+        } else {
+          repByEndpoint.set(p.realEndpointId, p.nodeId);
+          proxiesToAdd.push(p);
+        }
+      }
+      const remap = new Map(
+        incidentProxies.map(
+          (p) => [p.nodeId, repByEndpoint.get(p.realEndpointId)!] as const,
+        ),
+      );
+
+      setNodes((ns) => {
+        const present = new Set(ns.map((n) => n.id));
+        const add = proxiesToAdd.filter((p) => !present.has(p.nodeId));
+        // Append below any proxies still on the rail so a re-added stand-in never
+        // lands on top of an existing one.
+        const railBase = ns.filter((n) => n.type === "boundary-proxy").length;
+        return add.length
+          ? [
+              ...ns,
+              ...add.map((p, i) =>
+                toProxyRFNode(p, breadcrumbIds, {
+                  x: -280,
+                  y: (railBase + i) * 72,
+                }),
+              ),
+            ]
+          : ns;
+      });
+      setEdges((es) => {
+        const present = new Set(es.map((e) => e.id));
+        const add = incidentEdges.filter((e) => !present.has(e.id));
+        return add.length ? [...es, ...add.map((e) => toRFEdge(e, remap))] : es;
+      });
+      patchCanvas((c) => {
+        const presentEdges = new Set(c.interiorEdges.map((e) => e.id));
+        const addEdges = incidentEdges.filter((e) => !presentEdges.has(e.id));
+        const presentProxies = new Set(c.boundaryProxies.map((p) => p.nodeId));
+        const addProxies = incidentProxies.filter(
+          (p) => !presentProxies.has(p.nodeId),
+        );
+        return {
+          ...(addEdges.length
+            ? { interiorEdges: [...c.interiorEdges, ...addEdges] }
+            : {}),
+          ...(addProxies.length
+            ? { boundaryProxies: [...c.boundaryProxies, ...addProxies] }
+            : {}),
+        };
+      });
+
+      return new Set(proxiesToAdd.map((p) => p.nodeId));
+    },
+    [getNodes, setNodes, setEdges, patchCanvas, breadcrumbIds],
   );
 
   // Undo a Component delete: optimistically re-add the on-canvas rows the delete
@@ -1202,45 +1463,7 @@ function CanvasInner({
             : [...c.interiorNodes, node],
         }));
       }
-      // Re-add the boundary proxies the delete removed alongside their incident
-      // cross-scope Connections, so the far-end stand-ins reappear (ADR-0031).
-      setNodes((ns) => {
-        const present = new Set(ns.map((n) => n.id));
-        const add = incidentProxies.filter((p) => !present.has(p.nodeId));
-        // Append below any proxies still on the rail so a re-added stand-in never
-        // lands on top of an existing one.
-        const railBase = ns.filter((n) => n.type === "boundary-proxy").length;
-        return add.length
-          ? [
-              ...ns,
-              ...add.map((p, i) =>
-                toProxyRFNode(p, breadcrumbIds, {
-                  x: -280,
-                  y: (railBase + i) * 72,
-                }),
-              ),
-            ]
-          : ns;
-      });
-      patchCanvas((c) => {
-        const present = new Set(c.boundaryProxies.map((p) => p.nodeId));
-        const add = incidentProxies.filter((p) => !present.has(p.nodeId));
-        return add.length
-          ? { boundaryProxies: [...c.boundaryProxies, ...add] }
-          : {};
-      });
-      setEdges((es) => {
-        const present = new Set(es.map((e) => e.id));
-        const add = incidentEdges.filter((e) => !present.has(e.id));
-        return add.length ? [...es, ...add.map(toRFEdge)] : es;
-      });
-      patchCanvas((c) => {
-        const present = new Set(c.interiorEdges.map((e) => e.id));
-        const add = incidentEdges.filter((e) => !present.has(e.id));
-        return add.length
-          ? { interiorEdges: [...c.interiorEdges, ...add] }
-          : {};
-      });
+      const addedProxyIds = readdCrossScope(incidentEdges, incidentProxies);
 
       void restoreComponent({ deletionId })
         .then(() => void utils.architecture.getCanvas.invalidate())
@@ -1253,7 +1476,10 @@ function CanvasInner({
           }
           const ids = new Set(incidentEdges.map((e) => e.id));
           const proxyIds = new Set(incidentProxies.map((p) => p.nodeId));
-          setNodes((ns) => ns.filter((n) => !proxyIds.has(n.id)));
+          // Remove only the rep nodes THIS undo added (a reused survivor node must
+          // stay — other live edges still attach to it, #90); the mirror drops all
+          // per-edge rows the undo re-added.
+          setNodes((ns) => ns.filter((n) => !addedProxyIds.has(n.id)));
           setEdges((es) => es.filter((e) => !ids.has(e.id)));
           patchCanvas((c) => ({
             interiorEdges: c.interiorEdges.filter((e) => !ids.has(e.id)),
@@ -1264,7 +1490,7 @@ function CanvasInner({
           toast.error("Couldn’t undo. Please try again.");
         });
     },
-    [setNodes, setEdges, patchCanvas, restoreComponent, utils, breadcrumbIds],
+    [setNodes, setEdges, patchCanvas, restoreComponent, utils, readdCrossScope],
   );
 
   // Component-detail panel: opens when the owner single-selects a real (non-
@@ -1297,6 +1523,25 @@ function CanvasInner({
   const [specPreview, setSpecPreview] = useState<
     RouterOutputs["architecture"]["previewSpec"] | null
   >(null);
+
+  // Re-seed the cross-scope VIEW (boundary proxies + edges) from a refetched
+  // canvas after a spec apply — coalesced per #90 — without touching component
+  // nodes, so the owner's selection survives. Replacing the boundary-proxy subset
+  // (rather than re-seeding edges alone) keeps nodes and the remapped edges
+  // mutually consistent when the apply shifted this scope's cross-scope reprs.
+  const reseedCrossScope = useCallback(
+    (canvas: CanvasData) => {
+      const { reps, remap } = coalesceProxies(canvas.boundaryProxies);
+      setNodes((ns) => [
+        ...ns.filter((n) => n.type !== "boundary-proxy"),
+        ...reps.map((p, i) =>
+          toProxyRFNode(p, breadcrumbIds, { x: -280, y: i * 72 }),
+        ),
+      ]);
+      setEdges(canvas.interiorEdges.map((e) => toRFEdge(e, remap)));
+    },
+    [setNodes, setEdges, breadcrumbIds],
+  );
 
   const handlePreviewSpec = useCallback(
     (ownerNodeId: string, input: { kind: SpecKind; source: string }) => {
@@ -1339,7 +1584,7 @@ function CanvasInner({
                     void utils.architecture.getCanvas.invalidate().then(() => {
                       const canvas =
                         utils.architecture.getCanvas.getData(canvasInput);
-                      if (canvas) setEdges(canvas.interiorEdges.map(toRFEdge));
+                      if (canvas) reseedCrossScope(canvas);
                     });
                     toast.success(
                       `Attached spec — created ${result.new.length} component${
@@ -1379,7 +1624,7 @@ function CanvasInner({
         },
       );
     },
-    [previewSpec, applySpec, utils, canvasInput, setEdges],
+    [previewSpec, applySpec, utils, canvasInput, reseedCrossScope],
   );
 
   const closeSpecModal = useCallback(() => {
@@ -1406,7 +1651,7 @@ function CanvasInner({
             // edges, not nodes. See handlePreviewSpec for the rationale.
             void utils.architecture.getCanvas.invalidate().then(() => {
               const canvas = utils.architecture.getCanvas.getData(canvasInput);
-              if (canvas) setEdges(canvas.interiorEdges.map(toRFEdge));
+              if (canvas) reseedCrossScope(canvas);
             });
             closeSpecModal();
             toast.success(
@@ -1421,7 +1666,14 @@ function CanvasInner({
         },
       );
     },
-    [pendingPreview, applySpec, utils, closeSpecModal, canvasInput, setEdges],
+    [
+      pendingPreview,
+      applySpec,
+      utils,
+      closeSpecModal,
+      canvasInput,
+      reseedCrossScope,
+    ],
   );
 
   // Delete a Component: a cascading soft-delete. Optimistically remove it and its
@@ -1450,12 +1702,26 @@ function CanvasInner({
       const incidentProxies =
         cached?.boundaryProxies.filter((p) => incidentEdgeIds.has(p.edgeId)) ??
         [];
-      const incidentProxyIds = new Set(incidentProxies.map((p) => p.nodeId));
+      // An off-scope endpoint still reached by a NON-incident crossing edge keeps
+      // its coalesced node; only a fully-orphaned endpoint loses it (#90) — else a
+      // surviving sibling's edge would dangle off a removed stand-in.
+      const survivingEndpoints = new Set(
+        (cached?.boundaryProxies ?? [])
+          .filter((p) => !incidentEdgeIds.has(p.edgeId))
+          .map((p) => p.realEndpointId),
+      );
 
       if (selectedNodeId === id) closeDetailPanel();
 
       setNodes((ns) =>
-        ns.filter((n) => n.id !== id && !incidentProxyIds.has(n.id)),
+        ns.filter(
+          (n) =>
+            n.id !== id &&
+            !(
+              n.type === "boundary-proxy" &&
+              !survivingEndpoints.has(n.data.realEndpointId)
+            ),
+        ),
       );
       setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
       patchCanvas((c) => ({
@@ -1495,51 +1761,7 @@ function CanvasInner({
                 : [...c.interiorNodes, node],
             }));
           }
-          setNodes((ns) => {
-            const present = new Set(ns.map((n) => n.id));
-            const add = incidentProxies.filter((p) => !present.has(p.nodeId));
-            // Append below any proxies still on the rail so a re-added stand-in
-            // never lands on top of an existing one.
-            const railBase = ns.filter(
-              (n) => n.type === "boundary-proxy",
-            ).length;
-            return add.length
-              ? [
-                  ...ns,
-                  ...add.map((p, i) =>
-                    toProxyRFNode(p, breadcrumbIds, {
-                      x: -280,
-                      y: (railBase + i) * 72,
-                    }),
-                  ),
-                ]
-              : ns;
-          });
-          setEdges((es) => {
-            const present = new Set(es.map((e) => e.id));
-            const add = incidentEdges.filter((e) => !present.has(e.id));
-            return add.length ? [...es, ...add.map(toRFEdge)] : es;
-          });
-          patchCanvas((c) => {
-            const presentEdges = new Set(c.interiorEdges.map((e) => e.id));
-            const addEdges = incidentEdges.filter(
-              (e) => !presentEdges.has(e.id),
-            );
-            const presentProxies = new Set(
-              c.boundaryProxies.map((p) => p.nodeId),
-            );
-            const addProxies = incidentProxies.filter(
-              (p) => !presentProxies.has(p.nodeId),
-            );
-            return {
-              ...(addEdges.length
-                ? { interiorEdges: [...c.interiorEdges, ...addEdges] }
-                : {}),
-              ...(addProxies.length
-                ? { boundaryProxies: [...c.boundaryProxies, ...addProxies] }
-                : {}),
-            };
-          });
+          readdCrossScope(incidentEdges, incidentProxies);
           toast.error("Couldn’t delete the component. Please try again.");
         });
     },
@@ -1551,9 +1773,9 @@ function CanvasInner({
       patchCanvas,
       deleteComponent,
       undoRemoveComponent,
+      readdCrossScope,
       selectedNodeId,
       closeDetailPanel,
-      breadcrumbIds,
     ],
   );
 
@@ -1570,7 +1792,9 @@ function CanvasInner({
       if (!prev) return;
 
       const next: CanvasEdge = { ...prev, label };
-      setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(next) : e)));
+      setEdges((es) =>
+        es.map((e) => (e.id === id ? restyledRFEdge(e, next) : e)),
+      );
       patchCanvas((c) => ({
         interiorEdges: c.interiorEdges.map((e) => (e.id === id ? next : e)),
       }));
@@ -1586,7 +1810,9 @@ function CanvasInner({
         // preserved rather than clobbered by a stale full-object restore.
         if (current?.label !== label) return;
         const reverted: CanvasEdge = { ...current, label: prev.label };
-        setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(reverted) : e)));
+        setEdges((es) =>
+          es.map((e) => (e.id === id ? restyledRFEdge(e, reverted) : e)),
+        );
         patchCanvas((c) => ({
           interiorEdges: c.interiorEdges.map((e) =>
             e.id === id ? reverted : e,
@@ -1614,7 +1840,9 @@ function CanvasInner({
       if (!prev || prev.interaction === interaction) return;
 
       const next: CanvasEdge = { ...prev, interaction };
-      setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(next) : e)));
+      setEdges((es) =>
+        es.map((e) => (e.id === id ? restyledRFEdge(e, next) : e)),
+      );
       patchCanvas((c) => ({
         interiorEdges: c.interiorEdges.map((e) => (e.id === id ? next : e)),
       }));
@@ -1633,7 +1861,9 @@ function CanvasInner({
           ...current,
           interaction: prev.interaction,
         };
-        setEdges((es) => es.map((e) => (e.id === id ? toRFEdge(reverted) : e)));
+        setEdges((es) =>
+          es.map((e) => (e.id === id ? restyledRFEdge(e, reverted) : e)),
+        );
         patchCanvas((c) => ({
           interiorEdges: c.interiorEdges.map((e) =>
             e.id === id ? reverted : e,
