@@ -80,3 +80,12 @@ export type TraceViewNode = TraceView["nodes"][number];
 /** A single on-path Connection in the Trace subgraph — real `sourceId`/`targetId`
  *  (no boundary-proxy reprojection; every layer is on screen at once). */
 export type TraceViewEdge = TraceView["edges"][number];
+
+/**
+ * A saved **Trace** as the CRUD surface returns it (#59 / ADR-0035): its id, name,
+ * timestamps, and the LIVE trace-point `nodeIds` (points to soft-deleted
+ * Components are filtered server-side). The client consumes ONLY via this type
+ * (ADR-0004), never from `~/server`.
+ */
+export type SavedTrace =
+  RouterOutputs["architecture"]["listTraces"][number];

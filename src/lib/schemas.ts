@@ -258,6 +258,49 @@ export const getTraceViewInput = z.object({
 export type GetTraceViewInput = z.infer<typeof getTraceViewInput>;
 
 /**
+ * Inputs for the saved-**Trace** CRUD surface (#59 / ADR-0035). Every input is
+ * slug-bound: reads (`list`/`get`) treat possession of the capability slug as the
+ * read grant (parity with `getTraceView`); writes (`create`/`rename`/`delete`)
+ * carry the slug so the SERVICE resolves the Project's `ownerId` and enforces
+ * owner-only access via `assertCanWrite` (ADR-0001/0002) — the procedure is only
+ * the transport gate. Narrow + required (CONTEXT.md "prefer narrow required
+ * inputs"). A Trace is "two or more trace points", so `createTraceInput.nodeIds`
+ * is `min(2)`; the service further filters to live, in-Project Components and
+ * rejects with a ValidationError if fewer than two survive. `max(500)` mirrors
+ * `getTraceViewInput`'s cap.
+ */
+export const traceName = z.string().trim().min(1).max(120);
+
+export const createTraceInput = z.object({
+  slug: z.string().min(1),
+  name: traceName,
+  nodeIds: z.array(z.string().min(1)).min(2).max(500),
+});
+export type CreateTraceInput = z.infer<typeof createTraceInput>;
+
+export const listTracesInput = z.object({ slug: z.string().min(1) });
+export type ListTracesInput = z.infer<typeof listTracesInput>;
+
+export const getTraceInput = z.object({
+  slug: z.string().min(1),
+  traceId: z.string().min(1),
+});
+export type GetTraceInput = z.infer<typeof getTraceInput>;
+
+export const renameTraceInput = z.object({
+  slug: z.string().min(1),
+  traceId: z.string().min(1),
+  name: traceName,
+});
+export type RenameTraceInput = z.infer<typeof renameTraceInput>;
+
+export const deleteTraceInput = z.object({
+  slug: z.string().min(1),
+  traceId: z.string().min(1),
+});
+export type DeleteTraceInput = z.infer<typeof deleteTraceInput>;
+
+/**
  * Input for the project-wide Component list that powers the "Connect to…" search
  * (#66). Addressed by the capability `slug` (the read grant, ADR-0002) — a flat,
  * scope-independent read of every live Component, deliberately distinct from the

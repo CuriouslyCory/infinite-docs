@@ -80,6 +80,7 @@ model Project {
     nodes      Node[]
     edges      Edge[]
     specs      Spec[]
+    traces     Trace[]
 
     @@index([ownerId])
 }
@@ -241,6 +242,12 @@ model Node {
     // from `flowSpec` with the Flow model's retirement (#62).
     ownedSpecs Spec[] @relation("SpecOnNode")
 
+    // Trace points referencing this Component (#59). The FK cascade is the
+    // hard-delete backstop only — the normal removal path is the Node soft-delete,
+    // which the Trace service filters at read time so a point to a soft-deleted
+    // Component is ignored (ADR-0035).
+    tracePoints TracePoint[] @relation("NodeTracePoints")
+
     @@index([projectId, parentId])
     @@index([parentId])
     @@index([sourceSpecId])
@@ -349,6 +356,52 @@ model Spec {
 
     @@index([projectId])
     @@index([deletionId])
+}
+
+// A named, saved Trace: a persisted set of trace points over a Project's graph
+// (CONTEXT.md "Saved Trace"; ADR-0034, ADR-0035). Only the POINT SET persists —
+// the on-path subgraph is recomputed on read by getTraceView, never stored.
+// Soft-deletable + undoable as one batch via deletionId (ADR-0030). Authorized
+// structurally through the Project's ownerId: reads are slug-bound (possession of
+// the slug is the read grant, parity with getTraceView), writes are owner-only
+// (assertCanWrite) (ADR-0001/0002). The live-only unique-name-per-Project rule is
+// a partial unique index in the migration (raw SQL — Prisma can't express the
+// WHERE predicate), mirroring idx_spec_owner_live (ADR-0010).
+model Trace {
+    id         String       @id @default(cuid())
+    projectId  String
+    project    Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    name       String
+    createdAt  DateTime     @default(now())
+    updatedAt  DateTime     @updatedAt
+    deletedAt  DateTime?
+    deletionId String?
+    points     TracePoint[]
+
+    @@index([projectId])
+    @@index([deletionId])
+}
+
+// A trace point: a Component (Node) marked into a saved Trace (CONTEXT.md
+// "Trace point"). A point is a reference, never a behavior or a Component kind.
+// The FK cascade to Node is the hard-delete backstop only — the normal removal
+// path is the Node soft-delete, which the service filters at read time so a point
+// to a soft-deleted Component is ignored (#59 acceptance; ADR-0035). TracePoint
+// carries NO deletedAt: its lifecycle is its parent Trace's (cascade-delete on a
+// Trace hard-delete; soft-delete is on the Trace). `@@unique([traceId, nodeId])`
+// de-dupes a Component within a Trace — Prisma-expressible (no soft-delete axis),
+// so no raw SQL is needed for it.
+model TracePoint {
+    id        String   @id @default(cuid())
+    traceId   String
+    trace     Trace    @relation(fields: [traceId], references: [id], onDelete: Cascade)
+    nodeId    String
+    node      Node     @relation("NodeTracePoints", fields: [nodeId], references: [id], onDelete: Cascade)
+    createdAt DateTime @default(now())
+
+    @@unique([traceId, nodeId])
+    @@index([traceId])
+    @@index([nodeId])
 }
 
 model VerificationToken {

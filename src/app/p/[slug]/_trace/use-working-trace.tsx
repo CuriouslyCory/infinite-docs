@@ -42,6 +42,14 @@ type WorkingTrace = {
   toggle: (id: string) => TraceTransition;
   remove: (id: string) => void;
   clear: () => void;
+  /**
+   * Replaces the entire working set with `ids`, returning the PRIOR set so the
+   * caller can offer an undo toast that restores it (restore is just
+   * `replace(previous)` again). Narrow + required: the store owns the point set;
+   * toast copy and the undo action live at the call site, the same seam as
+   * `toggle` returning its transition.
+   */
+  replace: (ids: string[]) => { previous: string[] };
 };
 
 const WorkingTraceContext = createContext<WorkingTrace | null>(null);
@@ -138,17 +146,31 @@ export function WorkingTraceProvider({
     return transition;
   }, []);
 
+  // Reads the live set from the ref for `previous` (synchronous, StrictMode-safe,
+  // same discipline as `toggle`), advances the ref eagerly, then sets the new
+  // set; the write-through effect persists it to `localStorage`.
+  const replace = useCallback((ids: string[]): { previous: string[] } => {
+    const previous = [...tracePointsRef.current];
+    const next = new Set(ids);
+    tracePointsRef.current = next;
+    setTracePoints(next);
+    return { previous };
+  }, []);
+
   const remove = useCallback((id: string) => {
-    setTracePoints((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+    const current = tracePointsRef.current;
+    if (!current.has(id)) return;
+    const next = new Set(current);
+    next.delete(id);
+    tracePointsRef.current = next;
+    setTracePoints(next);
   }, []);
 
   const clear = useCallback(() => {
-    setTracePoints((prev) => (prev.size === 0 ? prev : new Set()));
+    if (tracePointsRef.current.size === 0) return;
+    const next = new Set<string>();
+    tracePointsRef.current = next;
+    setTracePoints(next);
   }, []);
 
   const value = useMemo<WorkingTrace>(
@@ -159,8 +181,9 @@ export function WorkingTraceProvider({
       toggle,
       remove,
       clear,
+      replace,
     }),
-    [tracePoints, isTracePoint, toggle, remove, clear],
+    [tracePoints, isTracePoint, toggle, remove, clear, replace],
   );
 
   return (
