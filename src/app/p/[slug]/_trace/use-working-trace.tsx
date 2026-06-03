@@ -83,6 +83,17 @@ export function WorkingTraceProvider({
   // read above) so hydration doesn't immediately re-serialize what it just read.
   const skipWriteThrough = useRef(true);
 
+  // A ref mirroring the committed set so `toggle` can read live membership
+  // *synchronously* and decide add-vs-remove outside the `setTracePoints`
+  // updater — React may run that updater later and twice (StrictMode), so the
+  // value it returns must not depend on the updater body running exactly once.
+  // `toggle` advances it eagerly; this effect re-converges it after any other
+  // path mutates the set (`remove`, `clear`, a cross-tab `storage` event).
+  const tracePointsRef = useRef(tracePoints);
+  useEffect(() => {
+    tracePointsRef.current = tracePoints;
+  }, [tracePoints]);
+
   useEffect(() => {
     if (skipWriteThrough.current) {
       skipWriteThrough.current = false;
@@ -114,18 +125,16 @@ export function WorkingTraceProvider({
   );
 
   const toggle = useCallback((id: string): TraceTransition => {
-    let transition: TraceTransition = "added";
-    setTracePoints((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-        transition = "removed";
-      } else {
-        next.add(id);
-        transition = "added";
-      }
-      return next;
-    });
+    const current = tracePointsRef.current;
+    const transition: TraceTransition = current.has(id) ? "removed" : "added";
+    const next = new Set(current);
+    if (transition === "removed") {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    tracePointsRef.current = next;
+    setTracePoints(next);
     return transition;
   }, []);
 

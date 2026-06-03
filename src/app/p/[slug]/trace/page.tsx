@@ -15,8 +15,9 @@ import { HydrateClient, api } from "~/trpc/server";
  *
  * This slice renders ONLY the working-set manager / empty state — the
  * cross-layer on-path graph is #58. The shell prefetches
- * `listProjectComponents` so the island resolves trace-point ids to titles from
- * the hydration cache with no waterfall (performance philosophy #1).
+ * `listProjectComponents` so the island resolves trace-point ids to titles, and
+ * `getCanvas` so the header breadcrumbs hydrate, both from the hydration cache
+ * with no waterfall (performance philosophy #1).
  */
 export default async function TraceViewPage({
   params,
@@ -39,6 +40,10 @@ export default async function TraceViewPage({
   const canEdit = session?.user?.id === project.ownerId;
 
   void api.architecture.listProjectComponents.prefetch({ slug });
+  // The header's Breadcrumbs reads `getCanvas` with the same `{ slug,
+  // canvasNodeId: null }` key; prefetch it so the bar hydrates without a
+  // client-side round trip (performance philosophy #1).
+  void api.architecture.getCanvas.prefetch({ slug, canvasNodeId: null });
 
   return (
     <HydrateClient>
