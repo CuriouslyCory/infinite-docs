@@ -486,10 +486,12 @@ describe("applySpec — FK connections (#76)", () => {
     const postUserEdges = await testDb.edge.findMany({
       where: { sourceId: post.id, targetId: user.id, deletedAt: null },
     });
-    // Exactly one edge (adopted, not duplicated), now carrying Spec provenance.
+    // Exactly one edge (adopted, not duplicated), now carrying Spec provenance
+    // and the FK-derived label (refreshed from the spec, replacing "hand").
     expect(postUserEdges).toHaveLength(1);
     expect(postUserEdges[0]!.id).toBe(handDrawn.id);
     expect(postUserEdges[0]!.specKey).toBe("Post->User");
     expect(postUserEdges[0]!.sourceSpecId).not.toBeNull();
+    expect(postUserEdges[0]!.label).toBe("authorId");
   });
 });

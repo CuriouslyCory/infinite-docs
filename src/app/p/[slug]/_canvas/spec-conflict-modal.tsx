@@ -144,7 +144,9 @@ export function SpecConflictModal({
                 preview.connectionsToRemove > 0 &&
                 ", "}
               {preview.connectionsToRemove > 0 &&
-                `${preview.connectionsToRemove} removed`}
+                `${preview.connectionsToRemove} connection${
+                  preview.connectionsToRemove === 1 ? "" : "s"
+                } will be removed`}
               . Connections are reconciled automatically.
             </p>
           )}

@@ -230,6 +230,14 @@ async function reconcileConnections(
     connectionsCreated += result.count;
   }
 
+  // An in-place update is safe ONLY while it cannot move the Edge into an
+  // occupied de-dupe slot. The de-dupe key is (projectId, source, target,
+  // interaction); endpoints never change under a stable specKey (see
+  // diffConnections' CONTRACT), so the only slot-moving field is `interaction`.
+  // The sole emitter today (SQL-DDL) always uses REQUEST, so `diff.changed` is
+  // label-only and the key is untouched. A future parser that varies a
+  // Connection's interaction MUST adopt an occupant here the way the `diff.new`
+  // path above does, or this update can trip the unique index and roll back.
   for (const change of diff.changed) {
     await db.edge.update({
       where: { id: change.id },

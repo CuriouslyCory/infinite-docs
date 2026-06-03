@@ -71,6 +71,16 @@ export function enforceBounds(
         );
       }
       seenConn.add(connection.specKey);
+      // A Connection cannot link a Component to itself (the no-self-link
+      // invariant `connectNodes` enforces). A parser must DROP self-references at
+      // the source (the SQL-DDL parser skips self-referential FKs); emitting one
+      // is malformed output, so fail loud here — every parser gets the invariant,
+      // and the preview can never count a self-link it would then fail to draw.
+      if (connection.sourceKey === connection.targetKey) {
+        throw new BoundError(
+          `Spec connection "${connection.specKey}" links a component to itself.`,
+        );
+      }
       if (!seen.has(connection.sourceKey) || !seen.has(connection.targetKey)) {
         throw new BoundError(
           `Spec connection "${connection.specKey}" references a component absent from the parse.`,

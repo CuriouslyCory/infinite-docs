@@ -180,6 +180,15 @@ export interface SpecConnectionDiff {
  * `specKey` (#76). Mirrors {@link parseSpecDiff} for Components, but with no
  * "keep/detach" branch — a Spec wholly owns the Connections it generated, so a
  * vanished one is simply removed.
+ *
+ * CONTRACT: a parser's connection `specKey` MUST be derived from the endpoints,
+ * so that moving an endpoint changes the key. The only emitter today (SQL-DDL)
+ * keys on the ordered pair `source->target`, so an endpoint change surfaces as a
+ * dropped key + a new key — never an in-place "changed" that would silently
+ * leave an Edge wired to the wrong nodes. A future parser that keys on something
+ * endpoint-independent (a constraint name) MUST extend this to recreate on
+ * endpoint drift; until one exists, tracking endpoints through this pure diff
+ * would be speculative complexity.
  */
 export function diffConnections(
   parsed: ParsedConnection[],

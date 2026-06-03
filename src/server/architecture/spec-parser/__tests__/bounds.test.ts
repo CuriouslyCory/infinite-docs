@@ -83,6 +83,21 @@ describe("enforceBounds", () => {
     expect(enforceBounds(tree, connections).ok).toBe(false);
   });
 
+  it("rejects a self-link connection (same component on both ends)", () => {
+    const tree: ParsedComponent[] = [
+      { specKey: "a", kind: "TABLE", title: "a" },
+    ];
+    const connections: ParsedConnection[] = [
+      {
+        specKey: "fk1",
+        sourceKey: "a",
+        targetKey: "a",
+        interaction: "REQUEST",
+      },
+    ];
+    expect(enforceBounds(tree, connections).ok).toBe(false);
+  });
+
   it("rejects duplicate connection specKeys", () => {
     const tree: ParsedComponent[] = [
       { specKey: "a", kind: "TABLE", title: "a" },

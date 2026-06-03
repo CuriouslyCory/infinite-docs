@@ -90,7 +90,7 @@ describe("sqlDdlParser", () => {
     expect(result.connections).toEqual([]);
   });
 
-  it("materializes in-line / table-level foreign keys", () => {
+  it("materializes a column-level REFERENCES foreign key", () => {
     const result = sqlDdlParser.parse(`
       CREATE TABLE users ( id INT PRIMARY KEY );
       CREATE TABLE posts (
@@ -105,6 +105,27 @@ describe("sqlDdlParser", () => {
       sourceKey: "posts",
       targetKey: "users",
       interaction: "REQUEST",
+    });
+  });
+
+  it("materializes a table-level FOREIGN KEY constraint inside CREATE TABLE", () => {
+    const result = sqlDdlParser.parse(`
+      CREATE TABLE users ( id INT PRIMARY KEY );
+      CREATE TABLE posts (
+        id INT PRIMARY KEY,
+        author_id INT NOT NULL,
+        CONSTRAINT posts_author_fk FOREIGN KEY (author_id) REFERENCES users (id)
+      );
+    `);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.connections).toHaveLength(1);
+    expect(result.connections[0]).toMatchObject({
+      specKey: "posts->users",
+      sourceKey: "posts",
+      targetKey: "users",
+      interaction: "REQUEST",
+      label: "author_id",
     });
   });
 
