@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, Pencil, Route, Save, Trash2, Upload, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 
@@ -67,6 +68,7 @@ export function TraceView({
       <SavedTracesPanel
         slug={slug}
         canEdit={canEdit}
+        activeTraceId={seedTraceId}
         workingPoints={points}
         onLoad={(trace) => loadTraceIntoWorkingSet(trace, replace)}
       />
@@ -116,11 +118,13 @@ function loadTraceIntoWorkingSet(
 function SavedTracesPanel({
   slug,
   canEdit,
+  activeTraceId,
   workingPoints,
   onLoad,
 }: {
   slug: string;
   canEdit: boolean;
+  activeTraceId?: string;
   workingPoints: string[];
   onLoad: (trace: SavedTrace) => void;
 }) {
@@ -217,6 +221,7 @@ function SavedTracesPanel({
                 slug={slug}
                 trace={trace}
                 canEdit={canEdit}
+                isActive={trace.id === activeTraceId}
                 onLoad={() => onLoad(trace)}
               />
             ))}
@@ -235,13 +240,16 @@ function SavedTraceRow({
   slug,
   trace,
   canEdit,
+  isActive,
   onLoad,
 }: {
   slug: string;
   trace: SavedTrace;
   canEdit: boolean;
+  isActive: boolean;
   onLoad: () => void;
 }) {
+  const router = useRouter();
   const utils = api.useUtils();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(trace.name);
@@ -287,6 +295,11 @@ function SavedTraceRow({
     },
     onSuccess: () => {
       toast("Trace deleted");
+      // Deleting the saved Trace that seeds the current /trace/[traceId] URL
+      // would leave the route pointing at a soft-deleted resource (refresh →
+      // 404); fall back to the base /trace route. Deleting any other Trace from
+      // the base route stays put.
+      if (isActive) router.push(`/p/${slug}/trace`);
     },
     onSettled: () => {
       void utils.architecture.listTraces.invalidate({ slug });

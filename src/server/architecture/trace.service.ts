@@ -771,14 +771,6 @@ export async function renameTrace(
   const { slug, traceId, name } = renameTraceInput.parse(input);
   const project = await resolveWritableProject(db, actor, slug);
 
-  const existing = await db.trace.findFirst({
-    where: { id: traceId, projectId: project.id, deletedAt: null },
-    select: { id: true },
-  });
-  if (!existing) {
-    throw new NotFoundError();
-  }
-
   const collision = await db.trace.findFirst({
     where: {
       projectId: project.id,
@@ -793,27 +785,38 @@ export async function renameTrace(
   }
 
   try {
-    const trace = await db.trace.update({
-      where: { id: traceId },
+    // Conditional write closes the TOCTOU race: scoping the predicate to the
+    // live row (`deletedAt: null`) means a concurrent soft-delete between here
+    // and the write yields `count === 0` (NotFound) rather than renaming a
+    // tombstone.
+    const { count } = await db.trace.updateMany({
+      where: { id: traceId, projectId: project.id, deletedAt: null },
       data: { name },
-      select: {
-        id: true,
-        name: true,
-        createdAt: true,
-        updatedAt: true,
-        points: {
-          select: { nodeId: true, node: { select: { deletedAt: true } } },
-        },
-      },
     });
-    const { points, ...rest } = trace;
-    return { ...rest, nodeIds: livePointIds(points) };
+    if (count === 0) {
+      throw new NotFoundError();
+    }
   } catch (error) {
     if (isTraceNameCollision(error)) {
       throw new ConflictError(`A Trace named “${name}” already exists.`);
     }
     throw error;
   }
+
+  const trace = await db.trace.findFirstOrThrow({
+    where: { id: traceId, projectId: project.id },
+    select: {
+      id: true,
+      name: true,
+      createdAt: true,
+      updatedAt: true,
+      points: {
+        select: { nodeId: true, node: { select: { deletedAt: true } } },
+      },
+    },
+  });
+  const { points, ...rest } = trace;
+  return { ...rest, nodeIds: livePointIds(points) };
 }
 
 /**
@@ -833,18 +836,17 @@ export async function deleteTrace(
   const { slug, traceId } = deleteTraceInput.parse(input);
   const project = await resolveWritableProject(db, actor, slug);
 
-  const trace = await db.trace.findFirst({
-    where: { id: traceId, projectId: project.id, deletedAt: null },
-    select: { id: true },
-  });
-  if (!trace) {
-    throw new NotFoundError();
-  }
-
   const deletionId = randomUUID();
-  await db.trace.update({
-    where: { id: traceId },
+  // Conditional write closes the TOCTOU race: scoping the predicate to the live
+  // row (`deletedAt: null`) means a concurrent soft-delete wins exactly once —
+  // `count === 0` here is NotFound, so we never overwrite the first caller's
+  // `deletionId` (which would invalidate the undo handle already returned to it).
+  const { count } = await db.trace.updateMany({
+    where: { id: traceId, projectId: project.id, deletedAt: null },
     data: { deletedAt: new Date(), deletionId },
   });
+  if (count === 0) {
+    throw new NotFoundError();
+  }
   return { id: traceId, deletionId };
 }

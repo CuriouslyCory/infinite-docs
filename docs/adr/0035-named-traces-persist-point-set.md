@@ -29,7 +29,7 @@ soft-delete stamped with one `deletionId` for forward-compatible undo.
 
 ## Context
 
-#57 shipped the **working trace** (a per-browser `localStorage` set of trace-point
+`#57` shipped the **working trace** (a per-browser `localStorage` set of trace-point
 ids) and #58 the derived cross-layer **Trace view**. ADR-0034 explicitly named
 the persistence layer — "the `Trace` Prisma model, migration, save/load/share,
 named Traces, and the saved route" — as out of scope / a future seam. #59 builds
@@ -94,7 +94,7 @@ acceptance criterion "enforced at the service layer, not just hidden UI".
 Trace (mirroring `deleteNode`, ADR-0030). `TracePoint` rows are not separately
 stamped (no `deletedAt`); they ride the Trace. Reads filter `deletedAt: null`, so
 a soft-deleted Trace vanishes from list/get and the saved route (`NotFound`).
-#59 ships **no** `restoreTrace` UI, but the stamped id keeps that path
+`#59` ships **no** `restoreTrace` UI, but the stamped id keeps that path
 forward-compatible.
 
 ### Create filters to ≥2 live points; reads drop soft-deleted points

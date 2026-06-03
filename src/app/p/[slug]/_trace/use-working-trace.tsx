@@ -158,16 +158,19 @@ export function WorkingTraceProvider({
   }, []);
 
   const remove = useCallback((id: string) => {
-    setTracePoints((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+    const current = tracePointsRef.current;
+    if (!current.has(id)) return;
+    const next = new Set(current);
+    next.delete(id);
+    tracePointsRef.current = next;
+    setTracePoints(next);
   }, []);
 
   const clear = useCallback(() => {
-    setTracePoints((prev) => (prev.size === 0 ? prev : new Set()));
+    if (tracePointsRef.current.size === 0) return;
+    const next = new Set<string>();
+    tracePointsRef.current = next;
+    setTracePoints(next);
   }, []);
 
   const value = useMemo<WorkingTrace>(
