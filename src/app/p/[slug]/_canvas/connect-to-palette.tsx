@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactElement } from "react";
 
 import {
   Command,
@@ -10,6 +10,7 @@ import {
   CommandItem,
   CommandList,
 } from "~/components/ui/command";
+import { Popover, PopoverPanel, PopoverTrigger } from "~/components/ui/popover";
 import { KIND_ICON, KIND_LABEL } from "~/lib/node-kinds";
 import { type ProjectComponent } from "~/lib/types";
 import { api } from "~/trpc/react";
@@ -141,28 +142,25 @@ function ancestorPath(
 
 /**
  * The popover that hosts the **"Connect to…"** palette behind a caller-supplied
- * trigger — mirrors `KindPickerPopover` (open/close, outside-click, Escape all in
- * one place; the repo has no shared Popover primitive). The project-wide read is
- * lazy: it fires only while the popover is open (`enabled: open`), so opening the
- * detail panel never pays for a whole-project fetch unless the user reaches for
- * connect (performance philosophy #1). Selecting a target closes and forwards to
- * `onSelect`.
+ * trigger. The project-wide read is lazy: it fires only while the popover is
+ * open (`enabled: open`), so opening the detail panel never pays for a
+ * whole-project fetch unless the user reaches for connect (performance
+ * philosophy #1). Selecting a target closes and forwards to `onSelect`.
  */
 export function ConnectToPopover({
   slug,
   excludeIds,
   onSelect,
   trigger,
-  panelClassName = "absolute top-full left-0 z-10 mt-2",
+  align = "end",
 }: {
   slug: string;
   excludeIds: ReadonlySet<string>;
   onSelect: (target: ConnectTarget) => void;
-  trigger: (args: { open: boolean; toggle: () => void }) => ReactNode;
-  panelClassName?: string;
+  trigger: ReactElement<Record<string, unknown>>;
+  align?: "start" | "center" | "end";
 }) {
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   const {
     data: components,
@@ -173,57 +171,33 @@ export function ConnectToPopover({
     { enabled: open },
   );
 
-  useEffect(() => {
-    if (!open) return;
-    function onPointerDown(event: PointerEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        setOpen(false);
-      }
-    }
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
-
   return (
-    <div ref={containerRef} className="relative">
-      {trigger({ open, toggle: () => setOpen((v) => !v) })}
-      {open && (
-        <div
-          className={panelClassName}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.stopPropagation();
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={trigger} />
+      <PopoverPanel align={align} aria-label="Connect to a Component">
+        {isError ? (
+          // Distinct from the loading box so a failed fetch doesn't masquerade
+          // as a permanent loading spinner (TanStack v5 leaves `data`
+          // undefined and `isLoading=false` after retries exhaust). Closing
+          // and reopening the popover re-fires the lazy query.
+          <div className="w-80 rounded-lg border border-white/15 bg-[#1f2138] p-4 text-sm text-white/40 shadow-2xl">
+            Couldn’t load components. Close and reopen to retry.
+          </div>
+        ) : isLoading || !components ? (
+          <div className="w-80 rounded-lg border border-white/15 bg-[#1f2138] p-4 text-sm text-white/40 shadow-2xl">
+            Loading components…
+          </div>
+        ) : (
+          <ConnectToPalette
+            components={components}
+            excludeIds={excludeIds}
+            onSelect={(target) => {
               setOpen(false);
-            }
-          }}
-        >
-          {isError ? (
-            // Distinct from the loading box so a failed fetch doesn't masquerade
-            // as a permanent loading spinner (TanStack v5 leaves `data`
-            // undefined and `isLoading=false` after retries exhaust). Closing
-            // and reopening the popover re-fires the lazy query.
-            <div className="w-80 rounded-lg border border-white/15 bg-[#1f2138] p-4 text-sm text-white/40 shadow-2xl">
-              Couldn’t load components. Close and reopen to retry.
-            </div>
-          ) : isLoading || !components ? (
-            <div className="w-80 rounded-lg border border-white/15 bg-[#1f2138] p-4 text-sm text-white/40 shadow-2xl">
-              Loading components…
-            </div>
-          ) : (
-            <ConnectToPalette
-              components={components}
-              excludeIds={excludeIds}
-              onSelect={(target) => {
-                setOpen(false);
-                onSelect(target);
-              }}
-            />
-          )}
-        </div>
-      )}
-    </div>
+              onSelect(target);
+            }}
+          />
+        )}
+      </PopoverPanel>
+    </Popover>
   );
 }

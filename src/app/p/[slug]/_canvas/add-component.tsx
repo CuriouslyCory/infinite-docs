@@ -27,19 +27,17 @@ export function AddComponent({
     <KindPickerPopover
       parentKind={parentKind}
       onSelect={onAdd}
-      trigger={({ open, toggle }) => (
+      trigger={
         <button
           type="button"
           aria-haspopup="listbox"
-          aria-expanded={open}
-          onClick={toggle}
           disabled={pending}
           className="flex items-center gap-1.5 rounded-lg bg-[hsl(280,100%,70%)] px-3 py-1.5 text-sm font-semibold text-black backdrop-blur transition hover:bg-[hsl(280,100%,80%)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus size={14} aria-hidden />
           {pending ? "Adding…" : "Add Component"}
         </button>
-      )}
+      }
     />
   );
 }
