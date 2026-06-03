@@ -18,7 +18,10 @@ import {
   moveNode,
   updateNodeDocumentation,
 } from "~/server/architecture/node.service";
-import { applySpec } from "~/server/architecture/spec.service";
+import {
+  applySpec,
+  BULK_WRITE_TIMEOUT_MS,
+} from "~/server/architecture/spec.service";
 
 /**
  * The MCP write-tool catalog as plain data — NO SDK imports — so the SDK
@@ -64,6 +67,14 @@ export interface McpWriteToolDescriptor<Schema extends z.ZodType> {
   /** Optional Zod output schema — when present, registerArchitectureTools passes it to SDK 1.26.0's `outputSchema` so the result's `structured` field rides as MCP `structuredContent`. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   outputSchema?: z.ZodType<any>;
+  /**
+   * Optional interactive-transaction timeout (ms) for this tool's
+   * `db.$transaction` wrapper. Omit for the default — only the bulk writers
+   * (`apply_spec`, `apply_graph`) raise it ({@link BULK_WRITE_TIMEOUT_MS}) as a
+   * margin over the largest input we accept; the work itself is bounded by bulk
+   * inserts, not by this ceiling.
+   */
+  timeoutMs?: number;
   /** Service-layer call; the registry wraps it in `db.$transaction`. */
   invoke: (
     db: Db,
@@ -178,6 +189,7 @@ This tool is NOT idempotent. If your transport call fails or times out, READ the
 ${PROMPT_INJECTION_NOTE}`,
     inputSchema: applyGraphInput,
     outputSchema: applyGraphOutput,
+    timeoutMs: BULK_WRITE_TIMEOUT_MS,
     invoke: async (db, actor, args) => {
       const result = await applyGraph(db, actor, args);
       const componentLabel =
@@ -204,15 +216,16 @@ Re-running with the same \`source\` and empty \`changed[]\`/\`dropped[]\` is eff
 ${PROMPT_INJECTION_NOTE}`,
     inputSchema: applySpecInput,
     outputSchema: applySpecOutput,
+    timeoutMs: BULK_WRITE_TIMEOUT_MS,
     invoke: async (db, actor, args) => {
       const result = await applySpec(db, actor, args);
       const parts: string[] = [];
       if (result.created > 0) parts.push(`created ${result.created}`);
-      if (result.overwritten > 0)
-        parts.push(`overwrote ${result.overwritten}`);
+      if (result.overwritten > 0) parts.push(`overwrote ${result.overwritten}`);
       if (result.detached > 0) parts.push(`detached ${result.detached}`);
       if (result.deleted > 0) parts.push(`deleted ${result.deleted}`);
-      const summary = parts.length > 0 ? parts.join(", ") : "no-op (no changes)";
+      const summary =
+        parts.length > 0 ? parts.join(", ") : "no-op (no changes)";
       return {
         message: `Applied Spec ${result.specId} on Component ${result.ownerNodeId}: ${summary}.`,
         structured: result,

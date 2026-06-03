@@ -2,7 +2,7 @@ import { Prisma } from "../../../generated/prisma/client";
 import { assertCanWrite } from "./access";
 import type { Actor, Db } from "./actor";
 import { NotFoundError, ValidationError } from "./errors";
-import { createNode, deleteNode } from "./node.service";
+import { deleteNode } from "./node.service";
 import {
   parseSpec,
   parseSpecDiff,
@@ -70,6 +70,18 @@ export interface ApplySpecResult {
   detached: number;
   deleted: number;
 }
+
+/**
+ * Interactive-transaction margin for the bulk Spec/graph appliers, shared by the
+ * tRPC router and the MCP tool catalog so the two cannot drift. Sized well above
+ * the worst-case parse + bulk-insert cost for a `MAX_PARSED_NODES`-sized Spec; it
+ * is a safety ceiling on a cold connection, NOT the performance fix — `applySpec`
+ * bulk-inserts level by level (a handful of round trips), so the apply never
+ * approaches this bound on the happy path. (The pre-fix per-node `createNode`
+ * loop tripped the 5 s default at ~50 queries; this margin would only have
+ * deferred that, hence the rewrite below is the real fix.)
+ */
+export const BULK_WRITE_TIMEOUT_MS = 30_000;
 
 // A simple sibling grid so newly-generated Components don't pile up at the
 // origin on first attach (philosophy #2 — good defaults). Layout is a canvas
@@ -328,46 +340,90 @@ export async function applySpec(
     deleted += 1;
   }
 
-  // 3) DROPPED keep (default) → detach, unless already cascaded by a delete.
-  let detached = 0;
-  for (const drop of diff.dropped) {
-    if (droppedByNode.get(drop.nodeId)?.action === "delete") continue;
-    if (cascaded.has(drop.nodeId)) continue;
-    await db.node.update({
-      where: { id: drop.nodeId },
+  // 3) DROPPED keep (default) → detach in ONE batch, excluding any already
+  //    cascaded by a delete above. One updateMany instead of a write per row.
+  const detachIds = diff.dropped
+    .filter(
+      (drop) =>
+        droppedByNode.get(drop.nodeId)?.action !== "delete" &&
+        !cascaded.has(drop.nodeId),
+    )
+    .map((drop) => drop.nodeId);
+  if (detachIds.length > 0) {
+    await db.node.updateMany({
+      where: { id: { in: detachIds } },
       data: { sourceSpecId: null, specKey: null },
     });
-    detached += 1;
   }
+  const detached = detachIds.length;
 
-  // 4) NEW, in pre-order so every parent id is resolved before its children. A
-  //    new node's parent is the owner (top-level), an existing matched
-  //    Component, or another new node created earlier in this loop.
+  // 4) NEW. Bulk-insert level by level rather than one self-validating
+  //    `createNode` per node. `applySpec` already authorized the owner once
+  //    (`loadOwnerForWrite`), every parent is the owner or a node matched /
+  //    created in THIS transaction, and the Spec was just upserted — exactly the
+  //    invariants `createNode`'s per-row guards (project / parent / spec
+  //    existence) re-check, so skipping them here is safe, not a shortcut. A
+  //    "wave" is the set of new nodes whose parent id is already known;
+  //    `createManyAndReturn` yields the fresh ids (matched back by `specKey` —
+  //    its return order is NOT guaranteed), which unlock the next wave. Over a
+  //    network DB this turns ~4 round trips per node into one per tree level
+  //    (philosophy #1) — the fix for the apply-phase timeout, not the raised
+  //    transaction bound.
   const keyToId: Record<string, string> = { ...diff.matchedKeyToId };
   const gridCounts = new Map<string, number>();
   let created = 0;
-  for (const node of diff.new) {
-    const parentId =
-      node.parentSpecKey === null
-        ? ownerNodeId
-        : (keyToId[node.parentSpecKey] ?? ownerNodeId);
-    const slot = gridCounts.get(parentId) ?? 0;
-    gridCounts.set(parentId, slot + 1);
+  let pending = diff.new;
+  while (pending.length > 0) {
+    let ready = pending.filter(
+      (node) =>
+        node.parentSpecKey === null ||
+        keyToId[node.parentSpecKey] !== undefined,
+    );
+    let next = pending.filter(
+      (node) =>
+        node.parentSpecKey !== null &&
+        keyToId[node.parentSpecKey] === undefined,
+    );
+    // No progress means a parent key never resolves (a parsed parent that
+    // dropped out of the tree). Flush the remainder under the owner, mirroring
+    // the `?? ownerNodeId` fallback, so the loop can never spin forever.
+    if (ready.length === 0) {
+      ready = pending;
+      next = [];
+    }
 
-    const newNode = await createNode(db, actor, {
-      projectId: owner.projectId,
-      parentId,
-      kind: node.kind,
-      title: node.title,
-      documentation: node.documentation,
-      metadata: node.metadata,
-      sourceSpecId: specId,
-      specKey: node.specKey,
-      posX: (slot % GRID_COLS) * GRID_DX,
-      posY: Math.floor(slot / GRID_COLS) * GRID_DY,
+    const rows = ready.map((node) => {
+      const parentId =
+        node.parentSpecKey === null
+          ? ownerNodeId
+          : (keyToId[node.parentSpecKey] ?? ownerNodeId);
+      const slot = gridCounts.get(parentId) ?? 0;
+      gridCounts.set(parentId, slot + 1);
+      const row: Prisma.NodeCreateManyInput = {
+        projectId: owner.projectId,
+        parentId,
+        kind: node.kind,
+        title: node.title,
+        sourceSpecId: specId,
+        specKey: node.specKey,
+        posX: (slot % GRID_COLS) * GRID_DX,
+        posY: Math.floor(slot / GRID_COLS) * GRID_DY,
+      };
+      if (node.documentation !== undefined)
+        row.documentation = node.documentation;
+      if (node.metadata !== undefined) row.metadata = node.metadata;
+      return row;
     });
-    keyToId[node.specKey] = newNode.id;
-    created += 1;
+
+    const inserted = await db.node.createManyAndReturn({
+      data: rows,
+      select: { id: true, specKey: true },
+    });
+    for (const row of inserted) {
+      if (row.specKey !== null) keyToId[row.specKey] = row.id;
+    }
+    created += inserted.length;
+    pending = next;
   }
 
   return { specId, ownerNodeId, created, overwritten, detached, deleted };

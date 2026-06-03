@@ -45,8 +45,11 @@ export function registerArchitectureTools(
       async (args, extra) => {
         const actor = actorFromAuthInfo(extra.authInfo);
         try {
-          const result = await db.$transaction((tx) =>
-            descriptor.invoke(tx, actor, args),
+          const result = await db.$transaction(
+            (tx) => descriptor.invoke(tx, actor, args),
+            descriptor.timeoutMs
+              ? { timeout: descriptor.timeoutMs }
+              : undefined,
           );
           // When the descriptor declared an outputSchema, ride the typed
           // payload as MCP `structuredContent` so the agent gets a parsed

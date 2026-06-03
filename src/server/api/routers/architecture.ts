@@ -29,7 +29,11 @@ import {
   updateEdgeInteraction,
 } from "~/server/architecture/edge.service";
 import { exportMarkdown } from "~/server/architecture/export.service";
-import { applySpec, previewSpec } from "~/server/architecture/spec.service";
+import {
+  applySpec,
+  BULK_WRITE_TIMEOUT_MS,
+  previewSpec,
+} from "~/server/architecture/spec.service";
 import {
   applySpecInput,
   connectNodesInput,
@@ -342,13 +346,19 @@ export const architectureRouter = createTRPCRouter({
   // Owner-only mutation: apply a previewed Spec (create/overwrite/detach/delete
   // per the user's resolutions). Wrapped in a transaction so a per-row reject
   // rolls the whole merge back — never a partial apply (#64). Owner access is
-  // enforced in the service (ADR-0001).
+  // enforced in the service (ADR-0001). The raised `timeout` is a margin for the
+  // largest `source` we accept (`MAX_PARSED_NODES` Components + parse cost), NOT
+  // the perf fix — `applySpec` bulk-inserts level by level so the work is a
+  // handful of round trips, well under the default; the ceiling just absorbs a
+  // worst-case parse on a cold connection. Same margin the MCP path uses.
   applySpec: protectedProcedure
     .input(applySpecInput)
     .mutation(async ({ ctx, input }) => {
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
-        return await ctx.db.$transaction((tx) => applySpec(tx, actor, input));
+        return await ctx.db.$transaction((tx) => applySpec(tx, actor, input), {
+          timeout: BULK_WRITE_TIMEOUT_MS,
+        });
       } catch (error) {
         throw toTRPCError(error);
       }
