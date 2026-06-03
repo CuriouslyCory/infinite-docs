@@ -1,9 +1,10 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { ChevronRight, Pencil, Trash2 } from "lucide-react";
+import { ChevronRight, Pencil, Route, Trash2 } from "lucide-react";
 import { createContext, useContext, useRef, useState } from "react";
 
+import { useWorkingTrace } from "~/app/p/[slug]/_trace/use-working-trace";
 import { KIND_ICON } from "~/lib/node-kinds";
 import { type NodeKind } from "~/lib/schemas";
 
@@ -76,6 +77,11 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
   const onDescend = useContext(DescendComponentContext);
   const onDelete = useContext(DeleteComponentContext);
   const canEdit = useContext(CanEditContext);
+  // Per-node read of the working trace (mirrors the CanEditContext pattern): the
+  // set changes only on an explicit, rare user toggle — never mid-drag — so the
+  // re-render it triggers is acceptable and the set is NOT threaded through each
+  // node's `data` (which would defeat React Flow's per-node memo, #57).
+  const isTraced = useWorkingTrace().isTracePoint(id);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(data.title);
   // Enter commits, then blurs the unmounting input — which would fire a second
@@ -121,10 +127,22 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
   return (
     <div
       title={data.optimistic ? undefined : "Double-click to open"}
-      className={`group flex items-center gap-2 rounded-lg border border-white/15 bg-[#1f2138] px-3 py-2 text-sm text-white shadow-lg ${
-        data.optimistic ? "opacity-60" : "opacity-100"
-      }`}
+      className={`group relative flex items-center gap-2 rounded-lg border bg-[#1f2138] px-3 py-2 text-sm text-white shadow-lg ${
+        isTraced ? "border-[hsl(280,100%,70%)]" : "border-white/15"
+      } ${data.optimistic ? "opacity-60" : "opacity-100"}`}
     >
+      {/* Trace-point indicator (#57): a distinct corner badge, kept visually
+          separate from the kind icon and the optimistic opacity state. Purely a
+          mark — kind stays cosmetic (ADR-0018/0019). */}
+      {isTraced && (
+        <span
+          aria-label="Trace point"
+          title="Trace point"
+          className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-[hsl(280,100%,70%)] text-white shadow"
+        >
+          <Route size={11} aria-hidden />
+        </span>
+      )}
       {/* A neutral connection point — Components are not directional, so a Port
           carries no input/output meaning; a Connection's arrowheads are derived
           from its `(interaction, source, target)` (ADR-0027). Two handles (left +

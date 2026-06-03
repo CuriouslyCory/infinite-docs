@@ -1,9 +1,12 @@
 "use client";
 
-import { ChevronDown, Plus, X } from "lucide-react";
+import { ChevronDown, Plus, Route, X } from "lucide-react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo } from "react";
+import { toast } from "sonner";
 
+import { useWorkingTrace } from "~/app/p/[slug]/_trace/use-working-trace";
 import { arrowEnds } from "~/lib/connection-direction";
 import { INTERACTION_LABEL } from "~/lib/interactions";
 import { KIND_ICON, KIND_LABEL } from "~/lib/node-kinds";
@@ -146,6 +149,11 @@ export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
         </button>
       </header>
 
+      {/* Shown to owner AND viewer alike: marking a trace point is client-side
+          selection state, not a write (ADR-0002), so it is not behind the
+          `readOnly` discriminator (#57). */}
+      <TraceCheckbox nodeId={ownerNodeId} slug={slug} />
+
       {props.readOnly ? (
         <ReadOnlyKindRow currentKind={currentKind} />
       ) : (
@@ -182,6 +190,60 @@ export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
         onCommit={props.readOnly ? undefined : props.onCommitDocumentation}
       />
     </div>
+  );
+}
+
+/**
+ * The **Trace this Component** checkbox (#57): marks the selected Component as a
+ * **trace point** in the per-Project **working trace**. Shown to owner and
+ * viewer alike — it is client-side selection state, not a write (ADR-0002).
+ * Adding the second trace point unlocks the **Trace view**, so the "added"
+ * toast carries an "Open Trace view" action once the post-toggle count reaches
+ * two.
+ */
+function TraceCheckbox({ nodeId, slug }: { nodeId: string; slug: string }) {
+  const router = useRouter();
+  const { isTracePoint, toggle, count } = useWorkingTrace();
+  const checked = isTracePoint(nodeId);
+
+  const onToggle = () => {
+    const transition = toggle(nodeId);
+    if (transition === "added") {
+      const nextCount = count + 1;
+      toast.success(
+        "Trace point added",
+        nextCount >= 2
+          ? {
+              action: {
+                label: "Open Trace view",
+                onClick: () => router.push(`/p/${slug}/trace`),
+              },
+            }
+          : undefined,
+      );
+    } else {
+      toast("Trace point removed");
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-1.5">
+      <label className="nodrag flex cursor-pointer items-center gap-2">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={onToggle}
+          className="h-4 w-4 shrink-0 accent-[hsl(280,100%,70%)]"
+        />
+        <Route size={14} aria-hidden className="shrink-0 text-white/60" />
+        <span className="text-sm font-medium text-white">
+          Trace this Component
+        </span>
+      </label>
+      <p className="pl-6 text-xs text-white/40">
+        Mark 2 or more Components to see how they connect.
+      </p>
+    </section>
   );
 }
 
