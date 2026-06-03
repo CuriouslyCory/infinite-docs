@@ -328,8 +328,10 @@ endpoint — the real Node it stands in for is carried as `realEndpointId`. Boun
 **derived per crossing edge**, never inherited or projected transitively: a Component reached as
 the far endpoint of three crossing Connections produces three `boundaryProxies` rows that share
 `realEndpointId` but each carry a distinct synthetic `nodeId` (`proxy_<edgeId>`), so it stays
-addressable by the edge that produced it and React Flow keys never collide. They persist no rows
-of their own. Each row is `{ nodeId, title, kind, realEndpointId, edgeId }` — **no `origin`, no
+addressable by the edge that produced it and React Flow keys never collide. On the Canvas these
+per-edge rows are **coalesced at render** — rows sharing a `realEndpointId` draw as one node with
+all crossing Connections routed to it (#90) — a view-only collapse that never touches the per-edge
+rows, the cache mirror, or the Connections list. They persist no rows of their own. Each row is `{ nodeId, title, kind, realEndpointId, edgeId }` — **no `origin`, no
 `direct`/`inherited` partition, no transitive walk** (that whole framing died with the Flow model;
 ADR-0031 supersedes the boundary halves of ADR-0012/0016). A boundary proxy is a **passive node**
 (no Component-detail panel, no Descent, no hover-prefetch). The code term is **boundary-proxy**.
@@ -351,9 +353,11 @@ endpoint allowed to violate same-Canvas" concept — *all* endpoints may now spa
 The far-end stand-in that replaces it is the **boundary proxy** (ADR-0031).
 
 ### Boundary group
-Retired (#62): the client no longer renders an inherited-proxy group; with ADR-0031 a **boundary
-proxy** stands in *per crossing edge*, with no client-side grouping to collapse into. Historical:
-ADR-0016.
+Retired (#62): the client no longer renders the transitive inherited-proxy *data* group — the
+`origin: direct/inherited` partition and its container are gone (ADR-0031 supersedes ADR-0016's
+boundary halves). Distinct from that retired structure, #90 adds a purely **render-time**
+coalescing — per-edge proxy rows sharing a `realEndpointId` draw as one node — which introduces no
+data grouping, no `origin` field, and no persisted rows. Historical: ADR-0016.
 
 ### Passive node
 A derived, read-only React Flow node on a **Canvas** — the **boundary proxy** —
