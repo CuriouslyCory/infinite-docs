@@ -2,7 +2,7 @@
 
 import { Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Toaster } from "sonner";
 
 import { createProjectInput } from "~/lib/schemas";
@@ -24,6 +24,10 @@ export function ProjectDashboard() {
     slug: string;
     title: string;
   } | null>(null);
+  // Where focus returns when the delete dialog closes: confirming removes the
+  // card whose trash button opened it, so we hand focus to the always-present
+  // create input rather than letting it fall to `<body>` (a11y).
+  const createInputRef = useRef<HTMLInputElement>(null);
 
   const createProject = api.architecture.createProject.useMutation({
     onSuccess: async () => {
@@ -51,6 +55,7 @@ export function ProjectDashboard() {
         className="flex gap-2"
       >
         <input
+          ref={createInputRef}
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -102,7 +107,7 @@ export function ProjectDashboard() {
                       title: project.title,
                     })
                   }
-                  className="absolute top-1/2 right-3 -translate-y-1/2 rounded p-1.5 text-white/40 opacity-0 transition hover:bg-white/10 hover:text-red-400 group-hover:opacity-100 focus-visible:opacity-100"
+                  className="absolute top-1/2 right-3 -translate-y-1/2 rounded p-1.5 text-white/40 opacity-0 transition group-hover:opacity-100 hover:bg-white/10 hover:text-red-400 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                 >
                   <Trash2 size={16} aria-hidden />
                 </button>
@@ -115,6 +120,7 @@ export function ProjectDashboard() {
       <DeleteProjectDialog
         project={pendingDelete}
         onClose={() => setPendingDelete(null)}
+        finalFocusRef={createInputRef}
       />
       <Toaster theme="dark" position="bottom-right" richColors />
     </div>

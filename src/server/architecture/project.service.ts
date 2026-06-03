@@ -64,7 +64,9 @@ export async function getProjectBySlug(
  * `deletedAt: null` predicate) closes the TOCTOU race against a concurrent
  * delete — `count === 0` means another writer won, reported as not-found. A
  * soft-delete leaves child rows intact (no cascade fires); the project simply
- * stops resolving anywhere `deletedAt: null` is filtered. Mirrors `deleteTrace`.
+ * stops resolving anywhere `deletedAt: null` is filtered. Like `deleteEdge`,
+ * this is a *lone* soft-delete — no `deletionId`, no cascade — not the batched,
+ * undoable form `deleteTrace`/`deleteNode` use.
  */
 export async function deleteProject(
   db: Db,

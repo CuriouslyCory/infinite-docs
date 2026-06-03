@@ -144,6 +144,32 @@ describe("deleteProject", () => {
       deleteProject(testDb, actor, { slug: project.slug }),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
+
+  it("leaves child rows intact — a lone soft-delete, no cascade", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await createProject(testDb, actor, { title: "Has Children" });
+    const source = await testDb.node.create({
+      data: { projectId: project.id, title: "A" },
+    });
+    const target = await testDb.node.create({
+      data: { projectId: project.id, title: "B" },
+    });
+    const edge = await testDb.edge.create({
+      data: { projectId: project.id, sourceId: source.id, targetId: target.id },
+    });
+
+    await deleteProject(testDb, actor, { slug: project.slug });
+
+    const [persistedSource, persistedTarget, persistedEdge] = await Promise.all([
+      testDb.node.findUnique({ where: { id: source.id } }),
+      testDb.node.findUnique({ where: { id: target.id } }),
+      testDb.edge.findUnique({ where: { id: edge.id } }),
+    ]);
+    expect(persistedSource?.deletedAt).toBeNull();
+    expect(persistedTarget?.deletedAt).toBeNull();
+    expect(persistedEdge?.deletedAt).toBeNull();
+  });
 });
 
 describe("access: owner-only mutation", () => {
