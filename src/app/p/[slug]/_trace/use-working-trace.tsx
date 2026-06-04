@@ -196,7 +196,9 @@ export function WorkingTraceProvider({
 export function useWorkingTrace(): WorkingTrace {
   const ctx = useContext(WorkingTraceContext);
   if (ctx === null) {
-    throw new Error("useWorkingTrace must be used within a WorkingTraceProvider");
+    throw new Error(
+      "useWorkingTrace must be used within a WorkingTraceProvider",
+    );
   }
   return ctx;
 }

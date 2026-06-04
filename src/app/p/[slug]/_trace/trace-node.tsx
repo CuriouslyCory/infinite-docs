@@ -21,16 +21,16 @@ export type TraceComponentNode = Node<TraceFlowNodeData, "trace-component">;
  * untrusted user content rendered as plain text (prompt-injection standing note,
  * CONTEXT.md). Domain types come from `~/lib` (ADR-0004).
  */
-export function TraceComponentNodeView({ data }: NodeProps<TraceComponentNode>) {
+export function TraceComponentNodeView({
+  data,
+}: NodeProps<TraceComponentNode>) {
   const Icon = KIND_ICON[data.kind];
 
   if (data.isContainer) {
     return (
       <div
         className={`h-full w-full rounded-lg border bg-white/[0.03] ${
-          data.isTracePoint
-            ? "border-[hsl(280,100%,70%)]"
-            : "border-white/15"
+          data.isTracePoint ? "border-[hsl(280,100%,70%)]" : "border-white/15"
         }`}
       >
         <div className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-white/70">
@@ -78,7 +78,11 @@ export function TraceComponentNodeView({ data }: NodeProps<TraceComponentNode>) 
         position={Position.Left}
         className="h-2! w-2! border-white/40! bg-white/60!"
       />
-      <Icon size={16} aria-hidden className="shrink-0 text-[hsl(280,100%,80%)]" />
+      <Icon
+        size={16}
+        aria-hidden
+        className="shrink-0 text-[hsl(280,100%,80%)]"
+      />
       <span className="max-w-[12rem] truncate">{data.title}</span>
       <Handle
         type="source"

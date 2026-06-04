@@ -261,7 +261,9 @@ describe("serializeGraph (pure, deterministic)", () => {
   // maps to React Flow markers, the exporter maps to glyphs. These cases lock
   // the exporter half so a future Interaction value forces a deliberate update.
   describe("interaction glyphs", () => {
-    function projectWithEdge(interaction: SerializerEdge["interaction"]): SerializerInput {
+    function projectWithEdge(
+      interaction: SerializerEdge["interaction"],
+    ): SerializerInput {
       return {
         project: { title: "G" },
         rootCanvasNodeId: null,
@@ -759,9 +761,27 @@ async function seedTrace(ownerId: string): Promise<{
   });
   await testDb.node.createMany({
     data: [
-      { id: "tn-api", projectId: "p-trace", parentId: null, title: "API Gateway", kind: "SERVICE" },
-      { id: "tn-users", projectId: "p-trace", parentId: "tn-api", title: "Users Module", kind: "SERVICE" },
-      { id: "tn-db", projectId: "p-trace", parentId: null, title: "Postgres", kind: "DATABASE" },
+      {
+        id: "tn-api",
+        projectId: "p-trace",
+        parentId: null,
+        title: "API Gateway",
+        kind: "SERVICE",
+      },
+      {
+        id: "tn-users",
+        projectId: "p-trace",
+        parentId: "tn-api",
+        title: "Users Module",
+        kind: "SERVICE",
+      },
+      {
+        id: "tn-db",
+        projectId: "p-trace",
+        parentId: null,
+        title: "Postgres",
+        kind: "DATABASE",
+      },
     ],
   });
   await testDb.edge.create({

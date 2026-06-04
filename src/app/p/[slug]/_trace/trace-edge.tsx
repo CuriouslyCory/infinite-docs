@@ -15,7 +15,10 @@ export type TraceConnectionEdgeData = {
   interaction: Interaction;
 };
 
-export type TraceConnectionEdge = Edge<TraceConnectionEdgeData, "trace-connection">;
+export type TraceConnectionEdge = Edge<
+  TraceConnectionEdgeData,
+  "trace-connection"
+>;
 
 /**
  * The read-only Connection edge for the cross-layer **Trace view** (#58). A thin,
@@ -48,7 +51,11 @@ export function TraceConnectionEdgeView({
 
   return (
     <>
-      <BaseEdge path={edgePath} markerStart={markerStart} markerEnd={markerEnd} />
+      <BaseEdge
+        path={edgePath}
+        markerStart={markerStart}
+        markerEnd={markerEnd}
+      />
       {data?.label && (
         <EdgeLabelRenderer>
           <div
