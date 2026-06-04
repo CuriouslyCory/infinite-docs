@@ -1,5 +1,6 @@
 import { type Project } from "../../../generated/prisma/client";
-import { assertCanWrite } from "./access";
+import { type Capability } from "./access";
+import { authorizeProjectRead, authorizeProjectWrite } from "./access-db";
 import type { Actor, Db } from "./actor";
 import { NotFoundError } from "./errors";
 import { isSlugCollision } from "./prisma-errors";
@@ -38,24 +39,28 @@ export async function listProjects(db: Db, actor: Actor): Promise<Project[]> {
 }
 
 /**
- * Fetches a Project by its capability-URL slug. Possession of the unguessable
- * slug is the read grant, so `actor` is optional and no access check runs here.
- * A missing or soft-deleted project is reported as not-found (never revealing
- * whether a slug exists-but-forbidden).
+ * Fetches a Project by its capability-URL slug, gated on `view` (ADR-0040). For a
+ * `guestAccess=VIEW` project (the default) any holder of the slug — anonymous or
+ * not — resolves `view`, exactly as ADR-0002 specified; a `guestAccess=NONE`
+ * project resolves nothing for a non-member and is reported as not-found, never
+ * forbidden (the non-disclosure rule lives in the read seam). The owner and any
+ * member resolve their own capability.
+ *
+ * Returns `viewerCapability` alongside the project so the route shells derive
+ * `canEdit`/`canManage` without a second authorization pass.
  */
 export async function getProjectBySlug(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: GetProjectBySlugInput,
-): Promise<Project> {
+): Promise<Project & { viewerCapability: Capability }> {
   const { slug } = getProjectBySlugInput.parse(input);
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  return project;
+  const { project, viewerCapability } = await authorizeProjectRead(
+    db,
+    actor,
+    slug,
+  );
+  return { ...project, viewerCapability };
 }
 
 /**
@@ -74,14 +79,16 @@ export async function deleteProject(
   input: DeleteProjectInput,
 ): Promise<{ id: string }> {
   const { slug } = deleteProjectInput.parse(input);
-  const project = await db.project.findFirst({
+  const found = await db.project.findFirst({
     where: { slug, deletedAt: null },
-    select: { id: true, ownerId: true },
+    select: { id: true },
   });
-  if (!project) {
+  if (!found) {
     throw new NotFoundError();
   }
-  assertCanWrite(actor, project);
+  // Destroying a Project requires `owner` — a non-owner ADMIN cannot delete
+  // (ADR-0040). Authorized by internal id; ownership comes from the actor.
+  const project = await authorizeProjectWrite(db, actor, found.id, "owner");
 
   const { count } = await db.project.updateMany({
     where: { id: project.id, deletedAt: null },

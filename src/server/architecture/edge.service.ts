@@ -3,7 +3,7 @@ import {
   type Interaction,
   type Prisma,
 } from "../../../generated/prisma/client";
-import { assertCanWrite } from "./access";
+import { authorizeProjectWrite, resolveReadableProject } from "./access-db";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { isEdgeDedupCollision } from "./prisma-errors";
@@ -81,13 +81,7 @@ export async function connectNodes(
   const { projectId, sourceId, targetId, interaction, label } =
     connectNodesInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { id: projectId, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  const project = await authorizeProjectWrite(db, actor, projectId, "edit");
 
   if (sourceId === targetId) {
     throw new ValidationError(
@@ -179,28 +173,21 @@ export interface NodeConnection {
  * no second read; a soft-deleted far endpoint hides the row (the same posture
  * `getCanvas` takes — a Connection with a dead end is not surfaced).
  *
- * Slug-readable (ADR-0002): the capability slug IS the read grant, so a viewer
- * sees the list read-only; `actor` is accepted only to match the
- * readable-procedure signature and is never consulted. The slug→project bind is
- * the gate, and scoping the Edge query to that `projectId` means a `nodeId` from
- * another Project simply matches nothing (no cross-project disclosure). One round
- * trip — the far endpoints come back on the same query via the Edge→Node
- * relations, never a per-edge follow-up.
+ * Capability-gated read on `view` via the slug→project bind (ADR-0040): the
+ * default `guestAccess=VIEW` lets any slug-holder see the list read-only; a
+ * `guestAccess=NONE` project is not-found for a non-member. Scoping the Edge
+ * query to that `projectId` means a `nodeId` from another Project simply matches
+ * nothing (no cross-project disclosure). One round trip — the far endpoints come
+ * back on the same query via the Edge→Node relations, never a per-edge follow-up.
  */
 export async function listNodeConnections(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: ListNodeConnectionsInput,
 ): Promise<NodeConnection[]> {
   const { slug, nodeId } = listNodeConnectionsInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
+  const project = await resolveReadableProject(db, actor, slug);
 
   const edges = await db.edge.findMany({
     where: {
@@ -273,14 +260,7 @@ export async function updateEdge(
   if (!edge) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: edge.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, edge.projectId, "edit");
 
   return db.edge.update({
     where: { id: edge.id },
@@ -318,14 +298,7 @@ export async function updateEdgeInteraction(
   if (!edge) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: edge.projectId, deletedAt: null },
-    select: { ownerId: true, id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, edge.projectId, "edit");
 
   if (edge.interaction === interaction) {
     return edge;
@@ -394,14 +367,7 @@ export async function deleteEdge(
   if (!edge) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: edge.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, edge.projectId, "edit");
 
   const updated = await db.edge.update({
     where: { id: edge.id },
@@ -448,14 +414,7 @@ export async function restoreEdge(
   if (!firstEdge) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: firstEdge.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, firstEdge.projectId, "edit");
 
   // Pre-check the de-dupe invariant (ADR-0010): any active row occupying a slot
   // we're about to revive would block the updateMany. Each revived Edge

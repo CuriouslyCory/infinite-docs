@@ -5,7 +5,7 @@ import {
   type NodeKind as PrismaNodeKind,
   type Prisma,
 } from "../../../generated/prisma/client";
-import { assertCanWrite } from "./access";
+import { authorizeProjectWrite, resolveReadableProject } from "./access-db";
 import { activeDuplicateWhere } from "./edge.service";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
@@ -138,13 +138,7 @@ export async function createNode(
     specKey,
   } = createNodeInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { id: projectId, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  const project = await authorizeProjectWrite(db, actor, projectId, "edit");
 
   // A child Component (parentId !== null) must hang off a live parent Node in
   // this same owned Project. Scoping the lookup to `project.id` closes
@@ -323,13 +317,16 @@ interface CrossScopeEdgeRow {
  * lowercase, so every model/column name is double-quoted PascalCase; the scope
  * id and project id are bound parameters, never string-interpolated (ADR-0006).
  *
- * Slug-readable (ADR-0002): the capability slug IS the read grant, so `actor` is
- * not consulted — it is accepted only to match the readable-procedure signature
- * shape (`db, actor, input`). The slug→project bind below is the gate.
+ * Capability-gated read (ADR-0040, generalizing ADR-0002): the slug→project bind
+ * below resolves the caller's capability and requires `view`. For the default
+ * `guestAccess=VIEW` this is exactly the old slug-grant (anonymous read+descend);
+ * a `guestAccess=NONE` project resolves to not-found for a non-member. `actor` is
+ * now consulted (for the owner check and the membership lookup), though anonymous
+ * callers still skip the membership query.
  */
 export async function getCanvas(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: GetCanvasInput,
 ): Promise<{
   interiorNodes: Node[];
@@ -339,13 +336,12 @@ export async function getCanvas(
 }> {
   const { slug, canvasNodeId } = getCanvasInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
+  // Gate ONCE at the slug→project bind, capability >= `view` (ADR-0040).
+  // Authorization is project-scoped, so this single gate covers every descent
+  // scope, every breadcrumb ancestor, and every boundary proxy below — all
+  // interior to this same project — with no per-node authz. A non-member of a
+  // `guestAccess=NONE` project gets not-found, never forbidden.
+  const project = await resolveReadableProject(db, actor, slug);
 
   // The four reads run in one `Promise.all` — no waterfall, no dependency on
   // `interiorNodes` resolving first (ADR-0001). The interior Nodes fall out of a
@@ -614,24 +610,18 @@ export interface ProjectComponent {
  *
  * Deliberately distinct from the scope-keyed `getCanvas` (different cardinality —
  * the whole Project vs one Canvas; ADR-0032), and NOT folded into its CTE.
- * Slug-readable (ADR-0002): the capability slug IS the read grant, so `actor` is
- * accepted only to match the readable-procedure signature and is never consulted;
- * the slug→project bind is the gate. A missing / soft-deleted slug is a not-found.
+ * Capability-gated on `view` via the slug→project bind (ADR-0040): the default
+ * `guestAccess=VIEW` reproduces the old slug grant; a `guestAccess=NONE` project
+ * is not-found for a non-member. A missing / soft-deleted slug is also not-found.
  */
 export async function listProjectComponents(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: ListProjectComponentsInput,
 ): Promise<ProjectComponent[]> {
   const { slug } = listProjectComponentsInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
+  const project = await resolveReadableProject(db, actor, slug);
 
   return db.node.findMany({
     where: { projectId: project.id, deletedAt: null },
@@ -665,14 +655,7 @@ export async function updateNode(
   if (!node) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: node.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, node.projectId, "edit");
 
   return db.node.update({ where: { id: node.id }, data: { title } });
 }
@@ -700,14 +683,7 @@ export async function updateNodeKind(
   if (!node) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: node.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, node.projectId, "edit");
 
   return db.node.update({ where: { id: node.id }, data: { kind } });
 }
@@ -736,14 +712,7 @@ export async function updateNodeDocumentation(
   if (!node) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: node.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, node.projectId, "edit");
 
   return db.node.update({ where: { id: node.id }, data: { documentation } });
 }
@@ -790,14 +759,7 @@ export async function moveNode(
   if (!node) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: node.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, node.projectId, "edit");
 
   // Idempotent: a move that doesn't change `parentId` is a no-op. Return the
   // full Node row so the caller's optimistic UI / tool result still has it.
@@ -894,13 +856,7 @@ export async function updatePositions(
 ): Promise<Node[]> {
   const { projectId, positions } = updatePositionsInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { id: projectId, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  const project = await authorizeProjectWrite(db, actor, projectId, "edit");
 
   // Confirm the whole id set belongs to this (owned, non-deleted) Project before
   // touching anything — `new Set` so a duplicated id is counted once. A shortfall
@@ -958,13 +914,7 @@ export async function upsertBoundaryProxyPlacement(
   const { projectId, containerNodeId, realEndpointId, posX, posY } =
     upsertBoundaryProxyPlacementInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { id: projectId, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  const project = await authorizeProjectWrite(db, actor, projectId, "edit");
 
   // Both endpoints must be live Nodes in this (owned) Project — the off-scope
   // endpoint always, the container only when non-null (null is the root scope,
@@ -1109,14 +1059,7 @@ export async function deleteNode(
   if (!node) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: node.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, node.projectId, "edit");
 
   // Gather the subtree (root included) in one recursive descent of `parentId`.
   // No depth cap — the graph is acyclic (`moveNode` rejects any reparent whose
@@ -1247,14 +1190,7 @@ export async function restoreNode(
   if (!firstNode) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: firstNode.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, firstNode.projectId, "edit");
 
   const edges = await db.edge.findMany({
     where: { deletionId },
