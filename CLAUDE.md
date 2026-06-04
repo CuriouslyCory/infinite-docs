@@ -96,6 +96,10 @@ NextAuth v5 with the Prisma adapter (database sessions, not JWT) and the Discord
 - TypeScript is strict with `noUncheckedIndexedAccess` and `checkJs`; ESLint runs type-checked rules and prefers inline type imports (`import { type Foo }`).
   - **Exception — server/client boundary:** `tsconfig` sets `verbatimModuleSyntax`, so inline `import { type Foo }` leaves a preserved side-effect import (`import {} from "…"`) while top-level `import type { Foo }` is fully elided. A type pulled into a `"use client"` file from a module whose graph reaches server-only code — e.g. `AppRouter` from `~/server/api/root` (→ `~/server/db` → `@prisma/adapter-pg` → `pg`) — **must** use top-level `import type`, or the server graph (and Node built-ins like `dns`) gets bundled into the client. `consistent-type-imports` accepts both forms and will not flag this.
 
+### Formatting
+
+Prettier owns all markdown (`**/*.{md,mdx}`) — `CONTEXT.md`, `docs/adr/*.md`, READMEs, and `docs/agents/*.md` included. Don't hand-format markdown; run `pnpm format:write`. `proseWrap` stays at prettier's default `preserve`, so existing hand-wrapping is not reflowed. (`.claude/` orchestrator scratch is prettier-ignored.)
+
 ### Comments and documentation
 
 Code is read far more than it is written, and comments that merely restate the code are noise that rots out of sync. **Default to writing no comments.** Well-named identifiers already convey *what* the code does; a comment earns its place only by explaining *why* when the why is non-obvious — a hidden constraint, a subtle invariant, a workaround for a specific bug, or behavior that would surprise a reader. If deleting a comment wouldn't confuse a future reader, don't write it.
