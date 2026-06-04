@@ -48,3 +48,6 @@ yarn-error.log*
 
 # idea files
 .idea
+
+# agent/orchestrator scratch (plans, progress notes) — never committed; also prettier-ignored
+.claude/

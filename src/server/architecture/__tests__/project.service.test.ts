@@ -6,8 +6,10 @@ import { ForbiddenError, NotFoundError } from "../errors";
 import {
   createProject,
   deleteProject,
+  getProjectAccess,
   getProjectBySlug,
   listProjects,
+  setGuestAccess,
 } from "../project.service";
 import { resetDb, testDb } from "./helpers/test-db";
 
@@ -329,6 +331,258 @@ describe("deleteProject — owner-only, ADMIN cannot delete (ADR-0040)", () => {
       where: { id: project.id },
     });
     expect(persisted?.deletedAt).toBeNull();
+  });
+});
+
+describe("setGuestAccess — ADMIN+ id-keyed write (#105, ADR-0040)", () => {
+  it("the owner sets NONE, persisting it so an anonymous read 404s", async () => {
+    const owner = await makeUser();
+    const actor: Actor = { userId: owner.id, via: "session" };
+    const project = await createProject(testDb, actor, { title: "Sharable" });
+
+    const result = await setGuestAccess(testDb, actor, {
+      projectId: project.id,
+      level: "NONE",
+    });
+    expect(result.guestAccess).toBe("NONE");
+
+    const persisted = await testDb.project.findUnique({
+      where: { id: project.id },
+    });
+    expect(persisted?.guestAccess).toBe("NONE");
+
+    // End-to-end enforcement wiring: a NONE project is not-found for anon.
+    await expect(
+      getProjectBySlug(testDb, null, { slug: project.slug }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("an ADMIN member may set the level", async () => {
+    const owner = await makeUser("Owner");
+    const admin = await makeUser("Admin");
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Shared" },
+    );
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: admin.id, role: "ADMIN" },
+    });
+
+    const result = await setGuestAccess(
+      testDb,
+      { userId: admin.id },
+      { projectId: project.id, level: "NONE" },
+    );
+    expect(result.guestAccess).toBe("NONE");
+
+    const persisted = await testDb.project.findUnique({
+      where: { id: project.id },
+    });
+    expect(persisted?.guestAccess).toBe("NONE");
+  });
+
+  it("rejects an EDITOR member with ForbiddenError and leaves the level unchanged", async () => {
+    const owner = await makeUser("Owner");
+    const editor = await makeUser("Editor");
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Shared" },
+    );
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: editor.id, role: "EDITOR" },
+    });
+
+    await expect(
+      setGuestAccess(
+        testDb,
+        { userId: editor.id },
+        { projectId: project.id, level: "NONE" },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    const persisted = await testDb.project.findUnique({
+      where: { id: project.id },
+    });
+    expect(persisted?.guestAccess).toBe("VIEW");
+  });
+
+  it("rejects a VIEWER member with ForbiddenError", async () => {
+    const owner = await makeUser("Owner");
+    const viewer = await makeUser("Viewer");
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Shared" },
+    );
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: viewer.id, role: "VIEWER" },
+    });
+
+    await expect(
+      setGuestAccess(
+        testDb,
+        { userId: viewer.id },
+        { projectId: project.id, level: "NONE" },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("rejects a logged-in non-member of a default (VIEW) project with ForbiddenError (id-keyed seam)", async () => {
+    const owner = await makeUser("Owner");
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Public" },
+    );
+
+    await expect(
+      setGuestAccess(
+        testDb,
+        { userId: "stranger" },
+        { projectId: project.id, level: "NONE" },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    const persisted = await testDb.project.findUnique({
+      where: { id: project.id },
+    });
+    expect(persisted?.guestAccess).toBe("VIEW");
+  });
+
+  it("throws NotFoundError for an unknown projectId", async () => {
+    const user = await makeUser();
+    await expect(
+      setGuestAccess(
+        testDb,
+        { userId: user.id },
+        { projectId: "does-not-exist", level: "NONE" },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("throws NotFoundError when the project is already soft-deleted", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const project = await createProject(testDb, actor, { title: "Doomed" });
+    await testDb.project.update({
+      where: { id: project.id },
+      data: { deletedAt: new Date() },
+    });
+
+    await expect(
+      setGuestAccess(testDb, actor, { projectId: project.id, level: "NONE" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("getProjectAccess — ADMIN+ read with non-disclosure ladder (#105, ADR-0040)", () => {
+  it("returns the level to the owner (default VIEW)", async () => {
+    const owner = await makeUser();
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Mine" },
+    );
+
+    const access = await getProjectAccess(
+      testDb,
+      { userId: owner.id },
+      { slug: project.slug },
+    );
+    expect(access.guestAccess).toBe("VIEW");
+  });
+
+  it("returns the level to an ADMIN member", async () => {
+    const owner = await makeUser("Owner");
+    const admin = await makeUser("Admin");
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Shared" },
+    );
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: admin.id, role: "ADMIN" },
+    });
+
+    const access = await getProjectAccess(
+      testDb,
+      { userId: admin.id },
+      { slug: project.slug },
+    );
+    expect(access.guestAccess).toBe("VIEW");
+  });
+
+  it("rejects an EDITOR member (reader below admin) with ForbiddenError", async () => {
+    const owner = await makeUser("Owner");
+    const editor = await makeUser("Editor");
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Shared" },
+    );
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: editor.id, role: "EDITOR" },
+    });
+
+    await expect(
+      getProjectAccess(testDb, { userId: editor.id }, { slug: project.slug }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("rejects an anonymous guest-VIEW reader with ForbiddenError (existence already proven)", async () => {
+    const owner = await makeUser();
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Public" },
+    );
+
+    await expect(
+      getProjectAccess(testDb, null, { slug: project.slug }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("throws NotFoundError (not Forbidden) for a logged-in non-member at guestAccess NONE", async () => {
+    const owner = await makeUser("Owner");
+    const stranger = await makeUser("Stranger");
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Locked" },
+    );
+    await testDb.project.update({
+      where: { id: project.id },
+      data: { guestAccess: "NONE" },
+    });
+
+    await expect(
+      getProjectAccess(testDb, { userId: stranger.id }, { slug: project.slug }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("throws NotFoundError for an unknown slug", async () => {
+    const user = await makeUser();
+    await expect(
+      getProjectAccess(testDb, { userId: user.id }, { slug: "does-not-exist" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("reflects the updated level after setGuestAccess (round-trip)", async () => {
+    const owner = await makeUser();
+    const actor: Actor = { userId: owner.id, via: "session" };
+    const project = await createProject(testDb, actor, { title: "Roundtrip" });
+
+    await setGuestAccess(testDb, actor, {
+      projectId: project.id,
+      level: "NONE",
+    });
+
+    const access = await getProjectAccess(testDb, actor, {
+      slug: project.slug,
+    });
+    expect(access.guestAccess).toBe("NONE");
   });
 });
 

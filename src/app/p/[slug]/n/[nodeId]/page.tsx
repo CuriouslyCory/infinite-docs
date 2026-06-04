@@ -42,6 +42,7 @@ export default async function InteriorCanvasPage({
   }
 
   const canEdit = capabilityAtLeast(project.viewerCapability, "edit");
+  const canManage = capabilityAtLeast(project.viewerCapability, "admin");
 
   // Seed the scoped Canvas so the island and the breadcrumb bar both read it
   // from the hydration cache — one fetch, no waterfall. The input MUST match the
@@ -57,6 +58,8 @@ export default async function InteriorCanvasPage({
           projectTitle={project.title}
           canvasNodeId={nodeId}
           canEdit={canEdit}
+          canManage={canManage}
+          projectId={project.id}
         />
         <div className="min-h-0 flex-1">
           <CanvasIsland

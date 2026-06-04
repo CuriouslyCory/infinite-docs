@@ -7,8 +7,10 @@ import { type Actor } from "~/server/architecture/actor";
 import {
   createProject,
   deleteProject,
+  getProjectAccess,
   getProjectBySlug,
   listProjects,
+  setGuestAccess,
 } from "~/server/architecture/project.service";
 import {
   createNode,
@@ -56,6 +58,7 @@ import {
   deleteTraceInput,
   exportMarkdownInput,
   getCanvasInput,
+  getProjectAccessInput,
   getProjectBySlugInput,
   getTraceInput,
   getTraceViewInput,
@@ -65,6 +68,7 @@ import {
   renameTraceInput,
   previewSpecInput,
   restoreEdgeInput,
+  setGuestAccessInput,
   restoreNodeInput,
   updateEdgeInput,
   updateEdgeInteractionInput,
@@ -103,8 +107,9 @@ export const architectureRouter = createTRPCRouter({
   }),
 
   // Owner-only mutation: the service resolves the project by `slug` and enforces
-  // owner access via `assertCanWrite`. `protectedProcedure` is the transport gate
-  // (you must be signed in); the real authorization is in the service (ADR-0001).
+  // `owner` via the capability ladder (a non-owner ADMIN cannot delete; ADR-0040).
+  // `protectedProcedure` is the transport gate (you must be signed in); the real
+  // authorization is in the service (ADR-0001).
   deleteProject: protectedProcedure
     .input(deleteProjectInput)
     .mutation(async ({ ctx, input }) => {
@@ -130,9 +135,42 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: the service resolves the project by `projectId` and
-  // enforces owner access. `protectedProcedure` is the transport gate (you must
-  // be signed in); the real authorization is in the service (ADR-0001).
+  // ADMIN+ mutation: set the project's anonymous-link access level (#105). The
+  // service gates on `admin` via the id-keyed write seam (owner or ADMIN member;
+  // ADR-0040). `protectedProcedure` is the transport gate (you must be signed in
+  // — only an ADMIN+ identity ever reaches a success); real authz is in the
+  // service (ADR-0001).
+  setGuestAccess: protectedProcedure
+    .input(setGuestAccessInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await setGuestAccess(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // ADMIN+ query: read the project's sharing/access facts powering the ShareMenu
+  // toggle (#105; growable for #108). The service composes the non-disclosure
+  // ladder (NotFound for a non-reader, Forbidden for a reader below admin) and
+  // returns the facts only to owner/ADMIN. `protectedProcedure` is the transport
+  // gate; real authz is in the service (ADR-0001/0040).
+  getProjectAccess: protectedProcedure
+    .input(getProjectAccessInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await getProjectAccess(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Write mutation (`edit`+): the service resolves the project by `projectId` and
+  // gates on `edit` via the capability ladder — owner, ADMIN, or EDITOR member
+  // (ADR-0040). `protectedProcedure` is the transport gate (you must be signed
+  // in); the real authorization is in the service (ADR-0001).
   createNode: protectedProcedure
     .input(createNodeInput)
     .mutation(async ({ ctx, input }) => {
@@ -177,8 +215,8 @@ export const architectureRouter = createTRPCRouter({
 
   // Public: the Project's saved Traces (#59 / ADR-0035). Slug is the read
   // capability (ADR-0002) — same posture as `getTraceView`; both owner and viewer
-  // see the list. The viewer's missing Save/Rename/Delete is UI; the real
-  // owner-only gate is `assertCanWrite` in the write services.
+  // see the list. The viewer's missing Save/Rename/Delete is UI; the real write
+  // gate is the `edit` capability ladder in the write services (ADR-0040).
   listTraces: publicProcedure
     .input(listTracesInput)
     .query(async ({ ctx, input }) => {
@@ -208,10 +246,10 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: save the working trace as a named Trace (#59 / ADR-0035).
-  // Wrapped in $transaction so the Trace + its TracePoint rows commit atomically
-  // (like deleteNode). `protectedProcedure` is the transport gate; the real
-  // owner-only authz is `assertCanWrite` in the service (ADR-0001).
+  // Write mutation (`edit`+): save the working trace as a named Trace (#59 /
+  // ADR-0035). Wrapped in $transaction so the Trace + its TracePoint rows commit
+  // atomically (like deleteNode). `protectedProcedure` is the transport gate; the
+  // real authz is the `edit` capability ladder in the service (ADR-0001/0040).
   createTrace: protectedProcedure
     .input(createTraceInput)
     .mutation(async ({ ctx, input }) => {
@@ -223,8 +261,8 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: rename a saved Trace (name only; #59). Owner authz is in
-  // the service (ADR-0001).
+  // Write mutation (`edit`+): rename a saved Trace (name only; #59). The `edit`
+  // capability ladder is enforced in the service (ADR-0001/0040).
   renameTrace: protectedProcedure
     .input(renameTraceInput)
     .mutation(async ({ ctx, input }) => {
@@ -236,9 +274,9 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: soft-delete a saved Trace, stamping a deletionId for a
-  // future undo (no restoreTrace UI in #59; ADR-0030/0035). Owner authz is in the
-  // service (ADR-0001).
+  // Write mutation (`edit`+): soft-delete a saved Trace, stamping a deletionId for
+  // a future undo (no restoreTrace UI in #59; ADR-0030/0035). The `edit`
+  // capability ladder is enforced in the service (ADR-0001/0040).
   deleteTrace: protectedProcedure
     .input(deleteTraceInput)
     .mutation(async ({ ctx, input }) => {
@@ -297,8 +335,8 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation (inline rename). `protectedProcedure` is the transport
-  // gate; the real authorization is in the service (ADR-0001).
+  // Write mutation (`edit`+, inline rename). `protectedProcedure` is the transport
+  // gate; the `edit` capability ladder is enforced in the service (ADR-0001/0040).
   updateNode: protectedProcedure
     .input(updateNodeInput)
     .mutation(async ({ ctx, input }) => {
@@ -310,9 +348,9 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: change a Component's kind (the kind palette). Kind is
-  // cosmetic — no cascade. `protectedProcedure` is the transport gate; the real
-  // authorization is in the service (ADR-0001; ADR-0018).
+  // Write mutation (`edit`+): change a Component's kind (the kind palette). Kind is
+  // cosmetic — no cascade. `protectedProcedure` is the transport gate; the `edit`
+  // capability ladder is enforced in the service (ADR-0001/0040; ADR-0018).
   updateNodeKind: protectedProcedure
     .input(updateNodeKindInput)
     .mutation(async ({ ctx, input }) => {
@@ -324,8 +362,9 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation (debounced docs autosave). `protectedProcedure` is the
-  // transport gate; the real authorization is in the service (ADR-0001).
+  // Write mutation (`edit`+, debounced docs autosave). `protectedProcedure` is the
+  // transport gate; the `edit` capability ladder is enforced in the service
+  // (ADR-0001/0040).
   updateNodeDocumentation: protectedProcedure
     .input(updateNodeDocumentationInput)
     .mutation(async ({ ctx, input }) => {
@@ -337,8 +376,9 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: the single batched position write committed on
-  // drag-stop. Owner access is enforced in the service (ADR-0001).
+  // Write mutation (`edit`+): the single batched position write committed on
+  // drag-stop. The `edit` capability ladder is enforced in the service
+  // (ADR-0001/0040).
   updatePositions: protectedProcedure
     .input(updatePositionsInput)
     .mutation(async ({ ctx, input }) => {
@@ -352,10 +392,11 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: persist where a boundary proxy sits on one scope's
-  // Canvas (#91 / ADR-0036). `protectedProcedure` is the transport gate; owner
-  // access is enforced in the service (ADR-0001). The service does its own
-  // find-then-write with a P2002 race backstop, so no wrapping transaction.
+  // Write mutation (`edit`+): persist where a boundary proxy sits on one scope's
+  // Canvas (#91 / ADR-0036). `protectedProcedure` is the transport gate; the
+  // `edit` capability ladder is enforced in the service (ADR-0001/0040). The
+  // service does its own find-then-write with a P2002 race backstop, so no
+  // wrapping transaction.
   upsertBoundaryProxyPlacement: protectedProcedure
     .input(upsertBoundaryProxyPlacementInput)
     .mutation(async ({ ctx, input }) => {
@@ -367,8 +408,9 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: draw a Connection. `protectedProcedure` is the
-  // transport gate; the real authorization is in the service (ADR-0001).
+  // Write mutation (`edit`+): draw a Connection. `protectedProcedure` is the
+  // transport gate; the `edit` capability ladder is enforced in the service
+  // (ADR-0001/0040).
   connectNodes: protectedProcedure
     .input(connectNodesInput)
     .mutation(async ({ ctx, input }) => {
@@ -380,8 +422,8 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: edit a Connection's label. Owner access is
-  // enforced in the service (ADR-0001).
+  // Write mutation (`edit`+): edit a Connection's label. The `edit` capability
+  // ladder is enforced in the service (ADR-0001/0040).
   updateEdge: protectedProcedure
     .input(updateEdgeInput)
     .mutation(async ({ ctx, input }) => {
@@ -393,9 +435,9 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: upgrade a Connection's interaction (the picker on the
-  // selected edge; #65). Owner access + the de-dupe re-check live in the
-  // service (ADR-0001); a collision surfaces as a CONFLICT.
+  // Write mutation (`edit`+): upgrade a Connection's interaction (the picker on the
+  // selected edge; #65). The `edit` capability ladder + the de-dupe re-check live
+  // in the service (ADR-0001/0040); a collision surfaces as a CONFLICT.
   updateEdgeInteraction: protectedProcedure
     .input(updateEdgeInteractionInput)
     .mutation(async ({ ctx, input }) => {
@@ -407,8 +449,9 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: remove a Connection via a plain lone soft-delete
-  // (no cascade — the FlowRoute cascade is gone; ADR-0030).
+  // Write mutation (`edit`+): remove a Connection via a plain lone soft-delete
+  // (no cascade — the FlowRoute cascade is gone; ADR-0030). The `edit` capability
+  // ladder is enforced in the service (ADR-0001/0040).
   deleteEdge: protectedProcedure
     .input(deleteEdgeInput)
     .mutation(async ({ ctx, input }) => {
@@ -420,10 +463,11 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: undo a `deleteNode` Edge sweep — restores the Edges
+  // Write mutation (`edit`+): undo a `deleteNode` Edge sweep — restores the Edges
   // stamped with the given deletionId. A lone `deleteEdge` mints no deletionId
-  // and so has no `restoreEdge` handle. Wrapped in $transaction so the
-  // pre-check and the updateMany sweep commit atomically.
+  // and so has no `restoreEdge` handle. Wrapped in $transaction so the pre-check
+  // and the updateMany sweep commit atomically. The `edit` capability ladder is
+  // enforced in the service (ADR-0001/0040).
   restoreEdge: protectedProcedure
     .input(restoreEdgeInput)
     .mutation(async ({ ctx, input }) => {
@@ -435,11 +479,11 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: cascading soft-delete of a Component — its Node, its
-  // subtree, and every incident/interior Connection — stamped with one
-  // deletionId for undo. Wrapped in a transaction (like updatePositions) so the
-  // recursive read and both sweeps commit atomically; owner access is enforced
-  // in the service (ADR-0001).
+  // Write mutation (`edit`+): cascading soft-delete of a Component — its Node, its
+  // subtree, and every incident/interior Connection — stamped with one deletionId
+  // for undo. Wrapped in a transaction (like updatePositions) so the recursive
+  // read and both sweeps commit atomically; the `edit` capability ladder is
+  // enforced in the service (ADR-0001/0040).
   deleteNode: protectedProcedure
     .input(deleteNodeInput)
     .mutation(async ({ ctx, input }) => {
@@ -451,9 +495,9 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: undo a cascading delete, restoring exactly the rows
-  // stamped with the given deletionId. Owner access is enforced in the service
-  // (ADR-0001).
+  // Write mutation (`edit`+): undo a cascading delete, restoring exactly the rows
+  // stamped with the given deletionId. The `edit` capability ladder is enforced in
+  // the service (ADR-0001/0040).
   restoreNode: protectedProcedure
     .input(restoreNodeInput)
     .mutation(async ({ ctx, input }) => {
@@ -465,11 +509,12 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only, READ-ONLY action: parse a pasted Spec and diff it against the
-  // owner Component's existing generated children, returning the classification
-  // that drives the conflict modal. A mutation (not a query) because it's an
-  // imperative action over a large `source` body, never reactive/cached data —
-  // and it writes nothing (cancel = zero writes; #64). Authz is in the service.
+  // Write-gated (`edit`+), READ-ONLY action: parse a pasted Spec and diff it
+  // against the owner Component's existing generated children, returning the
+  // classification that drives the conflict modal. A mutation (not a query)
+  // because it's an imperative action over a large `source` body, never
+  // reactive/cached data — and it writes nothing (cancel = zero writes; #64). The
+  // `edit` capability ladder is enforced in the service (ADR-0001/0040).
   previewSpec: protectedProcedure
     .input(previewSpecInput)
     .mutation(async ({ ctx, input }) => {
@@ -481,10 +526,11 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
-  // Owner-only mutation: apply a previewed Spec (create/overwrite/detach/delete
-  // per the user's resolutions). Wrapped in a transaction so a per-row reject
-  // rolls the whole merge back — never a partial apply (#64). Owner access is
-  // enforced in the service (ADR-0001). The raised `timeout` is a margin for the
+  // Write mutation (`edit`+): apply a previewed Spec (create/overwrite/detach/
+  // delete per the user's resolutions). Wrapped in a transaction so a per-row
+  // reject rolls the whole merge back — never a partial apply (#64). The `edit`
+  // capability ladder is enforced in the service (ADR-0001/0040). The raised
+  // `timeout` is a margin for the
   // largest `source` we accept (`MAX_PARSED_NODES` Components + parse cost), NOT
   // the perf fix — `applySpec` bulk-inserts level by level so the work is a
   // handful of round trips, well under the default; the ceiling just absorbs a
