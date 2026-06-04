@@ -1,5 +1,6 @@
 import type { Actor, Db } from "./actor";
 import { assertCanRead } from "./access";
+import { authorizeProjectRead } from "./access-db";
 import { NotFoundError } from "./errors";
 import {
   exportMarkdownInput,
@@ -306,25 +307,20 @@ async function serializeProjectScope(
  * Renders a Project — or one of its subtrees — to deterministic markdown, the
  * web "Copy as markdown" / capability-URL path (M2 / #15; ADR-0017).
  *
- * Authz: slug-readable (ADR-0002), the same posture `getCanvas` uses —
- * possession of the unguessable slug IS the read grant, so no `access` check
- * runs here and `actor` is unused. (The owner-gated MCP read path is
+ * Authz: capability-gated on `view` via the slug→project bind (ADR-0040,
+ * generalizing ADR-0002), the same posture `getCanvas` uses — the default
+ * `guestAccess=VIEW` reproduces the old slug grant; a `guestAccess=NONE` project
+ * is not-found for a non-member. (The owner-gated MCP read path is
  * {@link exportMarkdownForActor}.)
  */
 export async function exportMarkdown(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: ExportMarkdownInput,
 ): Promise<{ markdown: string }> {
   const { slug, canvasNodeId, mode } = exportMarkdownInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true, title: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
+  const { project } = await authorizeProjectRead(db, actor, slug);
 
   return serializeProjectScope(
     db,

@@ -264,11 +264,12 @@ export type GetTraceViewInput = z.infer<typeof getTraceViewInput>;
 
 /**
  * Inputs for the saved-**Trace** CRUD surface (#59 / ADR-0035). Every input is
- * slug-bound: reads (`list`/`get`) treat possession of the capability slug as the
- * read grant (parity with `getTraceView`); writes (`create`/`rename`/`delete`)
- * carry the slug so the SERVICE resolves the Project's `ownerId` and enforces
- * owner-only access via `assertCanWrite` (ADR-0001/0002) — the procedure is only
- * the transport gate. Narrow + required (CONTEXT.md "prefer narrow required
+ * slug-bound: reads (`list`/`get`) resolve the slug through the view-gate (a
+ * `guestAccess=VIEW` project, or a member, may read — parity with `getTraceView`);
+ * writes (`create`/`rename`/`delete`) carry the slug so the SERVICE resolves the
+ * Project and enforces `edit` capability (owner, ADMIN, or EDITOR member) via the
+ * capability ladder (ADR-0040), non-disclosing on deny — the procedure is only the
+ * transport gate. Narrow + required (CONTEXT.md "prefer narrow required
  * inputs"). A Trace is "two or more trace points", so `createTraceInput.nodeIds`
  * is `min(2)`; the service further filters to live, in-Project Components and
  * rejects with a ValidationError if fewer than two survive. `max(500)` mirrors

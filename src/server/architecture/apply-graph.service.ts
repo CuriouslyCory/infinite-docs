@@ -1,11 +1,6 @@
-import { assertCanWrite } from "./access";
+import { authorizeProjectWrite } from "./access-db";
 import type { Actor, Db } from "./actor";
-import {
-  ArchitectureError,
-  ConflictError,
-  NotFoundError,
-  ValidationError,
-} from "./errors";
+import { ArchitectureError, ConflictError, ValidationError } from "./errors";
 import { connectNodes } from "./edge.service";
 import { createNode } from "./node.service";
 import {
@@ -21,11 +16,12 @@ import {
  * per row inside a single transaction so the whole batch succeeds atomically or
  * rolls back together — no partial graph ever persists.
  *
- * Owner-only: the Project is addressed by `projectId` (an internal handle,
- * never the capability slug — writes are never slug-granted, ADR-0002). The
- * batch authorizes ONCE here; the per-row services re-check (bounded redundancy
- * inside the same transaction; the optimization to extract `*_unauthorized`
- * helpers is named in ADR-0026 for when measurement justifies the seam).
+ * Write-gated on `edit` (ADR-0040): the Project is addressed by `projectId` (an
+ * internal handle, never the capability slug — writes are never slug-granted,
+ * ADR-0002). The batch authorizes ONCE here; the per-row services re-check
+ * (bounded redundancy inside the same transaction; the optimization to extract
+ * `*_unauthorized` helpers is named in ADR-0026 for when measurement justifies
+ * the seam).
  *
  * Each {@link createNode} / {@link connectNodes} call still scopes parent /
  * endpoint lookups to `project.id`, so a foreign server id surfaces as
@@ -60,13 +56,11 @@ export async function applyGraph(
 ): Promise<ApplyGraphOutput> {
   const { projectId, components, connections } = applyGraphInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { id: projectId, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  // Authorize the whole batch ONCE on `edit` (ADR-0040). The per-row
+  // createNode/connectNodes each re-resolve the actor's capability inside the
+  // transaction — bounded redundancy, the ADR-0026 `*_unauthorized` extraction
+  // is the named follow-up if measurement justifies it.
+  const project = await authorizeProjectWrite(db, actor, projectId, "edit");
 
   if (components.length === 0 && connections.length === 0) {
     return { idMap: {}, componentCount: 0, connectionCount: 0 };

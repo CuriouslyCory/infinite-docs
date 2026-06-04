@@ -5,7 +5,7 @@ import {
   type NodeKind as PrismaNodeKind,
   type Prisma,
 } from "../../../generated/prisma/client";
-import { assertCanWrite } from "./access";
+import { authorizeProjectWrite, resolveReadableProject } from "./access-db";
 import { activeDuplicateWhere } from "./edge.service";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
@@ -111,10 +111,11 @@ void _prismaKindIsZodKind;
  * foreign-Project parent). `kind` is cosmetic (icon/color only — CONTEXT.md
  * "Component kind"); `posX`/`posY` are the drop point.
  *
- * Owner-only: the Project is addressed by `projectId` (an internal handle, never
- * the capability slug — writes are never slug-granted, ADR-0002) and the write
- * is authorized through `access.assertCanWrite` against `project.ownerId`.
- * Ownership comes from the actor, never from `input` (ADR-0001).
+ * Requires `edit` capability — owner, ADMIN, or EDITOR member (ADR-0040). The
+ * Project is addressed by `projectId` (an internal handle, never the capability
+ * slug — writes are never slug-granted, ADR-0002) and the write is authorized
+ * through `access-db.authorizeProjectWrite(…, "edit")`. The actor identity comes
+ * from the session, never from `input` (ADR-0001).
  *
  * `title` (and later `documentation`) are UNTRUSTED user content, stored verbatim
  * — never interpreted, never interpolated into a query (prompt-injection standing
@@ -138,13 +139,7 @@ export async function createNode(
     specKey,
   } = createNodeInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { id: projectId, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  const project = await authorizeProjectWrite(db, actor, projectId, "edit");
 
   // A child Component (parentId !== null) must hang off a live parent Node in
   // this same owned Project. Scoping the lookup to `project.id` closes
@@ -323,13 +318,16 @@ interface CrossScopeEdgeRow {
  * lowercase, so every model/column name is double-quoted PascalCase; the scope
  * id and project id are bound parameters, never string-interpolated (ADR-0006).
  *
- * Slug-readable (ADR-0002): the capability slug IS the read grant, so `actor` is
- * not consulted — it is accepted only to match the readable-procedure signature
- * shape (`db, actor, input`). The slug→project bind below is the gate.
+ * Capability-gated read (ADR-0040, generalizing ADR-0002): the slug→project bind
+ * below resolves the caller's capability and requires `view`. For the default
+ * `guestAccess=VIEW` this is exactly the old slug-grant (anonymous read+descend);
+ * a `guestAccess=NONE` project resolves to not-found for a non-member. `actor` is
+ * now consulted (for the owner check and the membership lookup), though anonymous
+ * callers still skip the membership query.
  */
 export async function getCanvas(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: GetCanvasInput,
 ): Promise<{
   interiorNodes: Node[];
@@ -339,13 +337,12 @@ export async function getCanvas(
 }> {
   const { slug, canvasNodeId } = getCanvasInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
+  // Gate ONCE at the slug→project bind, capability >= `view` (ADR-0040).
+  // Authorization is project-scoped, so this single gate covers every descent
+  // scope, every breadcrumb ancestor, and every boundary proxy below — all
+  // interior to this same project — with no per-node authz. A non-member of a
+  // `guestAccess=NONE` project gets not-found, never forbidden.
+  const project = await resolveReadableProject(db, actor, slug);
 
   // The four reads run in one `Promise.all` — no waterfall, no dependency on
   // `interiorNodes` resolving first (ADR-0001). The interior Nodes fall out of a
@@ -614,24 +611,18 @@ export interface ProjectComponent {
  *
  * Deliberately distinct from the scope-keyed `getCanvas` (different cardinality —
  * the whole Project vs one Canvas; ADR-0032), and NOT folded into its CTE.
- * Slug-readable (ADR-0002): the capability slug IS the read grant, so `actor` is
- * accepted only to match the readable-procedure signature and is never consulted;
- * the slug→project bind is the gate. A missing / soft-deleted slug is a not-found.
+ * Capability-gated on `view` via the slug→project bind (ADR-0040): the default
+ * `guestAccess=VIEW` reproduces the old slug grant; a `guestAccess=NONE` project
+ * is not-found for a non-member. A missing / soft-deleted slug is also not-found.
  */
 export async function listProjectComponents(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: ListProjectComponentsInput,
 ): Promise<ProjectComponent[]> {
   const { slug } = listProjectComponentsInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
+  const project = await resolveReadableProject(db, actor, slug);
 
   return db.node.findMany({
     where: { projectId: project.id, deletedAt: null },
@@ -643,10 +634,11 @@ export async function listProjectComponents(
 /**
  * Renames a Component (updates a Node's `title`). Addressed by the Node `id`,
  * not a projectId: the Node is loaded, its Project resolved, and the write
- * authorized owner-only through `access.assertCanWrite` against the Project's
- * `ownerId` (ADR-0001). Load-then-authorize is the natural shape for an existing
- * row and matches how a future MCP "rename" tool arrives — it holds a node id,
- * not a project handle. Ownership comes from the actor, never from `input`.
+ * authorized through `access-db.authorizeProjectWrite(…, "edit")` — `edit`
+ * capability (owner, ADMIN, or EDITOR member; ADR-0040). Load-then-authorize is
+ * the natural shape for an existing row and matches how a future MCP "rename"
+ * tool arrives — it holds a node id, not a project handle. The actor identity
+ * comes from the session, never from `input`.
  *
  * `title` is UNTRUSTED user content, stored verbatim — never interpreted, never
  * interpolated into a query (prompt-injection standing note, CONTEXT.md). Rename
@@ -665,24 +657,17 @@ export async function updateNode(
   if (!node) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: node.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, node.projectId, "edit");
 
   return db.node.update({ where: { id: node.id }, data: { title } });
 }
 
 /**
  * Changes a Component's `kind`. Same load-then-authorize shape as `updateNode`
- * (find the live Node, resolve its Project, authorize owner-only via
- * `access.assertCanWrite`; ADR-0001) — a separate narrow mutation so the kind
- * palette commits only `{ id, kind }`. Ownership comes from the actor, never
- * `input`.
+ * (find the live Node, resolve its Project, authorize via
+ * `authorizeProjectWrite(…, "edit")` — `edit` capability: owner, ADMIN, or EDITOR
+ * member; ADR-0040) — a separate narrow mutation so the kind palette commits only
+ * `{ id, kind }`. The actor identity comes from the session, never `input`.
  *
  * Kind is cosmetic (CONTEXT.md "Component kind"; ADR-0018): this is a single
  * `kind` write with NO cascade — no Edge or Spec is touched, because none of
@@ -700,24 +685,18 @@ export async function updateNodeKind(
   if (!node) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: node.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, node.projectId, "edit");
 
   return db.node.update({ where: { id: node.id }, data: { kind } });
 }
 
 /**
  * Edits a Component's markdown `documentation`. Same load-then-authorize shape
- * as `updateNode` (find the live Node, resolve its Project, authorize owner-only
- * via `access.assertCanWrite`; ADR-0001) — a separate narrow mutation so the
- * canvas autosave commits only `{ id, documentation }` per debounced keystroke
- * without re-sending the title. Ownership comes from the actor, never `input`.
+ * as `updateNode` (find the live Node, resolve its Project, authorize via
+ * `authorizeProjectWrite(…, "edit")` — `edit` capability: owner, ADMIN, or EDITOR
+ * member; ADR-0040) — a separate narrow mutation so the canvas autosave commits
+ * only `{ id, documentation }` per debounced keystroke without re-sending the
+ * title. The actor identity comes from the session, never `input`.
  *
  * `documentation` is UNTRUSTED user content, stored verbatim — never
  * interpreted, never interpolated into a query (prompt-injection standing note,
@@ -736,14 +715,7 @@ export async function updateNodeDocumentation(
   if (!node) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: node.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, node.projectId, "edit");
 
   return db.node.update({ where: { id: node.id }, data: { documentation } });
 }
@@ -790,14 +762,7 @@ export async function moveNode(
   if (!node) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: node.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, node.projectId, "edit");
 
   // Idempotent: a move that doesn't change `parentId` is a no-op. Return the
   // full Node row so the caller's optimistic UI / tool result still has it.
@@ -894,13 +859,7 @@ export async function updatePositions(
 ): Promise<Node[]> {
   const { projectId, positions } = updatePositionsInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { id: projectId, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  const project = await authorizeProjectWrite(db, actor, projectId, "edit");
 
   // Confirm the whole id set belongs to this (owned, non-deleted) Project before
   // touching anything — `new Set` so a duplicated id is counted once. A shortfall
@@ -958,13 +917,7 @@ export async function upsertBoundaryProxyPlacement(
   const { projectId, containerNodeId, realEndpointId, posX, posY } =
     upsertBoundaryProxyPlacementInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { id: projectId, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  const project = await authorizeProjectWrite(db, actor, projectId, "edit");
 
   // Both endpoints must be live Nodes in this (owned) Project — the off-scope
   // endpoint always, the container only when non-null (null is the root scope,
@@ -1063,10 +1016,11 @@ export async function assertNoOrphanedChildren(
  * undone as a unit (`restoreNode`; ADR-0008 + ADR-0030). The safety net that
  * matters because AI agents mutate the graph (CONTEXT.md "Soft-delete + undo").
  *
- * Addressed by the Node `id`; loaded, its Project resolved, and authorized
- * owner-only through `access.assertCanWrite` BEFORE the subtree is gathered
- * (ADR-0001) — an intruder learns nothing about the graph's shape. Idempotent in
- * spirit: an already-deleted Component reads as not-found (like `deleteEdge`).
+ * Addressed by the Node `id`; loaded, its Project resolved, and authorized via
+ * `authorizeProjectWrite(…, "edit")` — `edit` capability (owner, ADMIN, or EDITOR
+ * member; ADR-0040) — BEFORE the subtree is gathered, so a denied caller learns
+ * nothing about the graph's shape. Idempotent in spirit: an already-deleted
+ * Component reads as not-found (like `deleteEdge`).
  *
  * The subtree is gathered in a SINGLE recursive CTE descending `parentId` — the
  * mirror of `getCanvas`'s ascending breadcrumb walk — never a per-level loop
@@ -1109,14 +1063,7 @@ export async function deleteNode(
   if (!node) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: node.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, node.projectId, "edit");
 
   // Gather the subtree (root included) in one recursive descent of `parentId`.
   // No depth cap — the graph is acyclic (`moveNode` rejects any reparent whose
@@ -1207,10 +1154,11 @@ export async function deleteNode(
  * never carries this id and is never revived here; two independent deletes undo
  * independently.
  *
- * Undo is a WRITE — owner-only. The Project is resolved from the stamped rows
- * (never from input), then authorized through `access.assertCanWrite`
- * (ADR-0001/0002); a capability-URL viewer cannot undo. An unknown or
- * already-restored `deletionId` matches no rows and reads as not-found.
+ * Undo is a WRITE — requires `edit` capability (owner, ADMIN, or EDITOR member;
+ * ADR-0040). The Project is resolved from the stamped rows (never from input),
+ * then authorized through `authorizeProjectWrite(…, "edit")` (ADR-0001/0002); a
+ * read-only (guest-VIEW) viewer cannot undo. An unknown or already-restored
+ * `deletionId` matches no rows and reads as not-found.
  *
  * Restore is "as-is": if an ancestor of this batch was independently deleted in
  * a LATER operation, the restored subtree is briefly unreachable via `getCanvas`
@@ -1247,14 +1195,7 @@ export async function restoreNode(
   if (!firstNode) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: firstNode.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, firstNode.projectId, "edit");
 
   const edges = await db.edge.findMany({
     where: { deletionId },

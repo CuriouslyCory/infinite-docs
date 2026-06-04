@@ -1,5 +1,5 @@
 import { Prisma } from "../../../generated/prisma/client";
-import { assertCanWrite } from "./access";
+import { authorizeProjectWrite } from "./access-db";
 import type { Actor, Db } from "./actor";
 import { activeDuplicateWhere } from "./edge.service";
 import { NotFoundError, ValidationError } from "./errors";
@@ -114,14 +114,9 @@ async function loadOwnerForWrite(
   if (!owner) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: owner.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  // Applying / previewing a Spec is an `edit` (ADR-0040) — an EDITOR member or
+  // the owner may write.
+  await authorizeProjectWrite(db, actor, owner.projectId, "edit");
   return { projectId: owner.projectId };
 }
 
@@ -322,8 +317,8 @@ async function droppedRootsWithConnections(
  * pasted Spec, diff it against the owner Component's existing generated children,
  * and return the classification for the conflict modal. Writes NOTHING — cancel
  * is zero writes, and a re-parse must never mutate before the user confirms.
- * Owner-only (writes-grade authz, since it's a precursor to a write and reads
- * non-public structure). `source` is UNTRUSTED, bounded, never interpolated.
+ * Write-grade authz (gated on `edit`, ADR-0040 — it's a precursor to a write and
+ * reads non-public structure). `source` is UNTRUSTED, bounded, never interpolated.
  */
 export async function previewSpec(
   db: Db,

@@ -36,3 +36,9 @@ anticipated.
   the Connect-an-agent copy.
 - Reaffirms ADR-0001's invariant: removing or adding a scope value changes neither authorization nor
   the fact that `userId` is the sole authz input.
+- **Reaffirmed, not amended, by ADR-0040.** ADR-0040 introduces `ProjectRole` — a per-Project
+  membership grade that _is_ enforced at the `access` seam — but that is a different axis from token
+  `scopes`, which remain stored-not-enforced. A Role rank is resolved from `userId` and gates writes;
+  a token's `scopes` array stays inert. The "never roles" synonym-rejection above refers to scopes,
+  not to `ProjectRole`; a future reader must not assume `actor.scopes` gained teeth because Role
+  ranks did.

@@ -50,6 +50,10 @@ exists-but-forbidden.
   concrete reason the service layer, not the framework guard, owns authorization.
 - No roles, sharing table, or invitation flow is needed yet. The model is intentionally minimal:
   owner-writes, link-reads. Richer collaboration, if ever needed, is a later, separate decision.
+  **Extended by ADR-0040**, which layers a capability ladder (Roles, Members, Invites, a per-Project
+  guest-access dial) atop this model: `guestAccess = VIEW` (the default) _is_ this owner-writes /
+  link-reads model, and the non-disclosure rule below is preserved unchanged for the new
+  `guestAccess = NONE` lockdown.
 - The owner check is an identity comparison against `actor.userId`; it is transport-agnostic and
   applies equally to the web app and the future MCP path.
 - The slug is no longer the only bearer secret: the **API token** (ADR-0020), minted from the

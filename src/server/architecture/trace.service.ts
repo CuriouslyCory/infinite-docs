@@ -19,7 +19,11 @@ import {
   type RenameTraceInput,
 } from "~/lib/schemas";
 import type { Actor, Db } from "./actor";
-import { assertCanRead, assertCanWrite } from "./access";
+import { assertCanRead } from "./access";
+import {
+  resolveReadableProject,
+  resolveWritableProjectBySlug,
+} from "./access-db";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { serializeTrace, type SerializerNode } from "./markdown";
 import { isTraceNameCollision } from "./prisma-errors";
@@ -541,22 +545,15 @@ function capTraceNodes(
 
 export async function getTraceView(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: GetTraceViewInput,
 ): Promise<TraceView> {
   const { slug, nodeIds: requestedIds } = getTraceViewInput.parse(input);
 
-  // Slug-bind gate, in parity with `getCanvas` (ADR-0002 / ADR-0034): possession
-  // of the slug IS the read grant, so `_actor` is accepted only to match the
-  // readable-procedure signature and never consulted. Both owner and slug-only
-  // viewer reach this read.
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
+  // Capability-gated on `view` via the slug→project bind (ADR-0040, parity with
+  // `getCanvas`): the default `guestAccess=VIEW` reproduces the old slug grant;
+  // a `guestAccess=NONE` project is not-found for a non-member.
+  const project = await resolveReadableProject(db, actor, slug);
 
   const { nodes, edges } = await fetchProjectGraph(db, project.id);
 
@@ -621,11 +618,12 @@ export async function getTraceView(
 //
 // Only the POINT SET persists; the on-path subgraph is recomputed on read by
 // `getTraceView` (derived, ADR-0034). Reads (`listTraces`/`getTrace`) are
-// slug-bound — possession of the capability slug IS the read grant (ADR-0002,
-// parity with `getTraceView`); they deliberately do NOT call `assertCanRead`.
-// Writes (`createTrace`/`renameTrace`/`deleteTrace`) resolve the Project's
-// `ownerId` and call `assertCanWrite` — an authenticated NON-owner holding the
-// slug is rejected HERE, at the service layer, not merely by hidden UI (ADR-0001).
+// capability-gated on `view` (ADR-0040, parity with `getTraceView`): the default
+// `guestAccess=VIEW` reproduces the old slug grant; a `guestAccess=NONE` project
+// is not-found for a non-member. Writes (`createTrace`/`renameTrace`/
+// `deleteTrace`) gate on `edit` via `resolveWritableProject` — an EDITOR member
+// or the owner may write; a guest-VIEW non-member is rejected with Forbidden at
+// the service layer, not merely by hidden UI (ADR-0001/0040).
 
 /**
  * One saved Trace as the CRUD surface returns it. `nodeIds` is the LIVE point set
@@ -642,40 +640,25 @@ export interface SavedTrace {
 }
 
 /**
- * Resolve a Project by its capability slug for an owner-only write: returns
- * `{ id, ownerId }` and runs `assertCanWrite`. The slug is the only handle a
- * write carries; the ownerId it resolves is the authz subject (ADR-0001/0002).
+ * Resolve a Project by its capability slug for a Trace write, gated on `edit`
+ * (ADR-0040). A Trace write is an edit, not owner-only — an EDITOR member can
+ * create/rename/delete a Trace. Delegates to the slug-keyed write seam, so a true
+ * non-member of a `guestAccess=NONE` project sees `NotFoundError` (non-disclosure,
+ * the slug could be stale), while a non-owner non-member who CAN read (guest VIEW)
+ * is rejected with `ForbiddenError` — the correct write-deny posture once read
+ * access is already proven.
  */
 async function resolveWritableProject(
   db: Db,
   actor: Actor,
   slug: string,
-): Promise<{ id: string; ownerId: string }> {
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true, ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
-  return project;
-}
-
-/** Resolve a Project id by slug for a slug-bound read (no owner check). */
-async function resolveReadableProjectId(db: Db, slug: string): Promise<string> {
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  return project.id;
+): Promise<{ id: string }> {
+  return resolveWritableProjectBySlug(db, actor, slug, "edit");
 }
 
 /**
- * createTrace — owner-only. Resolve the Project by slug → `assertCanWrite`, filter
+ * createTrace — requires `edit` capability (owner, ADMIN, or EDITOR member;
+ * ADR-0040). Resolve the Project by slug → `resolveWritableProject`, filter
  * `nodeIds` to LIVE, in-Project Components (dedup) BEFORE writing; fewer than two
  * survivors → `ValidationError` (no useless 1-point Trace). Creates the Trace +
  * its `TracePoint` rows; the router wraps this in `db.$transaction` so they are
@@ -740,17 +723,17 @@ function livePointIds(
 }
 
 /**
- * listTraces — slug-readable. The Project's live Traces (newest first), each with
- * its LIVE `nodeIds` so the UI can show a count and load. Soft-deleted-Component
- * points are filtered out (see `livePointIds`).
+ * listTraces — capability-gated on `view` (ADR-0040). The Project's live Traces
+ * (newest first), each with its LIVE `nodeIds` so the UI can show a count and
+ * load. Soft-deleted-Component points are filtered out (see `livePointIds`).
  */
 export async function listTraces(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: ListTracesInput,
 ): Promise<SavedTrace[]> {
   const { slug } = listTracesInput.parse(input);
-  const projectId = await resolveReadableProjectId(db, slug);
+  const { id: projectId } = await resolveReadableProject(db, actor, slug);
 
   const traces = await db.trace.findMany({
     where: { projectId, deletedAt: null },
@@ -773,17 +756,17 @@ export async function listTraces(
 }
 
 /**
- * getTrace — slug-readable. One live Trace by id, scoped to the slug's Project (a
- * foreign or soft-deleted traceId is `NotFound` — no existence disclosure).
- * Returns its LIVE `nodeIds`. This is what the saved route reads.
+ * getTrace — capability-gated on `view` (ADR-0040). One live Trace by id, scoped
+ * to the slug's Project (a foreign or soft-deleted traceId is `NotFound` — no
+ * existence disclosure). Returns its LIVE `nodeIds`. The saved route reads this.
  */
 export async function getTrace(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: GetTraceInput,
 ): Promise<SavedTrace> {
   const { slug, traceId } = getTraceInput.parse(input);
-  const projectId = await resolveReadableProjectId(db, slug);
+  const { id: projectId } = await resolveReadableProject(db, actor, slug);
 
   const trace = await db.trace.findFirst({
     where: { id: traceId, projectId, deletedAt: null },
@@ -806,8 +789,9 @@ export async function getTrace(
 }
 
 /**
- * renameTrace — owner-only. `assertCanWrite`, then rename the live Trace scoped to
- * the Project. Re-checks live-name uniqueness (pre-check + P2002 catch). Does NOT
+ * renameTrace — requires `edit` capability (owner, ADMIN, or EDITOR member;
+ * ADR-0040). `resolveWritableProject`, then rename the live Trace scoped to the
+ * Project. Re-checks live-name uniqueness (pre-check + P2002 catch). Does NOT
  * change the point set — #59 keeps rename narrow; editing points is future work.
  */
 export async function renameTrace(
@@ -867,7 +851,8 @@ export async function renameTrace(
 }
 
 /**
- * deleteTrace — owner-only soft-delete. `assertCanWrite`, then stamp `deletedAt`
+ * deleteTrace — soft-delete requiring `edit` capability (owner, ADMIN, or EDITOR
+ * member; ADR-0040). `resolveWritableProject`, then stamp `deletedAt`
  * + a fresh `deletionId` on the live Trace (mirroring `deleteNode`'s stamped
  * batch, ADR-0030). `TracePoint` rows are not separately stamped — they have no
  * `deletedAt` and ride the Trace (hard-cascade only). Idempotent: deleting an

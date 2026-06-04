@@ -427,28 +427,34 @@ ADR-0016.)_
 ### Project
 
 The root container of one architecture graph. Owned by a single user (`ownerId`) and addressed
-by a unique, unguessable **capability-URL slug**. Holds the top-level **Canvas** and everything
-that descends from it. Soft-deletable (`deletedAt`). The first concrete model in the system. The
-owner deletes one from the dashboard via a **type-the-title-to-confirm** dialog; `deleteProject`
-is an owner-only **lone soft-delete** (resolve by slug → `assertCanWrite` → stamp `deletedAt`,
-no `deletionId` and no cascade — children keep their rows and simply stop resolving once the
-Project is hidden), mirroring `deleteEdge`. The typed-title match is a client-side friction gate
-only; the real authorization is `assertCanWrite` (ADR-0001).
+by a unique, unguessable **capability-URL slug**. Also carries **Member**s (delegated **Role**s), a
+**guest access** level (`guestAccess`, default `VIEW`), and **Invite**s (ADR-0040). Holds the
+top-level **Canvas** and everything that descends from it. Soft-deletable (`deletedAt`). The first
+concrete model in the system. The owner deletes one from the dashboard via a
+**type-the-title-to-confirm** dialog; `deleteProject` is an **owner-only** **lone soft-delete**
+(resolve by slug → `requireCapability(cap, "owner")` → stamp `deletedAt`, no `deletionId` and no
+cascade — children keep their rows and simply stop resolving once the Project is hidden), mirroring
+`deleteEdge`. A non-owner ADMIN cannot delete. The typed-title match is a client-side friction gate
+only; the real authorization is the `owner`-rank gate (ADR-0001, ADR-0040).
 
 ### Capability URL / slug
 
 An unguessable, per-Project URL segment (`slug @unique`) that, by mere possession, grants
-**read** access to that Project — no sign-in required. It is a bearer capability: the link _is_
-the permission. **Mutations are never granted by the slug**; writes require the signed-in owner.
-Anyone with the link can read; only the owner can change. A non-owner who holds the slug is a
-**viewer** — the canonical term for this person in prose, code (`canEdit = false`), and UI ("View
-only"); never "visitor" or "guest". The web client presents a **read-only mode** to a viewer
+**read** access to that Project — no sign-in required — **when the Project's guest access is `VIEW`**
+(the default). It is a bearer capability: the link _is_ the permission. `guestAccess = NONE` closes
+anonymous reads, so the slug alone then resolves a not-found and reads require a **Member**
+(ADR-0040). **Mutations are never granted by the slug**; writes require the signed-in owner or an
+EDITOR+ **Member**. A non-owner who holds the slug (at guest `VIEW`) is a **viewer** — the canonical
+term for this person in prose, code (`canEdit = false`), and UI ("View only"); never "visitor" or
+"guest" (the latter names the _access level_, not the person). The web client presents a **read-only
+mode** to a viewer
 (every edit affordance hidden, a read-only **Component-detail panel**, a "View only" header
 badge), but that mode is _presentation, not authorization_: every mutation is still denied at the
 service layer regardless of what the client renders (issue #16). The slug is one of the system's
-two bearer secrets — the **API token** is the other (the slug grants link-based _read_ to one
-Project; an API token grants an agent the minting user's access over the MCP path); both are
-treated as secrets in logs. _(See ADR-0002, ADR-0020.)_
+**three** bearer secrets — the **API token** and the **Invite** are the others (the slug grants
+link-based _read_ to one Project; an API token grants an agent the minting user's access over the
+MCP path; an Invite grants a **Role** on redemption); all are treated as secrets in logs.
+_(See ADR-0002, ADR-0020, ADR-0040.)_
 
 ### Project route
 
@@ -468,8 +474,9 @@ The resolved identity of whoever is calling a service function:
 `{ userId, scopes?, via?: "session" | "token" }`. Constructed at the edge (a tRPC procedure
 resolves it from the session; the **MCP path** resolves it from a token via `resolveActorFromToken`
 — realized now, #18) and passed as the second argument to **every** service function. Authorization
-is derived **only** from `userId`; `via`/`scopes` are never used to make an authz decision.
-_(See ADR-0001, ADR-0022.)_
+is derived **only** from `userId` — now: the userId's effective **capability** on the Project,
+resolved by **access** over owner identity + **Member**ship (ADR-0040); `via`/`scopes` are never
+used to make an authz decision. _(See ADR-0001, ADR-0022, ADR-0040.)_
 
 ### Service layer
 
@@ -487,8 +494,71 @@ The single home, inside the service layer, for authorization predicates. Exposes
 service function routes its authorization decision through this module so the policy lives in
 exactly one place. Its `OwnedResource { ownerId }` shape is **structural**, not Project-coupled —
 it authorizes over any row whose owning identity is `ownerId`/`userId` (an **API token**'s
-`userId` feeds it directly), so adding an owned resource type needs no new predicate.
-_(See ADR-0001 and ADR-0002.)_
+`userId` feeds it directly), so adding an owned resource type needs no new predicate. Layered
+atop these owner-only predicates is the **capability ladder** (ADR-0040): `resolveCapability`
+(pure, in `access.ts`) resolves a caller's effective rank on `none < view < edit < admin < owner`
+from owner identity, **Member**ship **Role**, and **guest access**, and `requireCapability(cap, min)`
+gates it. The DB-aware read/write seams live in `access-db.ts`: reads gate on _view_ (a denial
+maps to _not-found_, never forbidden — non-disclosure); writes gate on _edit_/_admin_/_owner_ (a
+denial is _forbidden_). The owner-only `assertCanRead`/`assertCanWrite` are retained for the
+bearer-token **MCP** read paths and **API token** management, which stay owner-only in this slice.
+_(See ADR-0001, ADR-0002, ADR-0040.)_
+
+### Member
+
+A **User** granted a **Role** on a **Project** via a `ProjectMembership` row
+(`{ projectId, userId, role }`, unique on `(projectId, userId)`). A Member is _not_ the
+**owner** — the owner is the irrevocable root of trust resolved by identity (`project.ownerId`,
+ADR-0002), never a membership row, so no access-management operation can revoke or downgrade it
+and none is auto-inserted. Membership is how the owner (or an ADMIN) **delegates** a capability
+below their own; no member can grant a capability they do not hold, and none can act on the owner.
+A Member's capability is resolved by **access** to a rank on the capability ladder and compared
+`rank >= required` at every gate. Never "collaborator" or "user-of-the-project" in code — the row
+is a `ProjectMembership` and the person is a **Member**. Distinct from **viewer**: _viewer_ is the
+read-only presentation mode (capability _view_, from a guest slug **or** a VIEWER membership),
+_Member_ is the persisted-row concept. _(See ADR-0040, ADR-0002, ADR-0001.)_
+
+### Role
+
+The named, persisted level a **Member** holds on a **Project** — one of `VIEWER`, `EDITOR`,
+`ADMIN` (`ProjectRole`). Each maps onto the capability ladder: `VIEWER` → _view_ (read +
+**descend**), `EDITOR` → _view_ + _edit_ (mutate the graph), `ADMIN` → _edit_ + **manage access**
+(invite, change roles, set **guest access**) yet still strictly below _owner_ — an ADMIN cannot
+delete or transfer the Project nor touch the owner. `Role` is the three-value wire/DB vocabulary
+humans are assigned to; the integer **rank** on the ladder (`none < view < edit < admin < owner`)
+is the internal total order **access** actually compares. There is no assignable `OWNER` or `NONE`
+role — owner is identity, "none" is the absence of a grant. The word is **Role** in prose, UI, and
+code — never "permission" (over-claims; the enforced thing is the rank) and never conflated with
+**token scopes** (a different axis — stored-not-enforced, ADR-0021). _(See ADR-0040, ADR-0021.)_
+
+### Guest access
+
+A per-**Project** dial (`GuestAccess`) setting the capability granted to an _anonymous_ holder of
+the **capability-URL slug** — `NONE` (no anonymous access; the slug alone resolves not-found) or
+`VIEW` (anonymous read + **descend**). `VIEW` is the **default** (a `NOT NULL DEFAULT 'VIEW'`
+backfill) and reproduces ADR-0002 exactly: the slug-possession read grant, the **viewer** read-only
+surfaces, and the "View only" badge (issue #16) are all what a guest at `VIEW` sees — roles **layer
+atop** the capability-URL model, they do not replace it. `NONE` is the opt-in "members only"
+lockdown that closes anonymous reads without rotating the slug (slug rotation remains the separate
+answer to _disclosure_, ADR-0002). Guest access never exceeds _view_; the slug is **never** a write
+grant. "guest" names the anonymous-slug _access level_, never the _person_ (who is still a
+**viewer**). This is the **slug-keyed read seam** — it may run with no **Actor** at all.
+_(See ADR-0040, ADR-0002.)_
+
+### Invite
+
+A bearer link (`ProjectInvite`) that grants a **Role** to whoever redeems it while signed in,
+creating or upgrading their **Member**ship. The system's **third bearer secret** after the
+**capability-URL slug** and the **API token**, and it inherits the API token's storage posture
+wholesale (ADR-0020): raw token is CSPRNG entropy **shown once**, stored only as a **keyed HMAC**
+under the same **token pepper** (no per-row salt, so redemption is a lookup-by-hash), with a
+non-secret prefix, an expiry, and soft revocation. Project-scoped (no `userId` — consumed by
+_whoever_ redeems it). An Invite carries a `Role`, never a raw rank, and **never `owner`** — you
+cannot invite someone to own a Project. Unlike the slug (possession _is_ a read grant), an Invite
+grants nothing until **redeemed** into a membership, so revoking the link or the membership cleanly
+removes access. A missing, expired, or revoked Invite is reported **not-found**, never forbidden
+(ADR-0002's non-disclosure posture). The `ProjectInvite` table lands with the sharing data model;
+the redemption service is a later slice. _(See ADR-0040, ADR-0020.)_
 
 ### API token (`ApiToken`)
 
@@ -539,8 +609,10 @@ later copied onto the **Actor** it resolves to. **Scopes are stored, not enforce
 and ADR-0001, authorization derives only from `userId`; `scopes`/`via` never decide an authz
 outcome. They exist now so the wire/DB shape is stable before any scope-gated capability lands, at
 which point enforcement is an additive `access`-module change. The word is **scopes** in prose, UI,
-and code — never "permissions" (over-claims enforcement that does not exist) or "roles".
-_(See ADR-0021.)_
+and code — never "permissions" (over-claims enforcement that does not exist) or "roles" (that names
+**Role**, the per-Project membership grade — a different, _enforced_ axis, ADR-0040). Scopes are
+stored on the token and not enforced; a Role rank is resolved from `userId` and _is_ enforced.
+_(See ADR-0021, ADR-0040.)_
 
 ### Connect-an-agent page
 

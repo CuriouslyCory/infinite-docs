@@ -3,7 +3,7 @@ import {
   type Interaction,
   type Prisma,
 } from "../../../generated/prisma/client";
-import { assertCanWrite } from "./access";
+import { authorizeProjectWrite, resolveReadableProject } from "./access-db";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { isEdgeDedupCollision } from "./prisma-errors";
@@ -67,11 +67,12 @@ export function activeDuplicateWhere(
  * backstop (ADR-0010), both surfaced as the same `ConflictError` shape
  * (`details.conflictingEdgeIds` names the active Edge that blocked the write).
  *
- * Owner-only: the Project is addressed by `projectId` (an internal handle,
- * never the capability slug — writes are never slug-granted, ADR-0002) and the
- * write is authorized through `access.assertCanWrite` against `project.ownerId`.
- * Ownership comes from the actor, never from `input` (ADR-0001). `label` is
- * UNTRUSTED user content, stored verbatim (prompt-injection standing note).
+ * Requires `edit` capability — owner, ADMIN, or EDITOR member (ADR-0040). The
+ * Project is addressed by `projectId` (an internal handle, never the capability
+ * slug — writes are never slug-granted, ADR-0002) and the write is authorized
+ * through `access-db.authorizeProjectWrite(…, "edit")`. The actor identity comes
+ * from the session, never from `input` (ADR-0001). `label` is UNTRUSTED user
+ * content, stored verbatim (prompt-injection standing note).
  */
 export async function connectNodes(
   db: Db,
@@ -81,13 +82,7 @@ export async function connectNodes(
   const { projectId, sourceId, targetId, interaction, label } =
     connectNodesInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { id: projectId, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  const project = await authorizeProjectWrite(db, actor, projectId, "edit");
 
   if (sourceId === targetId) {
     throw new ValidationError(
@@ -179,28 +174,21 @@ export interface NodeConnection {
  * no second read; a soft-deleted far endpoint hides the row (the same posture
  * `getCanvas` takes — a Connection with a dead end is not surfaced).
  *
- * Slug-readable (ADR-0002): the capability slug IS the read grant, so a viewer
- * sees the list read-only; `actor` is accepted only to match the
- * readable-procedure signature and is never consulted. The slug→project bind is
- * the gate, and scoping the Edge query to that `projectId` means a `nodeId` from
- * another Project simply matches nothing (no cross-project disclosure). One round
- * trip — the far endpoints come back on the same query via the Edge→Node
- * relations, never a per-edge follow-up.
+ * Capability-gated read on `view` via the slug→project bind (ADR-0040): the
+ * default `guestAccess=VIEW` lets any slug-holder see the list read-only; a
+ * `guestAccess=NONE` project is not-found for a non-member. Scoping the Edge
+ * query to that `projectId` means a `nodeId` from another Project simply matches
+ * nothing (no cross-project disclosure). One round trip — the far endpoints come
+ * back on the same query via the Edge→Node relations, never a per-edge follow-up.
  */
 export async function listNodeConnections(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: ListNodeConnectionsInput,
 ): Promise<NodeConnection[]> {
   const { slug, nodeId } = listNodeConnectionsInput.parse(input);
 
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
+  const project = await resolveReadableProject(db, actor, slug);
 
   const edges = await db.edge.findMany({
     where: {
@@ -256,8 +244,9 @@ function duplicateConnectionMessage(label: string | null): string {
 /**
  * Edits a Connection's `label`. Addressed by the Edge `id` — the natural key
  * for an existing row, and how a future MCP tool arrives: the service loads the
- * Edge, resolves its Project, and authorizes owner-only through
- * `access.assertCanWrite` (ADR-0001). Only `label` changes — `label: null`
+ * Edge, resolves its Project, and authorizes via
+ * `authorizeProjectWrite(…, "edit")` — `edit` capability: owner, ADMIN, or EDITOR
+ * member (ADR-0040). Only `label` changes — `label: null`
  * clears it, `label: undefined` leaves it. A Connection's `interaction` is set
  * at creation and (until the #65 picker) is not edited here. `label` is
  * UNTRUSTED user content, stored verbatim (prompt-injection standing note).
@@ -273,14 +262,7 @@ export async function updateEdge(
   if (!edge) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: edge.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, edge.projectId, "edit");
 
   return db.edge.update({
     where: { id: edge.id },
@@ -292,8 +274,9 @@ export async function updateEdge(
 
 /**
  * Upgrades a Connection's `interaction` (the picker on the selected edge; #65).
- * Addressed by the Edge `id`; loaded, its Project resolved, and authorized
- * owner-only through `access.assertCanWrite` (ADR-0001).
+ * Addressed by the Edge `id`; loaded, its Project resolved, and authorized via
+ * `authorizeProjectWrite(…, "edit")` — `edit` capability: owner, ADMIN, or EDITOR
+ * member (ADR-0040).
  *
  * Unlike `updateEdge` (label-only, never collides), changing `interaction` can
  * collide with the de-dupe indexes: the four directional values de-dupe on the
@@ -318,14 +301,7 @@ export async function updateEdgeInteraction(
   if (!edge) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: edge.projectId, deletedAt: null },
-    select: { ownerId: true, id: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, edge.projectId, "edit");
 
   if (edge.interaction === interaction) {
     return edge;
@@ -376,8 +352,9 @@ export async function updateEdgeInteraction(
  * Removes a Connection via soft-delete (sets `deletedAt`) so the action stays
  * recoverable — the safety net that matters because AI agents mutate the graph
  * (CONTEXT.md "Soft-delete + undo"). Addressed by the Edge `id`; loaded, its
- * Project resolved, and authorized owner-only through `access.assertCanWrite`
- * (ADR-0001). Idempotent in spirit: an already-deleted Edge reads as not-found.
+ * Project resolved, and authorized via `authorizeProjectWrite(…, "edit")` —
+ * `edit` capability: owner, ADMIN, or EDITOR member (ADR-0040). Idempotent in
+ * spirit: an already-deleted Edge reads as not-found.
  *
  * `deleteEdge` is a plain LONE soft-delete (ADR-0008's carve-out, now the only
  * path): it sets `deletedAt` on the one Edge and mints NO `deletionId` — there
@@ -394,14 +371,7 @@ export async function deleteEdge(
   if (!edge) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: edge.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, edge.projectId, "edit");
 
   const updated = await db.edge.update({
     where: { id: edge.id },
@@ -416,8 +386,9 @@ export async function deleteEdge(
  * the batch handle is consumed. An unknown / already-restored / lone-`deleteEdge`
  * id (those mint no `deletionId`) matches no rows and reads as not-found.
  *
- * Undo is a WRITE — owner-only via the stamped Edge's Project (ADR-0001 /
- * ADR-0002); a capability-URL viewer cannot undo. Pre-checks the de-dupe
+ * Undo is a WRITE — requires `edit` capability (owner, ADMIN, or EDITOR member;
+ * ADR-0040) via the stamped Edge's Project (ADR-0001 / ADR-0002); a read-only
+ * (guest-VIEW) viewer cannot undo. Pre-checks the de-dupe
  * invariant the revival must not violate — for each revived Edge, its
  * interaction-appropriate slot (`idx_edge_dedup` directional or
  * `idx_edge_assoc_dedup` association) — and surfaces a readable `ConflictError`
@@ -448,14 +419,7 @@ export async function restoreEdge(
   if (!firstEdge) {
     throw new NotFoundError();
   }
-  const project = await db.project.findFirst({
-    where: { id: firstEdge.projectId, deletedAt: null },
-    select: { ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  await authorizeProjectWrite(db, actor, firstEdge.projectId, "edit");
 
   // Pre-check the de-dupe invariant (ADR-0010): any active row occupying a slot
   // we're about to revive would block the updateMany. Each revived Edge

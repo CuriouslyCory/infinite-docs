@@ -1,5 +1,9 @@
 import { type Project } from "../../../generated/prisma/client";
-import { assertCanWrite } from "./access";
+import { type Capability } from "./access";
+import {
+  authorizeProjectRead,
+  resolveWritableProjectBySlug,
+} from "./access-db";
 import type { Actor, Db } from "./actor";
 import { NotFoundError } from "./errors";
 import { isSlugCollision } from "./prisma-errors";
@@ -38,35 +42,43 @@ export async function listProjects(db: Db, actor: Actor): Promise<Project[]> {
 }
 
 /**
- * Fetches a Project by its capability-URL slug. Possession of the unguessable
- * slug is the read grant, so `actor` is optional and no access check runs here.
- * A missing or soft-deleted project is reported as not-found (never revealing
- * whether a slug exists-but-forbidden).
+ * Fetches a Project by its capability-URL slug, gated on `view` (ADR-0040). For a
+ * `guestAccess=VIEW` project (the default) any holder of the slug — anonymous or
+ * not — resolves `view`, exactly as ADR-0002 specified; a `guestAccess=NONE`
+ * project resolves nothing for a non-member and is reported as not-found, never
+ * forbidden (the non-disclosure rule lives in the read seam). The owner and any
+ * member resolve their own capability.
+ *
+ * Returns `viewerCapability` alongside the project so the route shells derive
+ * `canEdit`/`canManage` without a second authorization pass.
  */
 export async function getProjectBySlug(
   db: Db,
-  _actor: Actor | null,
+  actor: Actor | null,
   input: GetProjectBySlugInput,
-): Promise<Project> {
+): Promise<Project & { viewerCapability: Capability }> {
   const { slug } = getProjectBySlugInput.parse(input);
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  return project;
+  const { project, viewerCapability } = await authorizeProjectRead(
+    db,
+    actor,
+    slug,
+  );
+  return { ...project, viewerCapability };
 }
 
 /**
  * Owner-only soft-delete: resolve the Project by its capability slug, enforce
- * owner access, then stamp `deletedAt`. The conditional `updateMany` (the
- * `deletedAt: null` predicate) closes the TOCTOU race against a concurrent
- * delete — `count === 0` means another writer won, reported as not-found. A
- * soft-delete leaves child rows intact (no cascade fires); the project simply
- * stops resolving anywhere `deletedAt: null` is filtered. Like `deleteEdge`,
- * this is a *lone* soft-delete — no `deletionId`, no cascade — not the batched,
- * undoable form `deleteTrace`/`deleteNode` use.
+ * owner access, then stamp `deletedAt`. Destroying a Project requires `owner` —
+ * a non-owner ADMIN cannot delete (ADR-0040). The slug-keyed write seam keeps a
+ * true non-member of a `guestAccess=NONE` project non-disclosed (`NotFoundError`,
+ * the slug could be stale) while surfacing `ForbiddenError` to anyone who can
+ * read but is below `owner`. The conditional `updateMany` (the `deletedAt: null`
+ * predicate) closes the TOCTOU race against a concurrent delete — `count === 0`
+ * means another writer won, reported as not-found. A soft-delete leaves child
+ * rows intact (no cascade fires); the project simply stops resolving anywhere
+ * `deletedAt: null` is filtered. Like `deleteEdge`, this is a *lone* soft-delete
+ * — no `deletionId`, no cascade — not the batched, undoable form
+ * `deleteTrace`/`deleteNode` use.
  */
 export async function deleteProject(
   db: Db,
@@ -74,14 +86,7 @@ export async function deleteProject(
   input: DeleteProjectInput,
 ): Promise<{ id: string }> {
   const { slug } = deleteProjectInput.parse(input);
-  const project = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true, ownerId: true },
-  });
-  if (!project) {
-    throw new NotFoundError();
-  }
-  assertCanWrite(actor, project);
+  const project = await resolveWritableProjectBySlug(db, actor, slug, "owner");
 
   const { count } = await db.project.updateMany({
     where: { id: project.id, deletedAt: null },

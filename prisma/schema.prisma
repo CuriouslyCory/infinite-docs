@@ -64,25 +64,102 @@ model User {
     posts         Post[]
     projects      Project[]
     apiTokens     ApiToken[]
+    memberships   ProjectMembership[]
 }
 
 // Root container of one architecture graph (see CONTEXT.md).
 // Addressed by an unguessable capability-URL `slug`; owned by a single User.
 model Project {
-    id         String      @id @default(cuid())
-    title      String
-    slug       String      @unique
-    ownerId    String
-    owner      User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-    createdAt  DateTime    @default(now())
-    updatedAt  DateTime    @updatedAt
-    deletedAt  DateTime?
-    nodes      Node[]
-    edges      Edge[]
-    specs      Spec[]
-    traces     Trace[]
+    id          String      @id @default(cuid())
+    title       String
+    slug        String      @unique
+    ownerId     String
+    owner       User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+    // The capability granted to an ANONYMOUS holder of the capability-URL slug
+    // (ADR-0040): VIEW reproduces ADR-0002's slug-read model (the default; the
+    // backfill that keeps every existing Project public-readable), NONE closes
+    // anonymous reads to members only. The owner is never a row here — ownership
+    // is the `ownerId` identity check, the irrevocable root of trust (ADR-0002).
+    guestAccess GuestAccess @default(VIEW)
+    createdAt   DateTime    @default(now())
+    updatedAt   DateTime    @updatedAt
+    deletedAt   DateTime?
+    nodes       Node[]
+    edges       Edge[]
+    specs       Spec[]
+    traces      Trace[]
+    memberships ProjectMembership[]
+    invites     ProjectInvite[]
 
     @@index([ownerId])
+}
+
+// The capability granted to an anonymous holder of a Project's capability-URL
+// slug (CONTEXT.md "Guest access"; ADR-0040). VIEW is ADR-0002's classic
+// slug-read (the @default, so existing rows backfill to it and the slice is
+// behavior-neutral); NONE makes the Project members-only without rotating the
+// slug. Never exceeds `view` — the slug is never a write grant.
+enum GuestAccess {
+    NONE
+    VIEW
+}
+
+// The named, persisted level a Member holds on a Project (CONTEXT.md "Role";
+// ADR-0040). Maps onto the capability ladder in `access.ts`: VIEWER -> view,
+// EDITOR -> edit, ADMIN -> admin (still strictly below owner). There is no
+// assignable OWNER or NONE role — owner is the `ownerId` identity, "none" is the
+// absence of a grant. Distinct from API-token `scopes` (stored-not-enforced,
+// ADR-0021): a Role rank IS enforced at the access seam.
+enum ProjectRole {
+    VIEWER
+    EDITOR
+    ADMIN
+}
+
+// A grant of a Role to a User on a Project (CONTEXT.md "Member"; ADR-0040). One
+// grade per (project, user) via the composite unique; the @@index([userId])
+// serves the "projects I'm a member of" direction (#109). The owner is NEVER a
+// membership row — ownership is `Project.ownerId`, the irrevocable root of trust
+// (ADR-0002), so no operation auto-inserts an owner membership. Both FKs cascade:
+// dropping the Project or the User drops the grant.
+model ProjectMembership {
+    id        String      @id @default(cuid())
+    projectId String
+    project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    userId    String
+    user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+    role      ProjectRole
+    createdAt DateTime    @default(now())
+    updatedAt DateTime    @updatedAt
+
+    @@unique([projectId, userId])
+    @@index([userId])
+}
+
+// A role-bearing bearer link that grants a Role on redemption (CONTEXT.md
+// "Invite"; ADR-0040). The system's THIRD bearer secret after the slug and the
+// API token, and it inherits the API token's storage posture wholesale
+// (ADR-0020): the raw token is shown once and stored only as a keyed HMAC
+// (`tokenHash`, unique for lookup), with a non-secret `prefix` for display and
+// `keyVersion` selecting the pepper. Project-scoped (no userId — an invite is
+// consumed by whoever redeems it). The table lands now (ahead of its #106
+// redemption consumer) so the full sharing data model arrives in one migration;
+// the redemption service is a later slice.
+model ProjectInvite {
+    id         String      @id @default(cuid())
+    projectId  String
+    project    Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    tokenHash  String      @unique
+    prefix     String
+    keyVersion Int         @default(1)
+    role       ProjectRole
+    expiresAt  DateTime?
+    revokedAt  DateTime?
+    maxUses    Int?
+    useCount   Int         @default(0)
+    createdAt  DateTime    @default(now())
+
+    @@index([projectId])
 }
 
 // A bearer credential a signed-in user mints so an AI agent can call the system
