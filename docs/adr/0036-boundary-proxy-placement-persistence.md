@@ -10,7 +10,7 @@ still emits no proxy row, and the five derived fields
 `{ nodeId, title, kind, realEndpointId, edgeId }` are frozen. This ADR adds ONLY a
 view coordinate: where, on one scope's Canvas, the proxy sits. It reconciles
 ADR-0031's "boundary proxies persist no rows" invariant — that invariant is about
-the proxy's *identity*, which is still derived; a persisted *placement* does not
+the proxy's _identity_, which is still derived; a persisted _placement_ does not
 materialize the proxy (the proxy exists iff the derivation emits it), so the
 "derived, not stored" posture holds.
 
@@ -50,7 +50,7 @@ Before #91 it seeded onto a fixed left rail and could not be moved: it was a pas
 node, pinned `draggable:false` (ADR-0016, ADR-0031). On a dense Canvas the rail is a
 poor default — the owner wants to place the off-scope stand-in near the Components it
 connects to, and have that placement survive a reload and a scope re-entry (Descend
-out and back). The proxy's *identity* must stay derived (ADR-0031): we are not
+out and back). The proxy's _identity_ must stay derived (ADR-0031): we are not
 materializing the proxy, only remembering where the user dropped it.
 
 Three forces shape the design:

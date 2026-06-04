@@ -61,7 +61,7 @@ Four rules, each load-bearing:
   blocks and inline `#` characters; the AST walk (`unist-util-visit` over
   `remark-parse` output) only ever touches `heading` nodes. The transform
   clamps depth at 6 (the mdast maximum). One test guards this directly: a doc
-  with a `#`-prefixed line *inside* a fenced code block must round-trip with
+  with a `#`-prefixed line _inside_ a fenced code block must round-trip with
   the code block intact.
 
 - **`remark-stringify` options are pinned explicitly.** `bullet`,
@@ -93,7 +93,7 @@ The implementation is two modules:
   bearer-token Actor without re-implementing the format.
 
 - **`~/server/architecture/export.service.ts`** — `exportMarkdown(db, actor,
-  input)`: the `(db, actor, input)` service shape (ADR-0001). Resolves the
+input)`: the `(db, actor, input)` service shape (ADR-0001). Resolves the
   Project by slug (ADR-0002 — the slug is the read grant); bulk-fetches the
   graph (whole-project: two flat reads; subtree: three concurrent raw queries
   for descendant Nodes, descendant Edges, and ancestry-based boundary
@@ -208,16 +208,16 @@ The glyph is derived from `arrowEnds(interaction)` (the canonical helper in
 canvas marker mapping consumes), translated by a per-module helper in
 `markdown.ts`:
 
-  - `REQUEST` / `PUSH` → `→` (arrow at target);
-  - `SUBSCRIBE`        → `←` (arrow at source);
-  - `DUPLEX`           → `↔` (arrows at both ends);
-  - `ASSOCIATION`      → `—` (em-dash; a plain undirected line).
+- `REQUEST` / `PUSH` → `→` (arrow at target);
+- `SUBSCRIBE` → `←` (arrow at source);
+- `DUPLEX` → `↔` (arrows at both ends);
+- `ASSOCIATION` → `—` (em-dash; a plain undirected line).
 
 Keeping the glyph mapping in `markdown.ts` (not in `~/lib/connection-direction`)
 preserves ADR-0027's "one mapping, two consumers" framing: the helper returns
 booleans; each consumer chooses its rendering language (React Flow markers in
 the canvas island; glyphs in the serializer). The label separator switches
-from ` — ` to ` · ` (mid-dot, the punctuation already used in the export
+from `—` to `·` (mid-dot, the punctuation already used in the export
 header) so it never collides with the ASSOCIATION glyph.
 
 Sort key becomes `(sourceId, targetId, interaction, edgeId)` — `interaction`
@@ -273,21 +273,21 @@ determinism contract is enforced format-agnostically.
 
 ### Reviewable invariants (added at #67)
 
-- *Each Connection serializes exactly once at its real `(source, target)` —
-  never mirrored under altitude reprs from `getCanvas`'s projection.* A
+- _Each Connection serializes exactly once at its real `(source, target)` —
+  never mirrored under altitude reprs from `getCanvas`'s projection._ A
   future change that emits a Connection at multiple altitudes regresses this
   ADR.
-- *The boundary section never re-introduces `origin` / `direct` /
-  `inherited` / `isDirect`.* ADR-0031's per-edge invariant carries over to
+- _The boundary section never re-introduces `origin` / `direct` /
+  `inherited` / `isDirect`._ ADR-0031's per-edge invariant carries over to
   the export consumer.
-- *The glyph mapping lives in `markdown.ts`, consuming `arrowEnds()`
-  booleans.* A glyph table in `~/lib/connection-direction` would regress
+- _The glyph mapping lives in `markdown.ts`, consuming `arrowEnds()`
+  booleans._ A glyph table in `~/lib/connection-direction` would regress
   ADR-0027's "one mapping, two consumers" framing.
-- *The serializer still never imports `@xyflow/react`, `lucide-react`, or
-  `~/lib/node-kinds`* (ADR-0017 / ADR-0004). The duplicate `KIND_LABEL` and
+- _The serializer still never imports `@xyflow/react`, `lucide-react`, or
+  `~/lib/node-kinds`_ (ADR-0017 / ADR-0004). The duplicate `KIND_LABEL` and
   the duplicate glyph derivation are deliberate.
-- *The export's subtree boundary CTE stays separate from `getCanvas`'s
-  ancestry CTE* (ADR-0031 §"Scope of this ADR" — two derivations, two
+- _The export's subtree boundary CTE stays separate from `getCanvas`'s
+  ancestry CTE_ (ADR-0031 §"Scope of this ADR" — two derivations, two
   purposes, no DRY).
 
 ## Amendment — #60 (serializer trace mode)

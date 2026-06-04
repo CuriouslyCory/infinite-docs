@@ -7,7 +7,7 @@ Accepted
 ## Context
 
 A core product philosophy is convenience: links should be share-able by default, and users
-should not hit friction (sign-in walls, access-request flows) just to *view* an architecture.
+should not hit friction (sign-in walls, access-request flows) just to _view_ an architecture.
 At the same time, the graph is mutable — increasingly by AI agents — so writes must stay locked
 down.
 

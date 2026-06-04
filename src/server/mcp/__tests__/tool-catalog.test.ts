@@ -10,7 +10,10 @@ import {
   deleteConnectionOutput,
   restoreComponentOutput,
 } from "~/lib/schemas";
-import { resetDb, testDb } from "~/server/architecture/__tests__/helpers/test-db";
+import {
+  resetDb,
+  testDb,
+} from "~/server/architecture/__tests__/helpers/test-db";
 
 import { type McpWriteTool, WRITE_TOOLS } from "../tool-catalog";
 
@@ -144,7 +147,9 @@ describe("WRITE_TOOLS catalog", () => {
     const deleted = deleteComponentOutput.parse(
       (
         await testDb.$transaction((tx) =>
-          descriptorFor("delete_component").invoke(tx, actor, { id: parent.id }),
+          descriptorFor("delete_component").invoke(tx, actor, {
+            id: parent.id,
+          }),
         )
       ).structured,
     );

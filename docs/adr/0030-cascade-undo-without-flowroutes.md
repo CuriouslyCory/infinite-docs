@@ -43,10 +43,10 @@ the revival with a readable `ConflictError` carrying `conflictingSpecIds`).
 Spec-derived child Components carry **no special arm** — they are ordinary
 children swept by the existing subtree `parentId` descent.
 
-*(In #62 nothing writes a `Spec` yet — the spec→Component generator is #64 — so
+_(In #62 nothing writes a `Spec` yet — the spec→Component generator is #64 — so
 the Spec sweep and its restore pre-check are forward-compat, exercised by tests
 that seed a `Spec` row directly. The same posture ADR-0012's inner-Edge
-pre-check used before its writer landed.)*
+pre-check used before its writer landed.)_
 
 ### The Edge sweep predicate loses `canvasNodeId`
 
@@ -60,19 +60,19 @@ complete precisely because there is no scope column to miss.
 
 No FlowRoute cascade, no conditional `deletionId`, no shared-inner-Edge reference
 counting. `deleteEdge` sets `deletedAt` on one Edge and mints **no** `deletionId`
-— the ADR-0008 lone-delete carve-out, now the *only* `deleteEdge` path.
+— the ADR-0008 lone-delete carve-out, now the _only_ `deleteEdge` path.
 `restoreEdge` survives only as the cascade-restore helper driven by
 `restoreNode` (it restores the Edges a `deleteNode` batch stamped, pre-checking
 the two new de-dupe indexes — ADR-0027/0028).
 
 ## Consequences
 
-- **Reviewable invariant:** *`deleteNode` stamps exactly {target Node, subtree,
+- **Reviewable invariant:** _`deleteNode` stamps exactly {target Node, subtree,
   incident/interior Edges (by `sourceId`/`targetId` ∈ subtree), owned Spec} under
   one `deletionId`; `deleteEdge` is always a lone soft-delete with no
   `deletionId`. Re-introducing a FlowRoute arm, a conditional `deleteEdge`
   `deletionId`, or a shared-inner-Edge sweep references dropped tables and
-  regresses this ADR.*
+  regresses this ADR._
 - The ADR-0012 `FOR UPDATE` inner-Edge race lock and reference-counted inner-Edge
   sweep are deleted — no shared pipe survives, so no last-referer race exists.
 - The fail-loud post-stamp orphan guard (ADR-0008's `assertNoOrphanedChildren`)

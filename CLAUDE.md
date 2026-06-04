@@ -96,12 +96,16 @@ NextAuth v5 with the Prisma adapter (database sessions, not JWT) and the Discord
 - TypeScript is strict with `noUncheckedIndexedAccess` and `checkJs`; ESLint runs type-checked rules and prefers inline type imports (`import { type Foo }`).
   - **Exception — server/client boundary:** `tsconfig` sets `verbatimModuleSyntax`, so inline `import { type Foo }` leaves a preserved side-effect import (`import {} from "…"`) while top-level `import type { Foo }` is fully elided. A type pulled into a `"use client"` file from a module whose graph reaches server-only code — e.g. `AppRouter` from `~/server/api/root` (→ `~/server/db` → `@prisma/adapter-pg` → `pg`) — **must** use top-level `import type`, or the server graph (and Node built-ins like `dns`) gets bundled into the client. `consistent-type-imports` accepts both forms and will not flag this.
 
+### Formatting
+
+Prettier owns all markdown (`**/*.{md,mdx}`) — `CONTEXT.md`, `docs/adr/*.md`, READMEs, and `docs/agents/*.md` included. Don't hand-format markdown; run `pnpm format:write`. `proseWrap` stays at prettier's default `preserve`, so existing hand-wrapping is not reflowed. (`.claude/` orchestrator scratch is prettier-ignored.)
+
 ### Comments and documentation
 
-Code is read far more than it is written, and comments that merely restate the code are noise that rots out of sync. **Default to writing no comments.** Well-named identifiers already convey *what* the code does; a comment earns its place only by explaining *why* when the why is non-obvious — a hidden constraint, a subtle invariant, a workaround for a specific bug, or behavior that would surprise a reader. If deleting a comment wouldn't confuse a future reader, don't write it.
+Code is read far more than it is written, and comments that merely restate the code are noise that rots out of sync. **Default to writing no comments.** Well-named identifiers already convey _what_ the code does; a comment earns its place only by explaining _why_ when the why is non-obvious — a hidden constraint, a subtle invariant, a workaround for a specific bug, or behavior that would surprise a reader. If deleting a comment wouldn't confuse a future reader, don't write it.
 
-- **Don't annotate the *what*** — `// increment the counter` over `count++` is noise; rename the variable instead.
-- **Do capture the *why*** — the server/client `import type` exception above is exactly the kind of non-obvious constraint that earns a comment.
+- **Don't annotate the _what_** — `// increment the counter` over `count++` is noise; rename the variable instead.
+- **Do capture the _why_** — the server/client `import type` exception above is exactly the kind of non-obvious constraint that earns a comment.
 - **Docstrings follow the same bar, not a coverage target.** Meaningful tRPC procedures, React contexts, and service methods that carry real intent get documented; trivial helpers (`toRFNode`, `beginEditing`, `commit`, `cancel`, and friends) do not — a docstring there adds noise, not signal.
 - **Don't pad to hit a metric.** External tools may flag low docstring coverage against a generic threshold (e.g. CodeRabbit's 80% default); we intentionally sit below it. Manufacturing docstrings to turn that number green is the same gaming-the-check anti-pattern philosophy #6 warns against — if a threshold is worth aligning, encode our bar in the tool's config rather than padding the code.
 

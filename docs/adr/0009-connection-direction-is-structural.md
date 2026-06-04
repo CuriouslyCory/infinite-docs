@@ -3,9 +3,9 @@
 ## Status
 
 **Superseded by [ADR-0023](0023-connection-direction-derived-from-flows.md).** A
-Connection is now undirected: its arrowheads are *derived* from the Flows routed
+Connection is now undirected: its arrowheads are _derived_ from the Flows routed
 on it (none → a plain line, both directions → arrowheads at both ends on ONE
-Connection), and the de-dupe key is the *unordered* endpoint pair. This ADR's
+Connection), and the de-dupe key is the _unordered_ endpoint pair. This ADR's
 core insight — that direction must have a single, un-lying source of truth — is
 preserved; ADR-0023 relocates that source of truth from the Edge's column order
 to the Flows that actually carry direction (which did not exist as first-class
@@ -31,8 +31,8 @@ construction.
 
 The key observation: an Edge already stores `sourceId` (the output endpoint) → `targetId` (the
 input endpoint). ADR-0005's de-dupe rule already treats `A → B` as **distinct** from `B → A`
-precisely because the *ordered pair of endpoints* is the identity. So the source→target ordering
-*already is* the direction — `direction` stored nothing the endpoints did not.
+precisely because the _ordered pair of endpoints_ is the identity. So the source→target ordering
+_already is_ the direction — `direction` stored nothing the endpoints did not.
 
 ## Decision
 
@@ -67,9 +67,9 @@ helper — the MCP path does not pass through the client.
 **Relationship to ADR-0005.** ADR-0005 established three things: Edge scope is an explicit
 `canvasNodeId`, the graph invariants are enforced in the service rather than the database, and
 the de-dupe key is the ordered triple `(canvasNodeId, sourceId, targetId)`. **All three remain
-fully in force.** This ADR supersedes *only* ADR-0005's sub-decision that direction is a stored,
+fully in force.** This ADR supersedes _only_ ADR-0005's sub-decision that direction is a stored,
 cosmetic property that "never factors into de-duplication" — there is no longer a `direction` to
-factor in, and the *ordered-pair* distinctness ADR-0005 relied on is now the *sole* encoder of
+factor in, and the _ordered-pair_ distinctness ADR-0005 relied on is now the _sole_ encoder of
 flow. In particular, ADR-0005's deferral of a partial-unique-index de-dupe hardening (its
 accepted TOCTOU window) is **untouched and still stands**.
 

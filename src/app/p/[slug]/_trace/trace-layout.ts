@@ -85,7 +85,11 @@ export function layoutTrace(
   edges: TraceViewEdge[],
 ): TraceLayout {
   if (nodes.length === 0) {
-    return { rfNodes: [], rfEdges: [], bounds: { x: 0, y: 0, width: 0, height: 0 } };
+    return {
+      rfNodes: [],
+      rfEdges: [],
+      bounds: { x: 0, y: 0, width: 0, height: 0 },
+    };
   }
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -112,14 +116,17 @@ export function layoutTrace(
     const sp = scopeParent(edge.sourceId);
     const tp = scopeParent(edge.targetId);
     const scope = sp === tp ? sp : null;
-    (
-      edgesInScope.get(scope) ?? edgesInScope.set(scope, []).get(scope)!
-    ).push(edge);
+    (edgesInScope.get(scope) ?? edgesInScope.set(scope, []).get(scope)!).push(
+      edge,
+    );
   }
 
   const sizeOf = new Map<string, SizedBox>();
   const childRelPos = new Map<string, { x: number; y: number }>();
-  const scopeRootPos = new Map<string | null, Map<string, { x: number; y: number }>>();
+  const scopeRootPos = new Map<
+    string | null,
+    Map<string, { x: number; y: number }>
+  >();
 
   /** Lay out one scope's direct children; returns the scope's bounding size. */
   const layoutScope = (scopeId: string | null): SizedBox => {

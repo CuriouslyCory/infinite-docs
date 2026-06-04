@@ -21,11 +21,11 @@ uniformly with no second code path). **Supersedes nothing.**
 On a hub-dense Canvas — where many Connections converge on a few Components — edge
 labels became unreadable. Six distinct failure modes compounded at the same spot:
 
-- **Coincident paths (the worst):** several Connections between the *same* node
+- **Coincident paths (the worst):** several Connections between the _same_ node
   pair — `A→B REQUEST` and `A→B PUSH` coexist by design (ADR-0010/0027), and #90
   routes many crossing edges to one coalesced boundary proxy — resolve to the same
   default handle, so React Flow draws them on one bezier path. Their labels stack
-  at the *identical* point; if two are the same width the rear ones are entirely
+  at the _identical_ point; if two are the same width the rear ones are entirely
   invisible, and the user has no signal they exist. A group of five Connections
   showed one label and hid four.
 - **Overlap:** every label is pinned to its Edge's bezier midpoint with no
@@ -37,8 +37,8 @@ labels became unreadable. Six distinct failure modes compounded at the same spot
   `z-index`, so whichever Edge rendered last won the stack arbitrarily.
 - **Figure/ground:** the label's `#1f2138` background matched the node/canvas
   navy, so a label over a node read as node chrome.
-- **Selection-pile:** the interaction picker mounted as an inline row *below the
-  label at the same midpoint* — dropping a tall opaque control into the most
+- **Selection-pile:** the interaction picker mounted as an inline row _below the
+  label at the same midpoint_ — dropping a tall opaque control into the most
   crowded spot exactly when the user selected an Edge for clarity.
 
 The decisive constraint is the z-order one: React Flow's edge `zIndex` /
@@ -83,7 +83,7 @@ own UI; the deterministic primary (`members[0]`) renders the chip when none is
 selected; the rest render no label layer. The Canvas builds the grouping once per
 edges change (`useMemo`) and provides it via `EdgeGroupContext`. The chip stops its
 own click/pointerdown from reaching the pane, or React Flow would select the
-primary edge and tear the list down before it opens. The overlapping *lines* are
+primary edge and tear the list down before it opens. The overlapping _lines_ are
 left merged — fanning the bezier paths apart is deferred with the other structural
 work.
 

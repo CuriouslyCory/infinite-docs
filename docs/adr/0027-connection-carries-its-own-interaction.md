@@ -30,8 +30,8 @@ Flow model — there are no routed Flows to derive direction from.
 
 Direction was relocated to Flows because that is where it lived (ADR-0023). With
 Flows gone, direction has nowhere to live unless the Connection itself carries
-it. Re-deriving from absent rows is not an option; re-introducing a *stored
-arrow* (the ADR-0009 column the project twice removed) would recreate the lie
+it. Re-deriving from absent rows is not an option; re-introducing a _stored
+arrow_ (the ADR-0009 column the project twice removed) would recreate the lie
 ADR-0009/0023 fought — an arrow a user could set independently of meaning.
 
 A WebSocket, an SSE stream, a request/response call, and a plain "these relate"
@@ -51,7 +51,7 @@ the user types it (the honest successor to ADR-0023's "no flows yet, no arrow").
 
 `sourceId` / `targetId` are no longer "arbitrary" (the ADR-0023 framing): they
 record which Port the drag started from and anchor the derived arrow. The
-arrow is *derived* — never stored — from `(interaction, source, target)` at
+arrow is _derived_ — never stored — from `(interaction, source, target)` at
 render time. This keeps the un-lying property (the arrow cannot be set
 independently of meaning) while giving meaning a home.
 
@@ -83,11 +83,11 @@ those slices have a spec.
 
 ## Consequences
 
-- **Reviewable invariant:** *A Connection's rendered direction is derived —
+- **Reviewable invariant:** _A Connection's rendered direction is derived —
   never stored — from `(interaction, source, target)`. `interaction` is a type
   with one undirected value (`ASSOCIATION`); re-introducing a stored
   `direction`/`polarity` column, or deriving the arrow from anything other than
-  the canonical helper, regresses this ADR.*
+  the canonical helper, regresses this ADR._
 - `interaction` enters the directional de-dupe key (ADR-0010 amendment):
   `A→B REQUEST` and `A→B PUSH` coexist as distinct Connections; `label` stays
   out of every key.

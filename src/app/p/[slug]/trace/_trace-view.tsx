@@ -318,7 +318,11 @@ function SavedTraceRow({
 
   return (
     <li className="flex items-center gap-2 rounded bg-white/5 px-3 py-2">
-      <Route size={14} aria-hidden className="shrink-0 text-[hsl(280,100%,80%)]" />
+      <Route
+        size={14}
+        aria-hidden
+        className="shrink-0 text-[hsl(280,100%,80%)]"
+      />
       {editing ? (
         <input
           autoFocus
@@ -416,8 +420,8 @@ function WorkingSetManager({
         <Route size={28} aria-hidden className="text-white/40" />
         <h2 className="text-lg font-semibold text-white">Trace</h2>
         <p className="text-sm text-white/60">
-          Add 2 or more trace points to see the graph. Open a Component and check
-          “Trace this Component” to mark it.
+          Add 2 or more trace points to see the graph. Open a Component and
+          check “Trace this Component” to mark it.
         </p>
       </div>
     );
@@ -463,7 +467,13 @@ function WorkingSetManager({
  * the same insufficient-points empty state so a Trace built only from removed
  * Components doesn't render a blank canvas.
  */
-function TraceCrossLayer({ slug, nodeIds }: { slug: string; nodeIds: string[] }) {
+function TraceCrossLayer({
+  slug,
+  nodeIds,
+}: {
+  slug: string;
+  nodeIds: string[];
+}) {
   const { data, isLoading, isError } = api.architecture.getTraceView.useQuery({
     slug,
     nodeIds,

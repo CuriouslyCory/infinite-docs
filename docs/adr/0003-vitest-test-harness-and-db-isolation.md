@@ -12,7 +12,7 @@ The pattern we set here is the one every later slice inherits, so it is worth de
 deliberately.
 
 The thing we most need to test is the **service layer**: `(db, actor, input)` functions and the
-`access` authorization rules (ADR-0001). The valuable assertion is *external behavior* — "a
+`access` authorization rules (ADR-0001). The valuable assertion is _external behavior_ — "a
 non-owner mutation is rejected," "fetch-by-slug returns the Project," "create persists a row" —
 not internal call shapes.
 
@@ -22,7 +22,7 @@ Three strategies were considered for giving services a database under test:
    certain way, not that the behavior is correct; it cannot catch a wrong query, a bad unique
    constraint, or a real authorization slip. It tests our mock, not Postgres.
 2. **Wrap each test in a transaction and roll back.** Clean isolation with no truncation cost —
-   *if* the code under test never opens its own transaction. But the service layer's whole point
+   _if_ the code under test never opens its own transaction. But the service layer's whole point
    is that `db` is injectable, and future services will call `db.$transaction(...)` internally.
    A nested transaction inside an outer test transaction does not behave like production, so the
    test would diverge from reality precisely where correctness matters most (and a partial-failure

@@ -18,11 +18,11 @@ Existing tools force a choice no one should have to make:
 - **Static diagrams** (Visio, Lucid, draw.io) produce pictures that rot the moment the system
   changes, can't be drilled into, and carry no real documentation.
 - **Text docs and wikis** capture detail but lose the spatial, relational picture — you can't
-  *see* how infrastructure, services, and data connect.
-- **Neither feeds cleanly into an LLM**, and none let an AI agent *read and maintain* the
+  _see_ how infrastructure, services, and data connect.
+- **Neither feeds cleanly into an LLM**, and none let an AI agent _read and maintain_ the
   architecture as it works on the actual system.
 
-Infinite Docs is a single place to model a system at *any depth*, keep it alive as the system
+Infinite Docs is a single place to model a system at _any depth_, keep it alive as the system
 evolves, and hand it to both people and agents as a first-class artifact.
 
 ## Core concepts
@@ -30,16 +30,16 @@ evolves, and hand it to both people and agents as a first-class artifact.
 [`CONTEXT.md`](CONTEXT.md) is the binding glossary — the source of truth for vocabulary. The
 essentials:
 
-| Term | What it is |
-| --- | --- |
-| **Component** / Node | The unit of architecture you place, name, document, and open. *Component* is the user-facing word; *Node* is its data-model name. |
-| **Connection** / Edge | A link between two Components. *Connection* is user-facing; *Edge* is the data-model name. |
-| **Canvas** | A *derived* view — the Components and Connections that live under one parent. Never stored directly. |
-| **Descent** | Opening a Component to enter its interior Canvas, one level deeper, recursing to any depth. |
-| **Boundary proxy** | A read-only stand-in for the off-scope end of a Connection that crosses the current Canvas — derived per crossing Connection, so a dependency's far end stays visible without leaving the scope you're documenting. |
-| **Project** | The root container of one architecture graph, owned by a single user. |
-| **Capability URL** | An unguessable per-Project slug whose mere possession grants read access. Mutations always require the signed-in owner. |
-| **Service layer** | The single deep module — `(db, actor, input) => result` — that is the only home for business logic and authorization. tRPC and MCP are thin adapters over it. |
+| Term                  | What it is                                                                                                                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Component** / Node  | The unit of architecture you place, name, document, and open. _Component_ is the user-facing word; _Node_ is its data-model name.                                                                                   |
+| **Connection** / Edge | A link between two Components. _Connection_ is user-facing; _Edge_ is the data-model name.                                                                                                                          |
+| **Canvas**            | A _derived_ view — the Components and Connections that live under one parent. Never stored directly.                                                                                                                |
+| **Descent**           | Opening a Component to enter its interior Canvas, one level deeper, recursing to any depth.                                                                                                                         |
+| **Boundary proxy**    | A read-only stand-in for the off-scope end of a Connection that crosses the current Canvas — derived per crossing Connection, so a dependency's far end stays visible without leaving the scope you're documenting. |
+| **Project**           | The root container of one architecture graph, owned by a single user.                                                                                                                                               |
+| **Capability URL**    | An unguessable per-Project slug whose mere possession grants read access. Mutations always require the signed-in owner.                                                                                             |
+| **Service layer**     | The single deep module — `(db, actor, input) => result` — that is the only home for business logic and authorization. tRPC and MCP are thin adapters over it.                                                       |
 
 The `Component`/`Node` and `Connection`/`Edge` split is deliberate: "node" is overloaded in this
 stack (Node.js, the canvas library), so humans and agents say **Component**/**Connection** while
@@ -52,14 +52,14 @@ The product was sequenced across milestones M0–M5; the full vision lives in th
 complete**, and the tool has since grown several capabilities beyond the original roadmap (see
 below).
 
-| Milestone | Scope | Status |
-| --- | --- | --- |
-| **M0** | Data model + `(db, actor, input)` service layer + Vitest harness | ✅ Complete |
-| **M1** | First nested Canvas: create / drag / connect / rename / descend, soft-delete + undo | ✅ Complete |
-| **M2** | Deterministic markdown export + in-app WYSIWYG documentation editor (debounced autosave) | ✅ Complete |
-| **M3** | Boundary proxies — read-only off-scope endpoints derived per crossing Connection | ✅ Complete |
-| **M4** | MCP server: API tokens, write tools, read resources, `llms.txt`, "Connect an agent" page | ✅ Complete |
-| **M5** | Cross-scope & lineal Connections (refinement wiring), typed Interactions, sharing & viewer polish, Project deletion | ✅ Complete |
+| Milestone | Scope                                                                                                               | Status      |
+| --------- | ------------------------------------------------------------------------------------------------------------------- | ----------- |
+| **M0**    | Data model + `(db, actor, input)` service layer + Vitest harness                                                    | ✅ Complete |
+| **M1**    | First nested Canvas: create / drag / connect / rename / descend, soft-delete + undo                                 | ✅ Complete |
+| **M2**    | Deterministic markdown export + in-app WYSIWYG documentation editor (debounced autosave)                            | ✅ Complete |
+| **M3**    | Boundary proxies — read-only off-scope endpoints derived per crossing Connection                                    | ✅ Complete |
+| **M4**    | MCP server: API tokens, write tools, read resources, `llms.txt`, "Connect an agent" page                            | ✅ Complete |
+| **M5**    | Cross-scope & lineal Connections (refinement wiring), typed Interactions, sharing & viewer polish, Project deletion | ✅ Complete |
 
 **Beyond the roadmap**, the tool now also has: an expanded 26-value **Component-kind** taxonomy
 with a searchable, affinity-ranked **kind palette**; **Spec import** (OpenAPI / SQL-DDL today)
@@ -145,19 +145,19 @@ a hosted branch such as [Neon](https://neon.tech)).
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `pnpm dev` | Dev server (Turbopack) |
-| `pnpm check` | `eslint .` + `tsc --noEmit` — the primary validation gate |
-| `pnpm typecheck` | Types only |
-| `pnpm lint` / `pnpm lint:fix` | ESLint |
-| `pnpm format:write` / `pnpm format:check` | Prettier |
-| `pnpm test` / `pnpm test:watch` | Vitest (see below) |
-| `pnpm build` / `pnpm preview` | Production build / build + start |
-| `pnpm db:author <name>` | Scaffold a migration directory seeded with the live-DB-to-schema diff (hand-edit for raw SQL afterwards) |
-| `pnpm db:check` | Drift gate: prints the SQL diff and exits 2 if `prisma/schema.prisma` is ahead of the live DB |
-| `pnpm db:migrate` | `prisma migrate deploy && prisma generate` — apply pending migrations and refresh the client (dev, test, prod) per [ADR-0010](docs/adr/0010-edge-dedup-partial-unique-index.md) |
-| `pnpm db:studio` | Prisma Studio |
+| Command                                   | What it does                                                                                                                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                                | Dev server (Turbopack)                                                                                                                                                          |
+| `pnpm check`                              | `eslint .` + `tsc --noEmit` — the primary validation gate                                                                                                                       |
+| `pnpm typecheck`                          | Types only                                                                                                                                                                      |
+| `pnpm lint` / `pnpm lint:fix`             | ESLint                                                                                                                                                                          |
+| `pnpm format:write` / `pnpm format:check` | Prettier                                                                                                                                                                        |
+| `pnpm test` / `pnpm test:watch`           | Vitest (see below)                                                                                                                                                              |
+| `pnpm build` / `pnpm preview`             | Production build / build + start                                                                                                                                                |
+| `pnpm db:author <name>`                   | Scaffold a migration directory seeded with the live-DB-to-schema diff (hand-edit for raw SQL afterwards)                                                                        |
+| `pnpm db:check`                           | Drift gate: prints the SQL diff and exits 2 if `prisma/schema.prisma` is ahead of the live DB                                                                                   |
+| `pnpm db:migrate`                         | `prisma migrate deploy && prisma generate` — apply pending migrations and refresh the client (dev, test, prod) per [ADR-0010](docs/adr/0010-edge-dedup-partial-unique-index.md) |
+| `pnpm db:studio`                          | Prisma Studio                                                                                                                                                                   |
 
 Authoring a new migration: run `pnpm db:author <name>` (e.g. `pnpm db:author add_flow_models`); it creates `prisma/migrations/<ts>_<name>/migration.sql` populated with the live-DB-to-schema diff. Hand-edit for any raw SQL Prisma cannot express (partial unique indexes, `DO $$` guards), then apply with `pnpm db:migrate` (which deploys and regenerates the client). The author/check commands diff against the live dev DB rather than the migration history because `--from-migrations` would require a shadow DB this repo deliberately does not configure — so the dev DB must be at the head of migrations first (run `pnpm db:migrate` if it has fallen behind). Never use `prisma migrate dev` (needs a shadow DB) or `prisma db push` (desyncs migration history) — see ADR-0010.
 
@@ -168,7 +168,7 @@ Authoring a new migration: run `pnpm db:author <name>` (e.g. `pnpm db:author add
 
 Tests run with [Vitest](https://vitest.dev) against a **real, isolated Postgres** database — not
 mocks. The `(db, actor, input)` service layer is the deliberate testable seam: tests inject a real
-database and exercise services directly, asserting *external behavior* (returned value + resulting
+database and exercise services directly, asserting _external behavior_ (returned value + resulting
 database state), never internal query structure. Each test truncates the database to start clean,
 so tests must use a **separate** database from your dev data. See
 [ADR-0003](docs/adr/0003-vitest-test-harness-and-db-isolation.md) for the rationale.
@@ -195,7 +195,7 @@ so tests must use a **separate** database from your dev data. See
    ```
 
    Vitest's global setup applies pending migrations to the test database with `prisma migrate
-   deploy` before the suite runs (idempotent; no shadow DB). Per ADR-0010, `db push` is not used
+deploy` before the suite runs (idempotent; no shadow DB). Per ADR-0010, `db push` is not used
    because it would silently skip the raw-SQL partial unique index `idx_edge_dedup` that backstops
    the Edge de-dupe rule. On a fresh test DB, run `pnpm prisma migrate resolve --applied <baseline>`
    once to mark the baseline applied before the first `pnpm test`.

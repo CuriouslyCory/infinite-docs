@@ -71,8 +71,8 @@ Specifics that are part of the decision, not incidental:
   the same way ADR-0005 makes "Edge scope is explicit, not inferred" a reviewable
   rule. This is why the decision earns its own record.
 - **Reading `Node.parentId` ancestry does NOT violate ADR-0005.** ADR-0005
-  forbids *inferring an Edge's Canvas from its endpoints*; breadcrumbs *read the
-  stored `Node.parentId` tree*, which is the authoritative, recorded source of
+  forbids _inferring an Edge's Canvas from its endpoints_; breadcrumbs _read the
+  stored `Node.parentId` tree_, which is the authoritative, recorded source of
   truth for nesting. Traversing a column that exists to be traversed is not the
   same as substituting endpoint geometry for a missing stored scope. A reviewer
   must not pattern-match "parentId walk" onto the forbidden edge-scope inference.

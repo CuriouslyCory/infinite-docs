@@ -14,9 +14,7 @@ import { CopyButton } from "./copy-button";
 const noopSubscribe = () => () => undefined;
 
 export function McpInstructions({ token }: { token: string | null }) {
-  const [selectedId, setSelectedId] = useState<McpClientId>(
-    MCP_CLIENTS[0]!.id,
-  );
+  const [selectedId, setSelectedId] = useState<McpClientId>(MCP_CLIENTS[0]!.id);
   // Read the origin from the client only: a `null` server snapshot keeps the
   // first client render matching the server HTML (no hydration mismatch), then
   // resolves to the live origin once mounted — without a setState-in-effect.
@@ -26,7 +24,8 @@ export function McpInstructions({ token }: { token: string | null }) {
     () => null,
   );
 
-  const active = MCP_CLIENTS.find((c) => c.id === selectedId) ?? MCP_CLIENTS[0]!;
+  const active =
+    MCP_CLIENTS.find((c) => c.id === selectedId) ?? MCP_CLIENTS[0]!;
   const endpoint = origin ? `${origin}${MCP_ENDPOINT_PATH}` : null;
   const snippet = endpoint ? active.render(endpoint, token) : null;
 
@@ -74,11 +73,7 @@ export function McpInstructions({ token }: { token: string | null }) {
         )}
         {active.note && <p className="text-xs text-white/50">{active.note}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {snippet ? (
-            <CopyButton value={snippet} />
-          ) : (
-            <span className="h-9" />
-          )}
+          {snippet ? <CopyButton value={snippet} /> : <span className="h-9" />}
           <a
             href={active.docsUrl}
             target="_blank"

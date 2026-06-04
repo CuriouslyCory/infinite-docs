@@ -10,13 +10,37 @@ Three top-level Components and the two Connections between them, in one atomic b
 {
   "projectId": "proj_abc",
   "components": [
-    { "clientId": "web", "parent": null, "kind": "APPLICATION", "title": "Web App" },
-    { "clientId": "api", "parent": null, "kind": "SERVICE", "title": "API Service" },
-    { "clientId": "db", "parent": null, "kind": "DATABASE", "title": "Postgres" }
+    {
+      "clientId": "web",
+      "parent": null,
+      "kind": "APPLICATION",
+      "title": "Web App"
+    },
+    {
+      "clientId": "api",
+      "parent": null,
+      "kind": "SERVICE",
+      "title": "API Service"
+    },
+    {
+      "clientId": "db",
+      "parent": null,
+      "kind": "DATABASE",
+      "title": "Postgres"
+    }
   ],
   "connections": [
-    { "source": { "ref": "client", "clientId": "web" }, "target": { "ref": "client", "clientId": "api" }, "interaction": "REQUEST", "label": "REST" },
-    { "source": { "ref": "client", "clientId": "api" }, "target": { "ref": "client", "clientId": "db" }, "interaction": "REQUEST" }
+    {
+      "source": { "ref": "client", "clientId": "web" },
+      "target": { "ref": "client", "clientId": "api" },
+      "interaction": "REQUEST",
+      "label": "REST"
+    },
+    {
+      "source": { "ref": "client", "clientId": "api" },
+      "target": { "ref": "client", "clientId": "db" },
+      "interaction": "REQUEST"
+    }
   ]
 }
 ```
@@ -48,11 +72,25 @@ A second `apply_graph` nests two MODULE children under `node_2` (by **server** r
 {
   "projectId": "proj_abc",
   "components": [
-    { "clientId": "router", "parent": { "ref": "server", "id": "node_2" }, "kind": "MODULE", "title": "HTTP Router" },
-    { "clientId": "orders", "parent": { "ref": "server", "id": "node_2" }, "kind": "MODULE", "title": "Orders Module" }
+    {
+      "clientId": "router",
+      "parent": { "ref": "server", "id": "node_2" },
+      "kind": "MODULE",
+      "title": "HTTP Router"
+    },
+    {
+      "clientId": "orders",
+      "parent": { "ref": "server", "id": "node_2" },
+      "kind": "MODULE",
+      "title": "Orders Module"
+    }
   ],
   "connections": [
-    { "source": { "ref": "client", "clientId": "router" }, "target": { "ref": "client", "clientId": "orders" }, "interaction": "REQUEST" }
+    {
+      "source": { "ref": "client", "clientId": "router" },
+      "target": { "ref": "client", "clientId": "orders" },
+      "interaction": "REQUEST"
+    }
   ]
 }
 ```
@@ -60,7 +98,10 @@ A second `apply_graph` nests two MODULE children under `node_2` (by **server** r
 Then author docs on a child with a full-replace (response `idMap` mapped `orders` → `node_5`):
 
 ```json
-{ "id": "node_5", "documentation": "# Orders Module\n\nHandles cart checkout and order persistence. Writes to Postgres via the API's data layer.\n" }
+{
+  "id": "node_5",
+  "documentation": "# Orders Module\n\nHandles cart checkout and order persistence. Writes to Postgres via the API's data layer.\n"
+}
 ```
 
 Verify with `architecture://subtree/proj_abc/node_2`.
@@ -72,5 +113,11 @@ Note: the `api`→`db` Connection from Example 1 now shows up inside `node_2`'s 
 When you have just one Connection to draw between two Components whose **server ids you already hold**, skip `apply_graph` and use `connect_components`:
 
 ```json
-{ "projectId": "proj_abc", "sourceId": "node_1", "targetId": "node_2", "interaction": "REQUEST", "label": "REST" }
+{
+  "projectId": "proj_abc",
+  "sourceId": "node_1",
+  "targetId": "node_2",
+  "interaction": "REQUEST",
+  "label": "REST"
+}
 ```

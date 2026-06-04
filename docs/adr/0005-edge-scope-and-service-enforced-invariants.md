@@ -30,20 +30,20 @@ This slice introduces the first **Edge** (the data-model representation of a
 **Connection**; see CONTEXT.md). It raises two design questions that bind every
 later graph slice, so they are worth deciding deliberately.
 
-**1. How does an Edge know which Canvas it is on?** A **Canvas** is a *derived
-view*, not a stored entity (`{ Nodes where parentId = N } ∪ { Edges where
+**1. How does an Edge know which Canvas it is on?** A **Canvas** is a _derived
+view_, not a stored entity (`{ Nodes where parentId = N } ∪ { Edges where
 canvasNodeId = N }`), so an Edge has no Canvas row to reference. The obvious
 approach infers an Edge's Canvas from its endpoints: both endpoints share a
-`parentId`, so that shared value *is* the scope. This works today, when every
+`parentId`, so that shared value _is_ the scope. This works today, when every
 Connection links two Components on one Canvas — but it has no answer for the M5
 **refinement Connection**, which legitimately links a **boundary proxy** on an
 interior Canvas to the real Component it stands for, i.e. endpoints that sit at
-*different* scope levels. An inferred-scope model paints that corner the moment
+_different_ scope levels. An inferred-scope model paints that corner the moment
 endpoints diverge.
 
 **2. Where are the Edge invariants enforced?** Three must hold: both endpoints
 sit on the same Canvas as the Edge, an Edge never links a Node to itself, and no
-two *active* Edges share the same source, target, and scope. These could be
+two _active_ Edges share the same source, target, and scope. These could be
 enforced by database constraints (a partial unique index) or by the service
 layer. The repo's testable-seam philosophy (ADR-0001) and isolated-Postgres
 harness (ADR-0003) already make the service the place correctness is asserted.
@@ -51,7 +51,7 @@ harness (ADR-0003) already make the service the place correctness is asserted.
 ## Decision
 
 **Edge scope is an explicit `canvasNodeId` column** (the Component whose interior
-Canvas owns the Edge; `null` = the Project root). Scope is *recorded*, never
+Canvas owns the Edge; `null` = the Project root). Scope is _recorded_, never
 inferred from the endpoints. The adapter supplies it (the client already knows
 the Canvas it is drawing on); the service stores it. Because the value is
 stored rather than derived, the M5 refinement Connection — whose endpoints span
@@ -74,7 +74,7 @@ matched only against non-soft-deleted Edges.** Consequences of that precise
 definition:
 
 - `A → B` is a **distinct** Connection from `B → A` — distinctness is the
-  *ordered pair of endpoints* (which Node is `sourceId`, which is `targetId`),
+  _ordered pair of endpoints_ (which Node is `sourceId`, which is `targetId`),
   not any rendered metadata.
 - The cosmetic `direction` (arrowheads) and `label` do **not** factor into
   duplicate-ness. Re-drawing `A → B` with a different arrowhead or label is the
@@ -95,7 +95,7 @@ recoverable.
 ## Consequences
 
 - The model supports cross-scope refinement Connections (M5) with no migration —
-  the cost is one stored column and the discipline that scope is *passed in*,
+  the cost is one stored column and the discipline that scope is _passed in_,
   never derived. That payoff is the whole reason the non-obvious design is worth
   it. **"Scope is explicit, not inferred" is now a reviewable invariant:** a
   future change that starts deriving an Edge's Canvas from its endpoints is a
@@ -104,7 +104,7 @@ recoverable.
   session, or React in the way (ADR-0003), and are identical for the web and the
   future MCP path — the same reason authorization lives in the service.
 - Because de-dupe is a service-time read-then-write rather than a DB constraint,
-  a concurrent double-submit *could* in principle race two identical active
+  a concurrent double-submit _could_ in principle race two identical active
   Edges. Accepted for this slice: writes require the single signed-in owner and
   the UI is optimistic, so the window is negligible; the partial unique index is
   the named hardening path if it ever matters. **Reviewers must not "fix" this by

@@ -14,7 +14,7 @@ The issue thread fixed the editor technology: **Platejs**.
 
 The decision worth recording is that **one Plate integration satisfies both
 issues**. Plate is a WYSIWYG editor: its `readOnly` mode renders the same
-content formatted, which *is* #12's rendered view — so a separate markdown
+content formatted, which _is_ #12's rendered view — so a separate markdown
 renderer is unnecessary, and there is one surface, not two that can drift.
 
 This rides the "docs travel with code slices" convention: the ADR justifying a
@@ -38,7 +38,7 @@ with the slice that introduces them.
    capability-URL sharing (#16).
 
 3. **A dedicated narrow mutation, `updateNodeDocumentation(db, actor, {id,
-   documentation})`,** not an optional field on `updateNode`. Same
+documentation})`,** not an optional field on `updateNode`. Same
    load-then-authorize shape and owner-only `access.assertCanWrite` as
    `updateNode` (ADR-0001). Keeps the autosave payload to `{id, markdown}` and
    leaves rename's required-`title` contract intact — the codebase's

@@ -235,7 +235,10 @@ export function biconnectedComponents(graph: UnifiedGraph): {
         } else if (disc.get(neighbor)! < disc.get(frame.node)!) {
           // Back edge to an ancestor — part of the current block.
           edgeStack.push(linkIndex);
-          low.set(frame.node, Math.min(low.get(frame.node)!, disc.get(neighbor)!));
+          low.set(
+            frame.node,
+            Math.min(low.get(frame.node)!, disc.get(neighbor)!),
+          );
         }
       } else {
         // Done exploring this node; fold its low-link into its parent and cut a
@@ -414,7 +417,11 @@ export function addNestingAncestors(
   for (const id of seed) {
     let current = byId.get(id)?.parentId ?? null;
     let depth = 0;
-    while (current !== null && !nodeIds.has(current) && depth < ANCESTRY_DEPTH_CAP) {
+    while (
+      current !== null &&
+      !nodeIds.has(current) &&
+      depth < ANCESTRY_DEPTH_CAP
+    ) {
       nodeIds.add(current);
       current = byId.get(current)?.parentId ?? null;
       depth++;
@@ -480,7 +487,12 @@ function capTraceNodes(
   onPathNodeIds: Set<string>,
   byId: Map<string, RawNode>,
   validPoints: string[],
-): { kept: Set<string>; keptIds: string[]; truncated: boolean; warning: string | null } {
+): {
+  kept: Set<string>;
+  keptIds: string[];
+  truncated: boolean;
+  warning: string | null;
+} {
   const ancestorClosure = (id: string): string[] => {
     const chain: string[] = [];
     let current: string | null = id;
@@ -651,10 +663,7 @@ async function resolveWritableProject(
 }
 
 /** Resolve a Project id by slug for a slug-bound read (no owner check). */
-async function resolveReadableProjectId(
-  db: Db,
-  slug: string,
-): Promise<string> {
+async function resolveReadableProjectId(db: Db, slug: string): Promise<string> {
   const project = await db.project.findFirst({
     where: { slug, deletedAt: null },
     select: { id: true },
@@ -689,9 +698,7 @@ export async function createTrace(
   });
   const liveIds = liveNodes.map((n) => n.id);
   if (liveIds.length < 2) {
-    throw new ValidationError(
-      "A Trace needs at least two live trace points.",
-    );
+    throw new ValidationError("A Trace needs at least two live trace points.");
   }
 
   const existing = await db.trace.findFirst({
@@ -753,7 +760,9 @@ export async function listTraces(
       name: true,
       createdAt: true,
       updatedAt: true,
-      points: { select: { nodeId: true, node: { select: { deletedAt: true } } } },
+      points: {
+        select: { nodeId: true, node: { select: { deletedAt: true } } },
+      },
     },
   });
 
@@ -783,7 +792,9 @@ export async function getTrace(
       name: true,
       createdAt: true,
       updatedAt: true,
-      points: { select: { nodeId: true, node: { select: { deletedAt: true } } } },
+      points: {
+        select: { nodeId: true, node: { select: { deletedAt: true } } },
+      },
     },
   });
   if (!trace) {

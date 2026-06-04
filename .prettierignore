@@ -2,3 +2,9 @@
 generated/
 .next/
 pnpm-lock.yaml
+
+# Orchestrator scratch — not part of the repo's committed docs
+.claude/
+
+# Golden markdown fixtures are byte-for-byte serializer output (ADR-0017), not hand-formatted prose
+src/server/architecture/__tests__/fixtures/

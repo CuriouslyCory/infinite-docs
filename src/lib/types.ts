@@ -87,5 +87,4 @@ export type TraceViewEdge = TraceView["edges"][number];
  * Components are filtered server-side). The client consumes ONLY via this type
  * (ADR-0004), never from `~/server`.
  */
-export type SavedTrace =
-  RouterOutputs["architecture"]["listTraces"][number];
+export type SavedTrace = RouterOutputs["architecture"]["listTraces"][number];

@@ -7,11 +7,11 @@ Accepted
 ## Context
 
 PRD #2 needs an authenticated MCP server (#18) so AI agents can read and maintain the architecture.
-That server resolves a **bearer token to an Actor** (CONTEXT.md *Actor*, `via: "token"`). Issue #17
+That server resolves a **bearer token to an Actor** (CONTEXT.md _Actor_, `via: "token"`). Issue #17
 builds the producer side: a signed-in user mints API tokens for agents and revokes them from a
 "Connect an agent" page. We must decide how a token is generated, stored, and looked up — given that
 an API token is the system's **second bearer secret** alongside the capability-URL slug (ADR-0002),
-and that the consumer (#18) must be able to resolve a *presented* token to its row cheaply.
+and that the consumer (#18) must be able to resolve a _presented_ token to its row cheaply.
 
 The constraints in tension:
 
@@ -34,14 +34,14 @@ The constraints in tension:
   stored for display so the owner can recognize a token in the list.
 - The raw token is returned to the client **exactly once** and is never persisted or logged.
 
-**HMAC-SHA256, not bcrypt/argon2.** Slow password hashes defend *low-entropy* human passwords against
+**HMAC-SHA256, not bcrypt/argon2.** Slow password hashes defend _low-entropy_ human passwords against
 offline brute force. The token is 256-bit CSPRNG output — there is no brute-force surface to slow
 down — and a deterministic keyed digest is exactly what #18 needs to look a token up by hash. The
 pepper (a server-side secret) is what defends against a database-only leak: without it, a leaked row
 cannot confirm a guessed token. There is **no per-row salt** — it would break lookup-by-hash; the
 pepper plays salt's role globally.
 
-**The pepper is read directly from `process.env.API_TOKEN_PEPPER`** in `token-hash.ts`, *not* via
+**The pepper is read directly from `process.env.API_TOKEN_PEPPER`** in `token-hash.ts`, _not_ via
 `~/env`. `~/env` remains the single **validation** authority — `API_TOKEN_PEPPER` is added to its
 server schema (required in production, optional in dev like `AUTH_SECRET`) and `runtimeEnv` map, so a
 production build fails without it. The direct read is a deliberate carve-out that mirrors
@@ -57,14 +57,15 @@ pepper can be retired by minting forward and expiring old tokens — all without
 without #18 changing (it reads `keyVersion` off the row before hashing).
 
 **Revocation is soft and owner-only.** `revokeApiToken` stamps `revokedAt` and keeps the row (prefix
-+ audit trail survive); it is idempotent. Mint/list/revoke authorize only against the owning
-`userId` (ADR-0001); a token belonging to another user is reported **not-found**, never forbidden, so
-existence never leaks (ADR-0002's posture). Writes are never slug-granted.
+
+- audit trail survive); it is idempotent. Mint/list/revoke authorize only against the owning
+  `userId` (ADR-0001); a token belonging to another user is reported **not-found**, never forbidden, so
+  existence never leaks (ADR-0002's posture). Writes are never slug-granted.
 
 **Out of scope here (owned by #18):** the MCP route, token→Actor resolution, and the
-revocation/expiry *checks* at a read edge. #17's only handoff is the deterministic `hashToken(raw,
+revocation/expiry _checks_ at a read edge. #17's only handoff is the deterministic `hashToken(raw,
 keyVersion)` whose output equals the `tokenHash` column, plus the column set #18 reads. Scope
-*enforcement* is out of scope and may never exist as a gate (ADR-0021).
+_enforcement_ is out of scope and may never exist as a gate (ADR-0021).
 
 ## Consequences
 
@@ -75,7 +76,7 @@ keyVersion)` whose output equals the `tokenHash` column, plus the column set #18
 - The pepper is a top-tier secret. It inherits the slug's "treat as a secret in logs and analytics"
   posture (ADR-0002). The `keyVersion` column makes rotation a routine operation rather than an
   unrecoverable incident — without it, a leaked pepper would mean every hash is at once
-  brute-forceable *and* unrotatable (changing it invalidates all tokens). We accept the residual risk
+  brute-forceable _and_ unrotatable (changing it invalidates all tokens). We accept the residual risk
   that a v1-pepper leak still exposes v1 tokens until they are rotated forward and expired.
 - **Non-expiring tokens are an allowed owner choice.** The mint flow offers 30/90/365 days or "No
   expiry" (default 90). A non-expiring agent token is a standing exposure; the UI warns, and the

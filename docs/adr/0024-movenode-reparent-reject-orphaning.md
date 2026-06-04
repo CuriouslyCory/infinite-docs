@@ -99,7 +99,7 @@ make the case self-consistent:
 - `connectNodes` keeps the outer Edge strictly same-Canvas — both endpoints
   share `parentId`.
 - Combining the two: the inner Edge's `canvasNodeId` (the outer Edge's
-  *other* endpoint) and the boundary endpoint share a parent.
+  _other_ endpoint) and the boundary endpoint share a parent.
 
 So whenever the inner Edge's scope rides into the moving subtree, the
 boundary endpoint rides with it. The route's "one scope below the outer
@@ -146,4 +146,4 @@ explicitly so the future change is local.
   between the orphan check and the `parentId` write. `moveNode` therefore
   contracts that the caller wraps in `db.$transaction` — the MCP tool
   registry does. A racer that slips past at most adds a valid edge the
-  *next* move call will catch; nothing corrupts.
+  _next_ move call will catch; nothing corrupts.

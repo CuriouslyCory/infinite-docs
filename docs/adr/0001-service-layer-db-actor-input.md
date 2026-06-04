@@ -52,7 +52,7 @@ own error shape (tRPC → `TRPCError`; MCP → readable tool-error text).
 
 Transports are **thin adapters**: the `architecture` tRPC router resolves an Actor from the
 session and calls the service; the future MCP server resolves an Actor from a token and calls the
-same service. The tRPC `protectedProcedure` may still gate the *transport* (you must be logged in
+same service. The tRPC `protectedProcedure` may still gate the _transport_ (you must be logged in
 to use the web API), but it is **not** where read/write authorization decisions are made.
 
 ## Consequences
@@ -76,4 +76,4 @@ to use the web API), but it is **not** where read/write authorization decisions 
   `process.env` in `token-hash.ts`. That direct read is **not** the "ambient request context" this
   invariant forbids — a deployment-wide secret is config, identical for every request and transport,
   the same category as the `DATABASE_URL` the test harness reads directly (ADR-0003). Token→Actor
-  *resolution* is the consumer side (#18), not this slice.
+  _resolution_ is the consumer side (#18), not this slice.

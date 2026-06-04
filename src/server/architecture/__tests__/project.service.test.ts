@@ -148,7 +148,9 @@ describe("deleteProject", () => {
   it("leaves child rows intact — a lone soft-delete, no cascade", async () => {
     const user = await makeUser();
     const actor: Actor = { userId: user.id, via: "session" };
-    const project = await createProject(testDb, actor, { title: "Has Children" });
+    const project = await createProject(testDb, actor, {
+      title: "Has Children",
+    });
     const source = await testDb.node.create({
       data: { projectId: project.id, title: "A" },
     });
@@ -161,11 +163,13 @@ describe("deleteProject", () => {
 
     await deleteProject(testDb, actor, { slug: project.slug });
 
-    const [persistedSource, persistedTarget, persistedEdge] = await Promise.all([
-      testDb.node.findUnique({ where: { id: source.id } }),
-      testDb.node.findUnique({ where: { id: target.id } }),
-      testDb.edge.findUnique({ where: { id: edge.id } }),
-    ]);
+    const [persistedSource, persistedTarget, persistedEdge] = await Promise.all(
+      [
+        testDb.node.findUnique({ where: { id: source.id } }),
+        testDb.node.findUnique({ where: { id: target.id } }),
+        testDb.edge.findUnique({ where: { id: edge.id } }),
+      ],
+    );
     expect(persistedSource?.deletedAt).toBeNull();
     expect(persistedTarget?.deletedAt).toBeNull();
     expect(persistedEdge?.deletedAt).toBeNull();

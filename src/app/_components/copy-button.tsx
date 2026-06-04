@@ -44,11 +44,7 @@ export function CopyButton({
 
   return (
     <button type="button" onClick={handleCopy} className={className}>
-      {copied ? (
-        <Check className="h-4 w-4" />
-      ) : (
-        <Copy className="h-4 w-4" />
-      )}
+      {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
       {copied ? copiedLabel : label}
     </button>
   );

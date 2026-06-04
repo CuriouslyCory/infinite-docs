@@ -189,7 +189,7 @@ plug in without further catalog change.
 - **`ValidationErrorDetails`** as a generic typed-details envelope. Today's
   validation messages interpolate the offending clientIds directly into the
   human `message` (`Connection references clientId 'n42' that is not in this
-  batch.`), which is sufficient for the agent's correction loop. The shape
+batch.`), which is sufficient for the agent's correction loop. The shape
   for adding structured `details` on `ValidationError` is already anticipated
   by the comment in `src/server/architecture/errors.ts` (lines 103-114):
   when a future caller needs a discriminable validation channel — say, to
@@ -220,7 +220,7 @@ plug in without further catalog change.
   optional today so the wire is forward-compatible.
 
 - **ADR-0024 (`moveNode` reject-orphaning)**: if a future `apply_graph`
-  extension allows *updating* existing Components' `parentId` rather than
+  extension allows _updating_ existing Components' `parentId` rather than
   only creating new rows, the orphan-rejection rule must be honoured per
   row. The structured-details self-correction channel ADR-0024 settled on
   (`ConflictError.details.conflictingEdgeIds` naming the active Edges that

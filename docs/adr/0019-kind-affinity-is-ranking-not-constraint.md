@@ -11,14 +11,14 @@ contract).
 ## Context
 
 With 26 Component kinds (ADR-0018), a flat alphabetical picker buries the right
-choice. The product wants the picker to be *context-aware*: inside a `DATABASE`,
+choice. The product wants the picker to be _context-aware_: inside a `DATABASE`,
 promote `TABLE` / `STORED_PROCEDURE`; inside a `HOST`, promote `CONTAINER` /
 `SERVICE` / `MICROSERVICE` / `CRON`; at the Project root, promote
 infrastructure-flavored kinds. We call the parent-kind → suggested-child-kinds
 relation **kind affinity**.
 
 The danger is that "the picker suggests `TABLE` inside a `DATABASE`" slides into
-"the system *requires* `TABLE` inside a `DATABASE`." That would re-introduce
+"the system _requires_ `TABLE` inside a `DATABASE`." That would re-introduce
 exactly the behavioural meaning ADR-0018 forbids kind from carrying. The
 question this ADR settles: where does affinity live, and how strong is it?
 
@@ -35,7 +35,7 @@ Kind affinity orders the **kind palette** and nothing else:
   accept **any** `kind` under **any** parent, exactly as before. There is no
   `assertKindAllowedUnder`, no validation that consults the parent's kind.
 - Therefore kind stays cosmetic (ADR-0018): affinity is a hint about what is
-  *common*, never a rule about what is *allowed*.
+  _common_, never a rule about what is _allowed_.
 
 ### The map is a client-side constant
 
@@ -85,6 +85,6 @@ Canvas (ADR-0001 / ADR-0006). No second query, no per-open fetch.
   break a graph, only re-rank a list.
 - **`getCanvas` breadcrumbs now carry `kind`.** A one-column widening of the recursive
   breadcrumb query (ADR-0006); the breadcrumb **bar** does not render it yet, but the
-  Component-detail panel's re-kind affordance (Slice 2) reads the *parent's* kind from
+  Component-detail panel's re-kind affordance (Slice 2) reads the _parent's_ kind from
   the second-to-last entry, so the shape serves both. A reviewer dropping `kind` from
   the breadcrumb shape to "slim the payload" breaks the picker's affinity lookup.

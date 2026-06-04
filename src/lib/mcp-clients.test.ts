@@ -133,7 +133,9 @@ describe("client-specific auth mechanism", () => {
   });
 
   it("openclaw forces the streamable-http transport", () => {
-    expect(get("openclaw").render(ENDPOINT, TOKEN)).toContain("streamable-http");
+    expect(get("openclaw").render(ENDPOINT, TOKEN)).toContain(
+      "streamable-http",
+    );
   });
 
   it("hermes uses a Bearer header", () => {
