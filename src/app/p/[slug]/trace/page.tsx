@@ -37,6 +37,7 @@ export default async function TraceViewPage({
   }
 
   const canEdit = capabilityAtLeast(project.viewerCapability, "edit");
+  const canManage = capabilityAtLeast(project.viewerCapability, "admin");
 
   void api.architecture.listProjectComponents.prefetch({ slug });
   // The header's Breadcrumbs reads `getCanvas` with the same `{ slug,
@@ -52,6 +53,8 @@ export default async function TraceViewPage({
           projectTitle={project.title}
           canvasNodeId={null}
           canEdit={canEdit}
+          canManage={canManage}
+          projectId={project.id}
         />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <TraceIsland projectId={project.id} slug={slug} canEdit={canEdit} />

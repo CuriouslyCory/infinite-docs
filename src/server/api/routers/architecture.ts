@@ -7,8 +7,10 @@ import { type Actor } from "~/server/architecture/actor";
 import {
   createProject,
   deleteProject,
+  getProjectAccess,
   getProjectBySlug,
   listProjects,
+  setGuestAccess,
 } from "~/server/architecture/project.service";
 import {
   createNode,
@@ -56,6 +58,7 @@ import {
   deleteTraceInput,
   exportMarkdownInput,
   getCanvasInput,
+  getProjectAccessInput,
   getProjectBySlugInput,
   getTraceInput,
   getTraceViewInput,
@@ -65,6 +68,7 @@ import {
   renameTraceInput,
   previewSpecInput,
   restoreEdgeInput,
+  setGuestAccessInput,
   restoreNodeInput,
   updateEdgeInput,
   updateEdgeInteractionInput,
@@ -125,6 +129,38 @@ export const architectureRouter = createTRPCRouter({
         : null;
       try {
         return await getProjectBySlug(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // ADMIN+ mutation: set the project's anonymous-link access level (#105). The
+  // service gates on `admin` via the id-keyed write seam (owner or ADMIN member;
+  // ADR-0040). `protectedProcedure` is the transport gate (you must be signed in
+  // — only an ADMIN+ identity ever reaches a success); real authz is in the
+  // service (ADR-0001).
+  setGuestAccess: protectedProcedure
+    .input(setGuestAccessInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await setGuestAccess(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // ADMIN+ query: read the project's sharing/access facts powering the ShareMenu
+  // toggle (#105; growable for #108). The service composes the non-disclosure
+  // ladder (NotFound for a non-reader, Forbidden for a reader below admin) and
+  // returns the facts only to owner/ADMIN. `protectedProcedure` is the transport
+  // gate; real authz is in the service (ADR-0001/0040).
+  getProjectAccess: protectedProcedure
+    .input(getProjectAccessInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await getProjectAccess(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

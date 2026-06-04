@@ -48,6 +48,7 @@ export default async function SavedTracePage({
   }
 
   const canEdit = capabilityAtLeast(project.viewerCapability, "edit");
+  const canManage = capabilityAtLeast(project.viewerCapability, "admin");
 
   void api.architecture.getTrace.prefetch({ slug, traceId });
   void api.architecture.listProjectComponents.prefetch({ slug });
@@ -61,6 +62,8 @@ export default async function SavedTracePage({
           projectTitle={project.title}
           canvasNodeId={null}
           canEdit={canEdit}
+          canManage={canManage}
+          projectId={project.id}
         />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <TraceIsland

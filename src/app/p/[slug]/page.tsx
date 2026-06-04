@@ -39,6 +39,7 @@ export default async function ProjectPage({
   // plain boolean to the client island — the Capability type (whose module graph
   // reaches Prisma) never crosses into the client bundle (ADR-0040, ADR-0004).
   const canEdit = capabilityAtLeast(project.viewerCapability, "edit");
+  const canManage = capabilityAtLeast(project.viewerCapability, "admin");
 
   // Prefetch the root Canvas so the client island reads it from the hydration
   // cache with no extra round trip (ADR-0004 names this route as that seam). The
@@ -54,6 +55,8 @@ export default async function ProjectPage({
           projectTitle={project.title}
           canvasNodeId={null}
           canEdit={canEdit}
+          canManage={canManage}
+          projectId={project.id}
         />
         <div className="min-h-0 flex-1">
           <CanvasIsland

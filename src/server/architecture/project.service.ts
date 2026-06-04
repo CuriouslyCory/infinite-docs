@@ -1,7 +1,11 @@
-import { type Project } from "../../../generated/prisma/client";
-import { type Capability } from "./access";
+import {
+  type GuestAccess as PrismaGuestAccess,
+  type Project,
+} from "../../../generated/prisma/client";
+import { requireCapability, type Capability } from "./access";
 import {
   authorizeProjectRead,
+  authorizeProjectWrite,
   resolveWritableProjectBySlug,
 } from "./access-db";
 import type { Actor, Db } from "./actor";
@@ -10,14 +14,38 @@ import { isSlugCollision } from "./prisma-errors";
 import {
   createProjectInput,
   deleteProjectInput,
+  getProjectAccessInput,
   getProjectBySlugInput,
+  setGuestAccessInput,
   type CreateProjectInput,
   type DeleteProjectInput,
+  type GetProjectAccessInput,
+  type GuestAccessLevel,
   type GetProjectBySlugInput,
+  type SetGuestAccessInput,
 } from "~/lib/schemas";
 import { generateSlug } from "./slug";
 
 const MAX_SLUG_ATTEMPTS = 3;
+
+// Compile-time parity guard: the client-safe Zod `guestAccessLevel` enum
+// (~/lib/schemas) and the Prisma `GuestAccess` enum must describe the same value
+// set. If either side gains or loses a member, one of these typed maps stops
+// type-checking and `pnpm check` fails — turning "keep the two enums in sync"
+// into a checked invariant (mirrors the `nodeKind` double-Record guard in
+// node.service.ts). The guard lives server-side precisely because importing the
+// Prisma enum is the leak we forbid in client code (ADR-0004); the client only
+// ever sees the Zod enum.
+const _zodGuestIsPrisma: Record<GuestAccessLevel, PrismaGuestAccess> = {
+  NONE: "NONE",
+  VIEW: "VIEW",
+};
+const _prismaGuestIsZod: Record<PrismaGuestAccess, GuestAccessLevel> = {
+  NONE: "NONE",
+  VIEW: "VIEW",
+};
+void _zodGuestIsPrisma;
+void _prismaGuestIsZod;
 
 /**
  * Creates a Project owned by the actor. Ownership comes only from the actor —
@@ -96,6 +124,71 @@ export async function deleteProject(
     throw new NotFoundError();
   }
   return { id: project.id };
+}
+
+/**
+ * Sets a Project's anonymous-link access level (#105). Requires `admin` — the
+ * owner or an ADMIN member; a VIEWER/EDITOR member or a non-member cannot manage
+ * sharing (ADR-0040). Addressed by `projectId` (an internal handle the manager
+ * already holds), so this rides the id-keyed write seam: a deny below `admin`
+ * surfaces `ForbiddenError` (the caller already holds the id, so it discloses
+ * nothing). The conditional `updateMany` (`deletedAt: null`) closes the TOCTOU
+ * race against a concurrent delete — `count === 0` means another writer won,
+ * reported as not-found. Flipping to NONE does not live-evict an already-loaded
+ * anonymous reader; #104 enforcement is at read/route time, so their NEXT
+ * navigation 404s.
+ */
+export async function setGuestAccess(
+  db: Db,
+  actor: Actor,
+  input: SetGuestAccessInput,
+): Promise<{ id: string; guestAccess: GuestAccessLevel }> {
+  const { projectId, level } = setGuestAccessInput.parse(input);
+  await authorizeProjectWrite(db, actor, projectId, "admin");
+
+  const { count } = await db.project.updateMany({
+    where: { id: projectId, deletedAt: null },
+    data: { guestAccess: level },
+  });
+  if (count === 0) {
+    throw new NotFoundError();
+  }
+  return { id: projectId, guestAccess: level };
+}
+
+/**
+ * The sharing/access facts the ShareMenu and (later, #108) the member/invite
+ * panel read. Returned as a NAMED object — never a bare enum — so #108 appends
+ * `members`/`invites` fields with zero break to the #105 callers, who read only
+ * `.guestAccess`.
+ */
+export interface ProjectAccess {
+  guestAccess: GuestAccessLevel;
+}
+
+/**
+ * Reads a Project's sharing/access facts (#105), gated on `admin` (ADR-0040).
+ * Composes the non-disclosure ladder exactly: `authorizeProjectRead` throws
+ * `NotFoundError` when the actor cannot even read (anon/non-member at NONE, or an
+ * unknown slug) — a true non-reader stays non-disclosed; then
+ * `requireCapability(cap, "admin")` throws `ForbiddenError` for a reader below
+ * admin (a guest-VIEW reader, VIEWER, or EDITOR) — they already proved existence
+ * by reading, so Forbidden discloses nothing. The owner and ADMIN members get the
+ * facts. Returns {@link ProjectAccess}, shaped to grow for #108.
+ */
+export async function getProjectAccess(
+  db: Db,
+  actor: Actor | null,
+  input: GetProjectAccessInput,
+): Promise<ProjectAccess> {
+  const { slug } = getProjectAccessInput.parse(input);
+  const { project, viewerCapability } = await authorizeProjectRead(
+    db,
+    actor,
+    slug,
+  );
+  requireCapability(viewerCapability, "admin");
+  return { guestAccess: project.guestAccess };
 }
 
 async function createWithUniqueSlug(

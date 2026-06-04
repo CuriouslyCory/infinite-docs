@@ -26,6 +26,44 @@ export const deleteProjectInput = z.object({
 export type DeleteProjectInput = z.infer<typeof deleteProjectInput>;
 
 /**
+ * Anonymous-link access level (#105). Client-safe source of truth for the value
+ * set — the ShareMenu toggle imports `guestAccessLevel`/`GuestAccessLevel` as
+ * values/types, exactly like the kind palette imports `nodeKind`. The Prisma
+ * `GuestAccess` enum mirrors it; a compile-time parity guard in the service
+ * layer (`project.service.ts`) fails the build on drift. NEVER import the Prisma
+ * enum into client code — it reaches the server graph (ADR-0004); import this.
+ *
+ *   NONE — only the owner and invited members may read.
+ *   VIEW — anyone holding the capability slug may read (the default; ADR-0002).
+ */
+export const guestAccessLevel = z.enum(["NONE", "VIEW"]);
+export type GuestAccessLevel = z.infer<typeof guestAccessLevel>;
+
+/**
+ * Input for `setGuestAccess` (ADR-0040, ADMIN+). Addressed by `projectId` (an
+ * internal handle the owner/admin already holds in the header), NOT the slug —
+ * writes are never slug-granted (ADR-0002), and the id-keyed write seam can
+ * surface `ForbiddenError` on deny because the caller already holds the handle.
+ */
+export const setGuestAccessInput = z.object({
+  projectId: z.string().min(1),
+  level: guestAccessLevel,
+});
+export type SetGuestAccessInput = z.infer<typeof setGuestAccessInput>;
+
+/**
+ * Input for `getProjectAccess` (ADR-0040, ADMIN+). Slug-keyed because the
+ * ShareMenu lives on the `/p/[slug]` route where the slug is the ambient handle;
+ * it reuses the non-disclosing read seam so a true non-reader stays not-found.
+ * #108 extends the SAME `getProjectAccess({ slug })` for a member/invite panel,
+ * so the slug is the right key going forward too.
+ */
+export const getProjectAccessInput = z.object({
+  slug: z.string().min(1),
+});
+export type GetProjectAccessInput = z.infer<typeof getProjectAccessInput>;
+
+/**
  * The expiry choices the Connect-an-agent mint flow offers, in days. `null`
  * means a non-expiring token — an allowed owner choice that carries a standing
  * security exposure (warned in the UI; recorded in ADR-0020). The service
