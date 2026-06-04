@@ -1033,3 +1033,74 @@ describe("listNodeConnections", () => {
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 });
+
+describe("capability gating: members and guest access (ADR-0040)", () => {
+  it("an EDITOR member can draw a Connection", async () => {
+    const owner = await makeUser("Owner");
+    const editor = await makeUser("Editor");
+    const project = await makeProject(owner.id);
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: editor.id, role: "EDITOR" },
+    });
+    const ownerActor: Actor = { userId: owner.id, via: "session" };
+    const a = await createNode(testDb, ownerActor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, ownerActor, {
+      projectId: project.id,
+      title: "B",
+    });
+
+    const edge = await connectNodes(
+      testDb,
+      { userId: editor.id, via: "session" },
+      { projectId: project.id, sourceId: a.id, targetId: b.id },
+    );
+    expect(edge.projectId).toBe(project.id);
+  });
+
+  it("a VIEWER member cannot draw a Connection (ForbiddenError)", async () => {
+    const owner = await makeUser("Owner");
+    const viewer = await makeUser("Viewer");
+    const project = await makeProject(owner.id);
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: viewer.id, role: "VIEWER" },
+    });
+    const ownerActor: Actor = { userId: owner.id, via: "session" };
+    const a = await createNode(testDb, ownerActor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, ownerActor, {
+      projectId: project.id,
+      title: "B",
+    });
+
+    await expect(
+      connectNodes(
+        testDb,
+        { userId: viewer.id, via: "session" },
+        { projectId: project.id, sourceId: a.id, targetId: b.id },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("listNodeConnections throws NotFound for a non-member when guestAccess is NONE", async () => {
+    const owner = await makeUser("Owner");
+    const project = await makeProject(owner.id);
+    await testDb.project.update({
+      where: { id: project.id },
+      data: { guestAccess: "NONE" },
+    });
+    const ownerActor: Actor = { userId: owner.id, via: "session" };
+    const a = await createNode(testDb, ownerActor, {
+      projectId: project.id,
+      title: "A",
+    });
+
+    await expect(
+      listNodeConnections(testDb, null, { slug: project.slug, nodeId: a.id }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+});

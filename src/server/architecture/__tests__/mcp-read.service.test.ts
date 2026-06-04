@@ -163,6 +163,29 @@ describe("exportMarkdownForActor", () => {
     ).rejects.toBeInstanceOf(ForbiddenError);
   });
 
+  // Invariant: the MCP read path stays owner-only in this slice (ADR-0040,
+  // #104). It must NOT consult guest access, so a guestAccess=VIEW project (the
+  // default — `seedProject` leaves it VIEW) is still forbidden to a non-owner
+  // token actor. Member parity on MCP is #109.
+  it("does NOT grant a non-owner token actor access via guestAccess=VIEW", async () => {
+    const owner = await makeUser("Owner");
+    const intruder = await makeUser("Intruder");
+    const { project } = await seedProject(owner.id);
+    // Make the project explicitly public-readable on the web; MCP must ignore it.
+    await testDb.project.update({
+      where: { id: project.id },
+      data: { guestAccess: "VIEW" },
+    });
+
+    await expect(
+      exportMarkdownForActor(
+        testDb,
+        { userId: intruder.id, via: "token" },
+        { projectId: project.id },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
   it("reports a soft-deleted project as not-found", async () => {
     const owner = await makeUser();
     const { project } = await seedProject(owner.id);

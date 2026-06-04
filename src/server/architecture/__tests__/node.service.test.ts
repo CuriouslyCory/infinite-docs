@@ -2344,3 +2344,130 @@ describe("listProjectComponents", () => {
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 });
+
+describe("capability gating: members and guest access (ADR-0040)", () => {
+  it("an EDITOR member can create a Component", async () => {
+    const owner = await makeUser("Owner");
+    const editor = await makeUser("Editor");
+    const project = await makeProject(owner.id);
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: editor.id, role: "EDITOR" },
+    });
+
+    const node = await createNode(
+      testDb,
+      { userId: editor.id, via: "session" },
+      {
+        projectId: project.id,
+        kind: "GENERIC",
+        title: "By editor",
+        posX: 0,
+        posY: 0,
+      },
+    );
+    expect(node.projectId).toBe(project.id);
+  });
+
+  it("a VIEWER member cannot create a Component (ForbiddenError)", async () => {
+    const owner = await makeUser("Owner");
+    const viewer = await makeUser("Viewer");
+    const project = await makeProject(owner.id);
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: viewer.id, role: "VIEWER" },
+    });
+
+    await expect(
+      createNode(
+        testDb,
+        { userId: viewer.id, via: "session" },
+        {
+          projectId: project.id,
+          kind: "GENERIC",
+          title: "Nope",
+          posX: 0,
+          posY: 0,
+        },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("an anonymous-equivalent non-member write stays ForbiddenError", async () => {
+    const owner = await makeUser("Owner");
+    const project = await makeProject(owner.id);
+
+    await expect(
+      createNode(
+        testDb,
+        { userId: "intruder" },
+        {
+          projectId: project.id,
+          kind: "GENERIC",
+          title: "Nope",
+          posX: 0,
+          posY: 0,
+        },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("getCanvas throws NotFound for a non-member when guestAccess is NONE", async () => {
+    const owner = await makeUser("Owner");
+    const stranger = await makeUser("Stranger");
+    const project = await makeProject(owner.id);
+    await testDb.project.update({
+      where: { id: project.id },
+      data: { guestAccess: "NONE" },
+    });
+
+    await expect(
+      getCanvas(
+        testDb,
+        { userId: stranger.id },
+        {
+          slug: project.slug,
+          canvasNodeId: null,
+        },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    await expect(
+      getCanvas(testDb, null, { slug: project.slug, canvasNodeId: null }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("getCanvas succeeds for a VIEWER member when guestAccess is NONE", async () => {
+    const owner = await makeUser("Owner");
+    const viewer = await makeUser("Viewer");
+    const project = await makeProject(owner.id);
+    await testDb.project.update({
+      where: { id: project.id },
+      data: { guestAccess: "NONE" },
+    });
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: viewer.id, role: "VIEWER" },
+    });
+
+    const canvas = await getCanvas(
+      testDb,
+      { userId: viewer.id },
+      {
+        slug: project.slug,
+        canvasNodeId: null,
+      },
+    );
+    expect(canvas.interiorNodes).toEqual([]);
+  });
+
+  it("listProjectComponents throws NotFound for a non-member when guestAccess is NONE", async () => {
+    const owner = await makeUser("Owner");
+    const project = await makeProject(owner.id);
+    await testDb.project.update({
+      where: { id: project.id },
+      data: { guestAccess: "NONE" },
+    });
+
+    await expect(
+      listProjectComponents(testDb, null, { slug: project.slug }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
