@@ -118,28 +118,41 @@ function GuestAccessToggle({
   return (
     <fieldset className="flex flex-col gap-1.5">
       <legend className="text-white/60">Guest access</legend>
-      <div
-        role="radiogroup"
-        aria-label="Guest access"
-        className="flex gap-1 rounded-lg bg-white/5 p-1"
-      >
-        {guestAccessLevel.options.map((opt) => (
-          <button
-            key={opt}
-            type="button"
-            role="radio"
-            aria-checked={level === opt}
-            disabled={setAccess.isPending || !access.isSuccess}
-            onClick={() => setAccess.mutate({ projectId, level: opt })}
-            className={`flex-1 rounded-md px-2 py-1 text-xs transition focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none ${
-              level === opt
-                ? "bg-white/15 text-white"
-                : "text-white/60 hover:text-white"
-            }`}
-          >
-            {OPTION_LABEL[opt]}
-          </button>
-        ))}
+      {/*
+        Native radio inputs (visually hidden, styled via their <label>) so the
+        browser gives a real radiogroup for free: a single tab stop, arrow-key
+        roving, and standard screen-reader announcements ("radio, 1 of 2") —
+        none of which a button-based role="radio" gets without hand-rolled key
+        handling. Selection-follows-focus is native radio behaviour; each change
+        fires the optimistic mutation, which is reversible and idempotent.
+      */}
+      <div className="flex gap-1 rounded-lg bg-white/5 p-1">
+        {guestAccessLevel.options.map((opt) => {
+          const disabled = setAccess.isPending || !access.isSuccess;
+          return (
+            <label
+              key={opt}
+              className={`flex-1 rounded-md px-2 py-1 text-center text-xs transition focus-within:ring-2 focus-within:ring-white/40 ${
+                disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+              } ${
+                level === opt
+                  ? "bg-white/15 text-white"
+                  : "text-white/60 hover:text-white"
+              }`}
+            >
+              <input
+                type="radio"
+                name="guest-access"
+                value={opt}
+                checked={level === opt}
+                disabled={disabled}
+                onChange={() => setAccess.mutate({ projectId, level: opt })}
+                className="sr-only"
+              />
+              {OPTION_LABEL[opt]}
+            </label>
+          );
+        })}
       </div>
       <span className="text-xs text-white/40">
         {level === "VIEW"
