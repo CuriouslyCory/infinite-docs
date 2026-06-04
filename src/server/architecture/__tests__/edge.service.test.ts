@@ -870,6 +870,8 @@ describe("getCanvas (Connections)", () => {
         kind: "GENERIC",
         realEndpointId: a.id,
         edgeId: edge.id,
+        posX: null,
+        posY: null,
       },
     ]);
   });
