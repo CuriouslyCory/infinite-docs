@@ -23,6 +23,9 @@ All read resources are addressed under the `architecture://` scheme and return d
 | `update_component_docs` | Replace a Component's markdown docs. | `{ id, documentation }`. **FULL replace, not a patch.** Empty string clears. 100 KB UTF-8 cap. Plain markdown. |
 | `move_component` | Reparent a Component (nest or un-nest). | `{ id, parentId }`. null = root Canvas. Rejects ONLY a cycle (onto itself or a descendant). Incident Connections simply become cross-scope. |
 | `apply_spec` | Materialize derived child Components from a machine-readable Spec. | `{ ownerNodeId, kind, source, changed?, dropped? }`. `kind` selects the parser (`OPENAPI`, `SQL_DDL`, …). The server PARSES `source` server-side. SQL DDL adds directional `REQUEST` Connections for each foreign key. **Not idempotent.** |
+| `delete_component` | Delete a Component and its whole interior — **reversible**. | `{ id }`. Cascades a soft-delete across the subtree + every incident Connection + owned Specs. Returns `{ deletionId, nodeIds, edgeIds, specIds }`. **Keep the `deletionId`** — it is the undo handle for `restore_component`. Idempotent in spirit (re-delete reads not-found). |
+| `delete_connection` | Delete one Connection — **no MCP undo**. | `{ id }`. Soft-deletes just that Connection; never cascades. Returns `{ edgeId }`. Mints **no** `deletionId`, so it **cannot** be restored over MCP — redraw with `connect_components`. |
+| `restore_component` | Undo a `delete_component` cascade. | `{ deletionId }` (from `delete_component`). Revives exactly the rows that delete tombstoned. A revived Connection whose slot is now taken is rejected with a `ConflictError` naming the blockers. |
 
 ## Decision rule
 
@@ -30,9 +33,13 @@ All read resources are addressed under the `architecture://` scheme and return d
 - A single edit to one existing thing → the surgical single-op tool (`create_component`, `connect_components`, `update_component_docs`, `move_component`).
 - A machine-readable contract (OpenAPI, SQL DDL, …) → **`apply_spec`** — let the server parse it into a tree.
 
-## There is no delete tool
+## Deleting and undoing
 
-Destructive operations live in the web client, never on the MCP surface. **Plan additively** — add and reparent, never assume you can remove. If something is wrong, leave it and document the correction; a human deletes in the app.
+Delete is on the MCP surface, and it is **recoverable, not destructive** — everything is a soft-delete.
+
+- **`delete_component` cascades.** It tombstones the Component, its entire subtree, every incident Connection (any scope), and owned Specs in one batch, and returns a `deletionId`. Pass that handle to **`restore_component`** to revive exactly those rows. Two deletes undo independently.
+- **`delete_connection` is a lone delete with no undo handle.** It mints no `deletionId`, so it cannot be restored over MCP — if you need it back, redraw it with `connect_components`. Use it deliberately.
+- **Prefer reparenting over deleting.** When restructuring, `move_component` is non-destructive; reach for delete only when something genuinely should not exist.
 
 ## clientId rules (apply_graph)
 

@@ -536,6 +536,35 @@ export const deleteEdgeInput = z.object({
 export type DeleteEdgeInput = z.infer<typeof deleteEdgeInput>;
 
 /**
+ * Typed output of the `delete_component` MCP tool — the cascade's soft-delete
+ * receipt. Drives MCP's `outputSchema` (SDK 1.26.0) so the agent receives
+ * `structuredContent` on the wire. `deletionId` is the undo handle the agent
+ * passes to `restore_component`; `nodeIds`/`edgeIds`/`specIds` name the rows the
+ * cascade tombstoned. Mirrors `deleteNode`'s return (ADR-0008, ADR-0030).
+ */
+export const deleteComponentOutput = z.object({
+  deletionId: z.string(),
+  nodeIds: z.array(z.string()),
+  edgeIds: z.array(z.string()),
+  specIds: z.array(z.string()),
+});
+export type DeleteComponentOutput = z.infer<typeof deleteComponentOutput>;
+
+/** `restoreNode` returns the identical shape — the revived rows the handle
+ *  resolved — so the `restore_component` tool reuses the delete output schema. */
+export const restoreComponentOutput = deleteComponentOutput;
+
+/**
+ * Typed output of the `delete_connection` MCP tool. A lone `deleteEdge` mints no
+ * `deletionId` (ADR-0030), so the receipt carries only the removed Connection's
+ * id — there is no undo handle to surface.
+ */
+export const deleteConnectionOutput = z.object({
+  edgeId: z.string(),
+});
+export type DeleteConnectionOutput = z.infer<typeof deleteConnectionOutput>;
+
+/**
  * Input for the per-Component connection list shown in the Component-detail
  * panel's Connections section (#66). Addressed by the capability `slug` (the
  * read grant, ADR-0002) plus the Component's `nodeId`. Node-keyed and COMPLETE
