@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Copy } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export function CopyButton({
@@ -16,13 +16,25 @@ export function CopyButton({
   className?: string;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    },
+    [],
+  );
 
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(value);
       setCopied(true);
       toast.success("Copied to clipboard.");
-      setTimeout(() => setCopied(false), 2000);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => {
+        setCopied(false);
+        resetTimer.current = null;
+      }, 2000);
     } catch {
       toast.error(
         "Couldn’t copy automatically — select the text and copy it manually.",
