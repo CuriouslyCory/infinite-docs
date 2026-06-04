@@ -36,6 +36,7 @@ import {
   claimInvite,
   createInvite,
 } from "~/server/architecture/invite.service";
+import { grantMemberByEmail } from "~/server/architecture/membership.service";
 import { exportMarkdown } from "~/server/architecture/export.service";
 import {
   createTrace,
@@ -58,6 +59,7 @@ import {
   createNodeInput,
   createProjectInput,
   createTraceInput,
+  grantMemberByEmailInput,
   deleteEdgeInput,
   deleteNodeInput,
   deleteProjectInput,
@@ -183,6 +185,24 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await createInvite(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // ADMIN+ mutation: grant a Membership directly by a user's email (#107). The
+  // service gates on `admin` via the id-keyed write seam (owner or ADMIN member;
+  // ADR-0040), looks the user up case-insensitively, and returns a typed
+  // discriminated union — `granted` | `no_account` | `already_owner` — rather
+  // than throwing on the benign no-ops (the non-disclosing `no_account` miss in
+  // particular is a value, not an error). `protectedProcedure` is the transport
+  // gate; real authz is in the service (ADR-0001/0040).
+  grantMemberByEmail: protectedProcedure
+    .input(grantMemberByEmailInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await grantMemberByEmail(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

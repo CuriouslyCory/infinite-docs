@@ -1,4 +1,5 @@
 import { type ProjectRole } from "../../../generated/prisma/client";
+import { roleRank } from "./access";
 import { authorizeProjectWrite } from "./access-db";
 import type { Actor, Db } from "./actor";
 import { NotFoundError } from "./errors";
@@ -39,17 +40,6 @@ const _prismaRoleIsZod: Record<ProjectRole, ProjectRoleInput> = {
 };
 void _zodRoleIsPrisma;
 void _prismaRoleIsZod;
-
-// The capability ladder rank over the assignable Roles (VIEWER < EDITOR < ADMIN;
-// ADR-0040). MAX-role is computed in TS over THIS rank — never a SQL `GREATEST`
-// on the `ProjectRole` enum, whose Postgres text ordering is NOT its rank
-// ordering (a footgun the architect review flagged). MAX is monotone, so a
-// re-claim never downgrades and concurrent claims converge regardless of order.
-const ROLE_RANK: Record<ProjectRole, number> = {
-  VIEWER: 1,
-  EDITOR: 2,
-  ADMIN: 3,
-};
 
 function computeExpiresAt(expiresInDays: number | null): Date | null {
   if (expiresInDays === null) return null;
@@ -219,8 +209,12 @@ async function claimWithinTx(
     select: { role: true },
   });
 
-  // Equal-or-higher member: no use, no write, never a downgrade.
-  if (existing && ROLE_RANK[existing.role] >= ROLE_RANK[invite.role]) {
+  // Equal-or-higher member: no use, no write, never a downgrade. MAX-role is
+  // computed in TS over the capability-ladder `roleRank` (access.ts) — never a
+  // SQL ordering on the `ProjectRole` enum, whose Postgres text order is NOT its
+  // rank order (ADR-0040). MAX is monotone, so a re-claim never downgrades and
+  // concurrent claims converge regardless of order.
+  if (existing && roleRank(existing.role) >= roleRank(invite.role)) {
     return { slug };
   }
 
@@ -248,8 +242,8 @@ async function claimWithinTx(
     // existing role is strictly lower — raise it to the invite role. The
     // `role: { in: ranksBelow }` predicate makes the raise conditional, so a
     // concurrent claim that already raised it matches zero rows → no use here.
-    const ranksBelow = (Object.keys(ROLE_RANK) as ProjectRole[]).filter(
-      (r) => ROLE_RANK[r] < ROLE_RANK[invite.role],
+    const ranksBelow = (["VIEWER", "EDITOR", "ADMIN"] as ProjectRole[]).filter(
+      (r) => roleRank(r) < roleRank(invite.role),
     );
     const { count } = await tx.projectMembership.updateMany({
       where: {
