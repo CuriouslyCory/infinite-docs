@@ -38,7 +38,7 @@ rather than fork into a web of per-role branches.
 
 Authorization is decided by comparing two ranks on a single totally-ordered ladder:
 
-```
+```text
 none(0) < view(1) < edit(2) < admin(3) < owner(4)
 ```
 
