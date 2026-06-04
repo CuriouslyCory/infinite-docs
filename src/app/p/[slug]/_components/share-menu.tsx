@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { CopyButton } from "~/app/_components/copy-button";
 import { InviteCreate } from "~/app/p/[slug]/_components/invite-create";
+import { MemberAdd } from "~/app/p/[slug]/_components/member-add";
 import { Popover, PopoverPanel, PopoverTrigger } from "~/components/ui/popover";
 import { guestAccessLevel, type GuestAccessLevel } from "~/lib/schemas";
 import { api } from "~/trpc/react";
@@ -79,6 +80,7 @@ export function ShareMenu({
           <>
             <GuestAccessToggle slug={slug} projectId={projectId} />
             <InviteCreate projectId={projectId} />
+            <MemberAdd projectId={projectId} />
           </>
         )}
       </PopoverPanel>

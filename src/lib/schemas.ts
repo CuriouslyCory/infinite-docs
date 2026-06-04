@@ -77,6 +77,21 @@ export const projectRole = z.enum(["VIEWER", "EDITOR", "ADMIN"]);
 export type ProjectRoleInput = z.infer<typeof projectRole>;
 
 /**
+ * Input for granting a Membership directly by a user's email (`grantMemberByEmail`,
+ * #107). Addressed by `projectId` (an internal handle the manager already holds in
+ * the ShareMenu), NOT the slug — writes are never slug-granted (ADR-0002). Gated
+ * ADMIN+ in the service. `email` is the address to look up case-insensitively
+ * (Discord supplies it on sign-in); `max(320)` is the RFC-5321 address ceiling.
+ * `role` is the Role to grant — applied at MAX(existing, role), never a downgrade.
+ */
+export const grantMemberByEmailInput = z.object({
+  projectId: z.string().min(1),
+  email: z.string().email().max(320),
+  role: projectRole,
+});
+export type GrantMemberByEmailInput = z.infer<typeof grantMemberByEmailInput>;
+
+/**
  * The expiry choices the invite-create flow offers, in days. Mirrors
  * `apiTokenExpiresInDays` (a bounded day-count, never a raw date — sidesteps
  * past-date and clock-skew classes) but defaults to **7**: invites churn faster

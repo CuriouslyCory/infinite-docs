@@ -33,6 +33,19 @@ const ROLE_CAPABILITY: Record<ProjectRole, Capability> = {
   ADMIN: "admin",
 };
 
+/**
+ * The capability-ladder rank of an assignable Role, as an integer (VIEWER <
+ * EDITOR < ADMIN). The single source of the role ordering, derived from the SAME
+ * `ROLE_CAPABILITY`→`RANK` machinery the gates use — never a separate const that
+ * could drift, and never a SQL ordering on the `ProjectRole` enum (whose Postgres
+ * text order is NOT its rank order; ADR-0040). The grant paths
+ * (`claimInvite`, `grantMemberByEmail`) compute MAX-role in TS over this, so a
+ * re-grant never downgrades.
+ */
+export function roleRank(role: ProjectRole): number {
+  return RANK[ROLE_CAPABILITY[role]];
+}
+
 /** The minimal already-loaded project facts the resolver decides over. */
 interface ProjectAccessFacts {
   ownerId: string;
