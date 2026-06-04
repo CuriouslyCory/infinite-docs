@@ -20,6 +20,19 @@ const config = {
           { key: "Cache-Control", value: "private, no-store" },
         ],
       },
+      {
+        // The invite-claim route carries the raw invite token — the system's
+        // third bearer secret — in its path (#106, ADR-0040). Same hygiene as the
+        // slug route: keep the token out of Referer headers, search indexes, and
+        // shared caches. The token is single-redemption-intent, capped, and
+        // expirable, so a leaked URL has a short, owner-controllable blast radius.
+        source: "/i/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "Cache-Control", value: "private, no-store" },
+        ],
+      },
     ];
   },
 };

@@ -120,7 +120,57 @@ the way slug-possession is for guest reads; you must redeem it into a membership
 Invite or the membership cleanly removes access.
 
 The `ProjectInvite` **table** lands in this slice (ahead of its #106 redemption consumer) so the
-full sharing data model arrives in one migration; the redemption _service_ is a later slice.
+full sharing data model arrives in one migration; the redemption _service_ (`claimInvite`, the
+route `/i/[token]`) lands in **#106** — specified in the "Redemption protocol" section below.
+
+### Redemption protocol (#106): race-safe, idempotent, non-disclosing
+
+`claimInvite(db, actor, { token })` consumes an Invite into a `ProjectMembership`. It runs in **one
+interactive transaction at the project default READ COMMITTED** — **SERIALIZABLE is explicitly
+rejected** (it would force a `40001` retry loop for no benefit the guarded single-row writes do not
+already give), and **no advisory lock** is used. Two primitives carry the concurrency correctness:
+
+- **The `@@unique[projectId,userId]` index is the per-user serialization point.** Concurrent claims
+  by the _same_ user contend on it: the loser blocks on the insert, then resolves against the
+  now-present row.
+- **A guarded cap `UPDATE` is the per-invite (maxUses) serialization point** — the same
+  conditional-write TOCTOU idiom as `deleteProject`/`setGuestAccess`. Because Prisma cannot compare
+  two columns, it is **raw SQL**: `UPDATE "ProjectInvite" SET "useCount" = "useCount" + 1 WHERE id =
+… AND "revokedAt" IS NULL AND ("expiresAt" IS NULL OR "expiresAt" > now()) AND ("maxUses" IS NULL
+OR "useCount" < "maxUses")`. Under READ COMMITTED a losing concurrent claim re-reads the committed
+  row and matches **zero rows**; `consumed === 0` is the single failure signal.
+
+The **ordering inside the txn is load-bearing** (the naive "increment then upsert" the issue body
+sketched has a real per-user double-spend bug — one new user firing two claims would burn two uses):
+
+1. **Lookup** the invite by `tokenHash` + the project's `slug`/`ownerId`/`deletedAt` + the actor's
+   current membership role.
+2. **Non-disclosure collapse** — missing token, soft-deleted project, revoked, expired, OR maxed all
+   throw **one** `NotFoundError`; no body, no project disclosure (inherits `resolveActorFromToken`'s
+   posture).
+3. **Owner short-circuit** — the owner is identity, never a membership row; return success, **no use,
+   no row**.
+4. **Equal-or-higher member short-circuit** — a member already at/above the invite's rank is a no-op
+   success; **no use, no write, never a downgrade**.
+5. **Grant** — INSERT a new membership, or conditionally raise a strictly-lower role to
+   `MAX(existing, invite.role)`. A grant that no-ops (a sibling claim already inserted / raised it,
+   surfaced as a caught `@@unique` P2002 or a zero-count conditional raise) returns **without
+   consuming a use** — making use-consumption single-valued per user.
+6. **Consume one use ONLY on a real grant** via the guarded cap `UPDATE` **last**. `consumed === 0`
+   throws `NotFoundError`, which **rolls back the whole txn including the speculative grant** —
+   grant-before-consume is safe precisely because a maxed-loser's membership insert is undone.
+
+**MAX-role is computed in TypeScript** over the capability ladder rank (`VIEWER < EDITOR < ADMIN`),
+**never** a SQL `GREATEST` on the `ProjectRole` enum — the enum's Postgres text ordering is _not_ its
+rank ordering. MAX is commutative and idempotent, so concurrent claims converge to the highest
+granted role regardless of commit order and a re-claim never downgrades.
+
+**Revoke ≠ remove.** Stamping `revokedAt` blocks all _future_ claims (the guard's `revokedAt IS NULL`
+fails) but leaves every prior `ProjectMembership` intact — closing the door does not evict people
+already through it. Removing an existing member is a distinct operation (#108), not a side effect of
+revocation. Token-in-URL hygiene: `/i/[token]` sets `Referrer-Policy: no-referrer` (plus
+`noindex`/`no-store`), redeems-then-redirects so the token-bearing URL is not a durable landing page,
+and the raw token is never logged — only the `prefix` is loggable.
 
 ### Two authorization seams: slug-keyed reads vs id-keyed writes
 

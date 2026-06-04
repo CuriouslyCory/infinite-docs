@@ -554,11 +554,18 @@ wholesale (ADR-0020): raw token is CSPRNG entropy **shown once**, stored only as
 under the same **token pepper** (no per-row salt, so redemption is a lookup-by-hash), with a
 non-secret prefix, an expiry, and soft revocation. Project-scoped (no `userId` — consumed by
 _whoever_ redeems it). An Invite carries a `Role`, never a raw rank, and **never `owner`** — you
-cannot invite someone to own a Project. Unlike the slug (possession _is_ a read grant), an Invite
-grants nothing until **redeemed** into a membership, so revoking the link or the membership cleanly
-removes access. A missing, expired, or revoked Invite is reported **not-found**, never forbidden
-(ADR-0002's non-disclosure posture). The `ProjectInvite` table lands with the sharing data model;
-the redemption service is a later slice. _(See ADR-0040, ADR-0020.)_
+cannot invite someone to own a Project. A `maxUses` cap (null = unlimited) bounds how many times it
+can be redeemed; each real grant increments `useCount`, and an exhausted (**maxed-out**) Invite stops
+granting. Unlike the slug (possession _is_ a read grant), an Invite grants nothing until **redeemed**
+into a membership, so revoking the link or the membership cleanly removes access. To **redeem** (the
+verb in prose; `claimInvite` in code, the route `/i/[token]`) is to consume an Invite into a Member —
+atomic, idempotent, race-safe, and **MAX-role** (never downgrades): the owner or an
+already-equal-or-higher member is a **no-op success** consuming **no use** and writing **no row**, and
+concurrent claims can never exceed `maxUses`. A missing, expired, revoked, **maxed-out**, or
+soft-deleted-project Invite all collapse to the **same** not-found, never forbidden, with no project
+disclosure (ADR-0002's non-disclosure posture). Revoking the link blocks future redemptions but does
+**not** strip an already-granted membership (member removal is its own operation). _(See ADR-0040
+"Redemption protocol", ADR-0020.)_
 
 ### API token (`ApiToken`)
 
