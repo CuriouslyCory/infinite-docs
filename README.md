@@ -36,7 +36,7 @@ essentials:
 | **Connection** / Edge | A link between two Components. *Connection* is user-facing; *Edge* is the data-model name. |
 | **Canvas** | A *derived* view — the Components and Connections that live under one parent. Never stored directly. |
 | **Descent** | Opening a Component to enter its interior Canvas, one level deeper, recursing to any depth. |
-| **Boundary proxy** | A read-only stand-in for an external system a parent depends on, projected inward and inherited transitively down the subtree. |
+| **Boundary proxy** | A read-only stand-in for the off-scope end of a Connection that crosses the current Canvas — derived per crossing Connection, so a dependency's far end stays visible without leaving the scope you're documenting. |
 | **Project** | The root container of one architecture graph, owned by a single user. |
 | **Capability URL** | An unguessable per-Project slug whose mere possession grants read access. Mutations always require the signed-in owner. |
 | **Service layer** | The single deep module — `(db, actor, input) => result` — that is the only home for business logic and authorization. tRPC and MCP are thin adapters over it. |
@@ -47,34 +47,46 @@ the schema, services, and graph algorithms say **Node**/**Edge**.
 
 ## Project status
 
-The product is sequenced across milestones M0–M5; the full vision lives in the PRD
-([issue #2](https://github.com/CuriouslyCory/infinite-docs/issues/2)).
+The product was sequenced across milestones M0–M5; the full vision lives in the PRD
+([issue #2](https://github.com/CuriouslyCory/infinite-docs/issues/2)). **All six milestones are
+complete**, and the tool has since grown several capabilities beyond the original roadmap (see
+below).
 
 | Milestone | Scope | Status |
 | --- | --- | --- |
-| **M0** | Data model + `(db, actor, input)` service layer + Vitest harness | Complete |
-| **M1** | First nested Canvas: create / drag / connect / rename / descend, soft-delete + undo | Complete |
-| **M2** | Markdown export + in-app documentation editor | Planned |
-| **M3** | Boundary propagation (read-only proxies, inherited transitively) | Planned |
-| **M4** | MCP server: agent tokens, tools, resources, `llms.txt`, "Connect an agent" | Planned |
-| **M5** | Refinement-edge wiring, auto-layout, sharing polish | Planned |
+| **M0** | Data model + `(db, actor, input)` service layer + Vitest harness | ✅ Complete |
+| **M1** | First nested Canvas: create / drag / connect / rename / descend, soft-delete + undo | ✅ Complete |
+| **M2** | Deterministic markdown export + in-app WYSIWYG documentation editor (debounced autosave) | ✅ Complete |
+| **M3** | Boundary proxies — read-only off-scope endpoints derived per crossing Connection | ✅ Complete |
+| **M4** | MCP server: API tokens, write tools, read resources, `llms.txt`, "Connect an agent" page | ✅ Complete |
+| **M5** | Cross-scope & lineal Connections (refinement wiring), typed Interactions, sharing & viewer polish, Project deletion | ✅ Complete |
 
-**Working today:** sign in with Discord, create and list Projects, open a Project by its
-capability URL, and on its Canvas add Components (six kinds — service, database, external API,
-host, queue, generic), drag them, rename them inline, draw / label / remove
-Connections (with a structural arrow that always points at the input **Port**), **descend** into
-a Component's interior Canvas with breadcrumb navigation, and
-**delete** a Component — cascading to its whole subtree and every incident or interior
-Connection — with one-click **undo**. Every edit is optimistic: it appears instantly and persists
-in the background, with rollback and a toast on failure. **Next up (M2):** markdown export and an
-in-app documentation editor.
+**Beyond the roadmap**, the tool now also has: an expanded 26-value **Component-kind** taxonomy
+with a searchable, affinity-ranked **kind palette**; **Spec import** (OpenAPI / SQL-DDL today)
+that generates child Components and materializes SQL foreign keys as Connections; named **Traces**
+that project a cross-layer path through the graph and export as their own MCP resource; and an
+installable **agent skill** plus `apply_graph` / `apply_spec` batch MCP tools so an agent can
+construct or maintain an architecture in one transactional call.
+
+**What works today:** sign in with Discord, create / list / delete Projects, and open a Project by
+its capability URL (read-only for anyone with the link; edits require the signed-in owner). On its
+Canvas, add Components across the full kind taxonomy via the kind palette, drag and inline-rename
+them, draw / label / remove **Connections** — including **cross-scope** ones via "Connect to…" —
+with arrowheads derived from each Connection's **Interaction**, **descend** into a Component's
+interior Canvas with breadcrumb navigation, edit a Component's markdown docs in a WYSIWYG editor
+that autosaves, **export** the Project or any subtree as deterministic markdown, and **delete** a
+Component — cascading to its whole subtree and every incident or interior Connection — with
+one-click **undo**. Every edit is optimistic: it appears instantly and persists in the background,
+with rollback and a toast on failure. Agents read and maintain the same graph over the
+authenticated **MCP server**.
 
 ## Stack
 
 T3 Stack: **Next.js 16** (App Router + React Server Components), **tRPC v11**, **Prisma 7**
-(PostgreSQL), **NextAuth v5** (Discord), **Tailwind v4**, **TypeScript** (strict), **Zod**, and
-**React Flow** ([`@xyflow/react`](https://reactflow.dev)) for the Canvas. Package manager is
-**pnpm** (pinned in `packageManager`).
+(PostgreSQL), **NextAuth v5** (Discord), **Tailwind v4**, **TypeScript** (strict), **Zod**,
+**React Flow** ([`@xyflow/react`](https://reactflow.dev)) for the Canvas, **Plate** for the
+Component documentation editor, and **`mcp-handler`** for the agent-facing MCP server. Package
+manager is **pnpm** (pinned in `packageManager`).
 
 A few architectural notes worth knowing before you dig in:
 
@@ -190,17 +202,25 @@ so tests must use a **separate** database from your dev data. See
 
 ## Project layout
 
-- `src/server/architecture/` — the **service layer** (`project`, `node`, `edge` services, plus
-  `access`, `actor`, `slug`, and error mapping). The only home for business logic and authorization.
-- `src/server/api/routers/architecture.ts` — the tRPC adapter: resolves an `actor`, calls the
-  service, maps domain errors to `TRPCError`s. No business logic here.
+- `src/server/architecture/` — the **service layer** (`project`, `node`, `edge`, `export`, `spec`,
+  `trace`, `apply-graph`, and `token` services, plus `access`, `actor`, `slug`, markdown
+  serialization, and error mapping). The only home for business logic and authorization.
+- `src/server/api/routers/` — the tRPC adapters (`architecture`, `token`): resolve an `actor`, call
+  the service, map domain errors to `TRPCError`s. No business logic here.
+- `src/server/mcp/` — the authenticated MCP server: token-resolved auth, the read-resource and
+  write-tool catalogs, and the route handler. A thin adapter over the same service layer.
 - `src/lib/schemas.ts` — Zod input schemas, importable as values from client code without pulling
   in the server graph.
-- `src/app/p/[slug]/` — the Project route and the Canvas island (React Flow custom nodes/edges).
-- `prisma/schema.prisma` — the `Project` / `Node` / `Edge` models and the `NodeKind` enum.
+- `src/app/p/[slug]/` — the Project route, the Canvas island (React Flow custom nodes/edges), and
+  the Trace cross-layer view.
+- `skills/documenting-architecture-with-infinite-docs/` — the installable agent skill that teaches
+  an agent to document a system over the MCP server.
+- `prisma/schema.prisma` — the `Project` / `Node` / `Edge` / `ApiToken` / `Spec` / `Trace` /
+  `BoundaryProxyPlacement` models and the `NodeKind` / `SpecKind` / `Interaction` enums.
 - [`CONTEXT.md`](CONTEXT.md) — the binding glossary.
 - [`docs/adr/`](docs/adr/) — architecture decision records (service layer, capability-URL sharing,
-  test harness, Canvas island, edge scope & invariants).
+  test harness, Canvas island, cross-scope Connections, boundary-proxy derivation, MCP surface,
+  Spec generation, Traces, and more).
 - [`docs/agents/`](docs/agents/) — agent workflow docs (issue tracker, triage labels, domain docs).
 
 ## Deploying
