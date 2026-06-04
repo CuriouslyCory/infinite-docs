@@ -19,8 +19,15 @@ uniformly with no second code path). **Supersedes nothing.**
 ## Context
 
 On a hub-dense Canvas — where many Connections converge on a few Components — edge
-labels became unreadable. Five distinct failure modes compounded at the same spot:
+labels became unreadable. Six distinct failure modes compounded at the same spot:
 
+- **Coincident paths (the worst):** several Connections between the *same* node
+  pair — `A→B REQUEST` and `A→B PUSH` coexist by design (ADR-0010/0027), and #90
+  routes many crossing edges to one coalesced boundary proxy — resolve to the same
+  default handle, so React Flow draws them on one bezier path. Their labels stack
+  at the *identical* point; if two are the same width the rear ones are entirely
+  invisible, and the user has no signal they exist. A group of five Connections
+  showed one label and hid four.
 - **Overlap:** every label is pinned to its Edge's bezier midpoint with no
   collision avoidance, so converging Edges cluster their midpoints into one band.
 - **Truncation:** a hard `max-w-[12rem] truncate` cut the label mid-word, eating
@@ -61,6 +68,25 @@ A fixed flat scale on the rendered label div — resting `1`, hover `30`, select
 that carries the midpoint transform so no intermediate wrapper opens a new
 stacking context.
 
+### Connections sharing a path collapse into one on-demand group affordance
+
+Edges are grouped by the unordered node pair they render between (`buildEdgeGroups`,
+keyed by `edgePairKey`). A pair with **one** Connection renders exactly as before.
+A pair with **N > 1** renders a single **group chip** at the shared midpoint — the
+distinct interaction glyphs present plus the count — so "there are N here" reads at
+a glance with nothing hidden. Clicking the chip opens a **Popover list** of every
+Connection (a per-row direction glyph from `arrowEnds`, the interaction label, and
+the full user label); clicking a row selects exactly that Connection
+(`SelectEdgeContext`), surfacing its normal selected-edge label + picker — the
+lone-edge flow, reused. Within a group: the focused (selected) member renders its
+own UI; the deterministic primary (`members[0]`) renders the chip when none is
+selected; the rest render no label layer. The Canvas builds the grouping once per
+edges change (`useMemo`) and provides it via `EdgeGroupContext`. The chip stops its
+own click/pointerdown from reaching the pane, or React Flow would select the
+primary edge and tear the list down before it opens. The overlapping *lines* are
+left merged — fanning the bezier paths apart is deferred with the other structural
+work.
+
 ### The interaction picker is a Popover, off the midpoint
 
 The picker moves out of the inline midpoint row into the canonical
@@ -94,6 +120,13 @@ it via context.
 
 ## Consequences
 
+- **Reviewable invariant:** Connections that render on the same path (same node
+  pair) never stack their labels — they collapse into one group chip (count +
+  distinct glyphs) whose list is the only place the individual labels render, and
+  selecting a row reuses the lone-edge selected view. A change that renders each
+  member's label at the shared midpoint regresses this ADR (it reinstates the
+  invisible-rear-label bug). Grouping is by unordered node pair; the primary is
+  `members[0]` after the deterministic interaction-then-id sort.
 - **Reviewable invariant:** active-edge label layering uses plain CSS `z-index` on
   the `EdgeLabelRenderer` div (resting `1` / hover `30` / selected `40` / floating
   surfaces `50`). Raising a label via React Flow's edge `zIndex` /

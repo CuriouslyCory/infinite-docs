@@ -260,8 +260,12 @@ clear of its neighbours and shows the full untruncated text in place, while ever
 recedes (dims and blurs) so the focused one reads; the interaction picker for a selected Connection
 floats in a **popover** off the bezier midpoint rather than piling onto it. Label layering is plain
 CSS `z-index` within the single shared label portal, **not** React Flow's edge `zIndex` (which
-raises the SVG edge group, not the label). Presentation-only — no Edge, Connection, or Interaction
-data changes (ADR-0039).
+raises the SVG edge group, not the label). Several Connections between the **same node pair** (e.g.
+`A→B REQUEST` and `A→B PUSH`, or many crossing edges coalesced onto one boundary proxy) share one
+path and would stack their labels invisibly — so they collapse into a single **group chip** (the
+distinct interaction glyphs present, plus a count) that opens an on-demand list of every Connection;
+selecting a row focuses that Connection and shows its normal label + picker. Presentation-only — no
+Edge, Connection, or Interaction data changes (ADR-0039).
 
 ### getCanvas
 The single service read that materializes a **Canvas** for a given **Canvas
