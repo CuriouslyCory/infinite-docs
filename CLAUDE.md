@@ -102,10 +102,10 @@ Prettier owns all markdown (`**/*.{md,mdx}`) — `CONTEXT.md`, `docs/adr/*.md`, 
 
 ### Comments and documentation
 
-Code is read far more than it is written, and comments that merely restate the code are noise that rots out of sync. **Default to writing no comments.** Well-named identifiers already convey *what* the code does; a comment earns its place only by explaining *why* when the why is non-obvious — a hidden constraint, a subtle invariant, a workaround for a specific bug, or behavior that would surprise a reader. If deleting a comment wouldn't confuse a future reader, don't write it.
+Code is read far more than it is written, and comments that merely restate the code are noise that rots out of sync. **Default to writing no comments.** Well-named identifiers already convey _what_ the code does; a comment earns its place only by explaining _why_ when the why is non-obvious — a hidden constraint, a subtle invariant, a workaround for a specific bug, or behavior that would surprise a reader. If deleting a comment wouldn't confuse a future reader, don't write it.
 
-- **Don't annotate the *what*** — `// increment the counter` over `count++` is noise; rename the variable instead.
-- **Do capture the *why*** — the server/client `import type` exception above is exactly the kind of non-obvious constraint that earns a comment.
+- **Don't annotate the _what_** — `// increment the counter` over `count++` is noise; rename the variable instead.
+- **Do capture the _why_** — the server/client `import type` exception above is exactly the kind of non-obvious constraint that earns a comment.
 - **Docstrings follow the same bar, not a coverage target.** Meaningful tRPC procedures, React contexts, and service methods that carry real intent get documented; trivial helpers (`toRFNode`, `beginEditing`, `commit`, `cancel`, and friends) do not — a docstring there adds noise, not signal.
 - **Don't pad to hit a metric.** External tools may flag low docstring coverage against a generic threshold (e.g. CodeRabbit's 80% default); we intentionally sit below it. Manufacturing docstrings to turn that number green is the same gaming-the-check anti-pattern philosophy #6 warns against — if a threshold is worth aligning, encode our bar in the tool's config rather than padding the code.
 

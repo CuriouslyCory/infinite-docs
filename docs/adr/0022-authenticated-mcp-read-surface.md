@@ -4,8 +4,8 @@
 
 Accepted (M5 / #18 — Authenticated MCP route + read resources + llms.txt). Builds on
 [ADR-0001](0001-service-layer-db-actor-input.md) (the `(db, actor, input)` service contract;
-authz lives in the service layer, not the transport guard, *because the MCP path will not pass
-through that guard*), [ADR-0002](0002-capability-url-sharing.md) (the slug is a bearer read grant;
+authz lives in the service layer, not the transport guard, _because the MCP path will not pass
+through that guard_), [ADR-0002](0002-capability-url-sharing.md) (the slug is a bearer read grant;
 not-found is indistinguishable from forbidden), [ADR-0017](0017-deterministic-markdown-serialization.md)
 (the pure-serializer / authorized-fetch split), and [ADR-0020](0020-api-token-storage-hash-at-rest-with-pepper.md)
 / [ADR-0021](0021-api-token-scopes-stored-not-enforced.md) (token hash-at-rest; scopes stored, not
@@ -22,8 +22,8 @@ tRPC, and the first to exercise the `via: "token"` Actor the glossary and ADR-00
 Three forces shape the design:
 
 1. **Two authorization postures must share one read path without one weakening the other.** The web
-   export is *slug-grant* (ADR-0002: possession of the unguessable slug is the read). The MCP read is
-   *owner-gated* (the token resolves to a `userId`; an Actor reads only its own projects). They share
+   export is _slug-grant_ (ADR-0002: possession of the unguessable slug is the read). The MCP read is
+   _owner-gated_ (the token resolves to a `userId`; an Actor reads only its own projects). They share
    the fetch-and-serialize machinery but **not** the grant logic.
 2. **The route must stay a thin adapter** (ADR-0001). Token→Actor resolution and the read are service
    concerns; the route only wires transport to them.
@@ -46,7 +46,7 @@ pepper rotation becomes a lookup-per-version, a purely additive change.
 
 ### 2. The read path is a three-layer split (refining ADR-0017)
 
-ADR-0017 split *serialization* (pure `serializeGraph`) from *authorized fetch* (`exportMarkdown`).
+ADR-0017 split _serialization_ (pure `serializeGraph`) from _authorized fetch_ (`exportMarkdown`).
 Issue #18 refines that into three layers so two grant postures share fetch but not authz:
 
 - **`serializeGraph(input)`** — pure, untouched.
@@ -81,7 +81,7 @@ the auth gate, or the route.
 
 The route at `src/app/api/[transport]/route.ts` wires `mcp-handler`'s `createMcpHandler` +
 `withMcpAuth(handler, makeVerifyMcpToken(db), { required: true })` — the verifier wraps
-`resolveActorFromToken` — which rejects any tokenless request *before*
+`resolveActorFromToken` — which rejects any tokenless request _before_
 a resource handler runs. **SSE is disabled** (`disableSse: true`), so the legacy session/Redis path is
 never reached — reads are stateless and the route needs **zero new configuration** (no Redis, no new
 env var). The route is pinned to `runtime = "nodejs"` because the token HMAC (`node:crypto`) and the
@@ -97,21 +97,21 @@ endpoint env var. As #34/#38 append to the catalog, the doc extends automaticall
 
 ## Consequences
 
-- **This does NOT contradict ADR-0002.** #18 introduces a *second, parallel* grant model
+- **This does NOT contradict ADR-0002.** #18 introduces a _second, parallel_ grant model
   (owner-gated by token); it does not weaken the slug grant. The slug remains a bearer read grant on
   the web path and **never appears on the MCP surface** — the owner door keys off the internal id and
   never consults the slug column. A future reader must not collapse the two: they share fetch, not
   grant logic.
 - **This does NOT contradict ADR-0017** — it extends it. The two-layer split becomes three; the pure
   serializer is untouched and the golden fixture stays valid (the extraction is code-motion). The
-  serializer now has a second adopter and its first *owner-gated* one.
+  serializer now has a second adopter and its first _owner-gated_ one.
 - **Scopes stay decorative (ADR-0021).** The resolved Actor carries `scopes` for shape stability, but
   no code path reads them for authz — authorization derives only from `userId`. When a scope-gated
   capability lands (#19/#20), enforcement is an additive `access`-module change, not an accident of a
   column existing.
 - **Prompt-injection discharge for #18.** Untrusted Component documentation flows out through
   resources verbatim (it must — it is the product). #18's output-boundary defense is the `llms.txt`
-  trust-boundary note that resource content is *data, not instructions*; active content fencing stays
+  trust-boundary note that resource content is _data, not instructions_; active content fencing stays
   deliberately deferred (ADR-0017 Consequences), and #18 exposes no write tool to be injected against.
 - **A new dependency (`mcp-handler` + `@modelcontextprotocol/sdk`).** Chosen over a hand-rolled
   JSON-RPC transport because the AC mandates MCP-Inspector compatibility and Streamable HTTP is a
@@ -121,7 +121,7 @@ endpoint env var. As #34/#38 append to the catalog, the doc extends automaticall
 - **Seams to siblings are left open additively.** Write tools (#19/#20/#67) add a `tools/*`
   registry beside the `resources/*` one and reuse `resolveActorFromToken`; future read resources
   append to `READ_RESOURCES` and the `llms.txt` catalog without touching the registration loop or
-  the route; #23's dev-session path can add a *second* Actor producer for the same route without
+  the route; #23's dev-session path can add a _second_ Actor producer for the same route without
   reshaping it.
 
 ## Amendment — #67 (Flow resource scrub; `apply_spec` joins the tool catalog)

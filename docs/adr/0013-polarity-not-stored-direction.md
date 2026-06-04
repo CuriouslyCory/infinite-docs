@@ -8,7 +8,7 @@ The polarity-vs-arrow gate this ADR added to `routeFlow`, the
 reverse-Connection reconciliation are all retired: a Connection is undirected, so
 any owner-endpoint Flow rides it and its interaction verb derives the arrow at
 read time — there is no mismatch state to reach (which closes the MCP hole this
-ADR worried about *by construction*, not by a guard). `FlowPolarity`
+ADR worried about _by construction_, not by a guard). `FlowPolarity`
 (INBOUND/OUTBOUND) became `FlowInteraction` (REQUEST/PUSH/SUBSCRIBE/DUPLEX). The
 reasoning below is retained for history.
 
@@ -33,19 +33,19 @@ consumes) or `OUTBOUND` (the owner emits) — but deferred the consistency check
 between a Flow's polarity and the arrow of the Connection it is routed onto.
 [ADR-0012](0012-routeflow-sole-cross-scope-edge-writer.md) then wrote the inner
 Edge **direction-blind**: it bound a Flow to whatever outer Edge it was handed,
-checking only that the Flow's owner was *an* endpoint (the touches-endpoint
-invariant), never that it was the *correct* endpoint for the Flow's polarity.
+checking only that the Flow's owner was _an_ endpoint (the touches-endpoint
+invariant), never that it was the _correct_ endpoint for the Flow's polarity.
 
 That leaves one gap, and it is the whole of the SSE/WebSocket case. Consider an
 API Component exposing an `OUTBOUND` SSE Flow, with only a `Web Server → API`
 Connection drawn. Routing the SSE Flow onto that Connection would render its
-arrow pointing **at** the API — backwards for a Flow the API *emits*. There are
+arrow pointing **at** the API — backwards for a Flow the API _emits_. There are
 only two ways to resolve this:
 
 1. **Re-introduce a per-Flow direction override** so the same Connection can
    render an Flow's arrow either way — which directly recreates the lying
    `direction` field ADR-0009 deleted.
-2. **Treat polarity as the encoder** and require a *second* Connection
+2. **Treat polarity as the encoder** and require a _second_ Connection
    (`API → Web Server`) for traffic that flows the other way — two Connections,
    each carrying the polarity-matched Flows that point its way.
 
@@ -69,8 +69,8 @@ outer Edge:
 - `OUTBOUND` ⇒ `flow.ownerNodeId === edge.sourceId` (the owner emits, so the
   arrow points **away**).
 
-This tightens ADR-0012's touches-endpoint guard from "owner is *an* endpoint" to
-"owner is the *correct* endpoint." The weaker check stays as the precondition
+This tightens ADR-0012's touches-endpoint guard from "owner is _an_ endpoint" to
+"owner is the _correct_ endpoint." The weaker check stays as the precondition
 before it: "owner isn't on this Edge at all" is a distinct, non-discriminable
 error from "owner is on the wrong end." The check sits before
 `resolveInnerEdgeId`, so a mismatched route never find-or-creates an inner Edge.
@@ -107,7 +107,7 @@ non-UI callers; the UI pre-detection is the delightful path.
 
 ### Boundary-proxy orientation is split so the canvas can decide before dispatch
 
-The reverse-Connection offer requires the canvas to know, *before* dispatching,
+The reverse-Connection offer requires the canvas to know, _before_ dispatching,
 whether a polarity-matching outer Edge exists — but the outer Edge lives one
 scope up, outside the current `getCanvas` payload. ADR-0012's `boundaryProxies`
 carried a single lexically-first `outerEdgeId`, which collapses the
@@ -116,18 +116,18 @@ replaces it with a **directional pair**: `ownerSourceEdgeId` (the owner is the
 Edge's source — carries OUTBOUND Flows) and `ownerTargetEdgeId` (the owner is the
 target — carries INBOUND Flows), each nullable. The recursive boundary CTE
 computes both with two conditional `MIN`s over the same depth-0 join, so it stays
-one round trip (ADR-0001 preserved). A null on the polarity-matching side *is* the
+one round trip (ADR-0001 preserved). A null on the polarity-matching side _is_ the
 mismatch that triggers the offer.
 
 ### The reverse offer is a client-sequenced batch, not a new mutation surface
 
 The reverse offer reuses the existing `connectNodes` + `routeFlow` writers,
 sequenced client-side — **no new service mutation**. The reverse outer Edge is a
-**strict same-Canvas write** at the *parent* scope (both endpoints sit on the
+**strict same-Canvas write** at the _parent_ scope (both endpoints sit on the
 parent Canvas because the proxy is direct), so `connectNodes` stays strict and
 ADR-0012's "sole cross-scope writer" invariant is untouched. The two calls are
 **not** wrapped in one server transaction; the client owns the all-or-nothing
-*optimistic* rollback (both the temp inner Edge and the gesture roll back with one
+_optimistic_ rollback (both the temp inner Edge and the gesture roll back with one
 toast on any failure). The deliberate alternatives — a third atomic
 `connectAndRoute` service function, or a client-driven compensating `deleteEdge`
 — are rejected: the former would either loosen `connectNodes` or duplicate
@@ -139,9 +139,9 @@ network call that can itself fail. See the partial-failure consequence below.
 - **"An INBOUND Flow rides an Edge whose target is its owner; an OUTBOUND Flow an
   Edge whose source is its owner — enforced in `routeFlow`" is a reviewable
   invariant.** Reverting it to a UI-only guard reopens the MCP hole ADR-0012
-  named; #42 inherits this check for free *because* it lives in the service.
+  named; #42 inherits this check for free _because_ it lives in the service.
 - **Polarity mismatch is a `ValidationError` with `details.reason =
-  "POLARITY_MISMATCH"`, not a new `ArchitectureErrorCode`.** A reviewer
+"POLARITY_MISMATCH"`, not a new `ArchitectureErrorCode`.** A reviewer
   "promoting" the discriminator into the code union breaks the transport-shaped
   contract of that enum and forces needless adapter arms.
 - **Bidirectional traffic stays two Connections (ADR-0009 reaffirmed).** Any
@@ -153,7 +153,7 @@ network call that can itself fail. See the partial-failure consequence below.
   the orientation matching a Flow's polarity.
 - **The reverse-offer confirm is two sequential mutations, so a
   `connectNodes`-succeeds / `routeFlow`-fails interleaving leaves a live,
-  routeless reverse Connection.** This is a *valid graph state* — the same shape
+  routeless reverse Connection.** This is a _valid graph state_ — the same shape
   as a freshly drawn Connection with nothing routed yet — recoverable with one
   `deleteEdge`. It is accepted over a new atomic mutation surface (ADR-0012 keeps
   `connectNodes` strict and `routeFlow` the sole cross-scope writer) and over
@@ -171,7 +171,7 @@ network call that can itself fail. See the partial-failure consequence below.
   by polarity (a source endpoint offers only OUTBOUND, a target endpoint only
   INBOUND) rather than surfacing a pick the service would reject. A same-Canvas
   reverse offer from the popover is deferred (the Scene-5 reverse offer is the
-  cross-scope palette-drag path). This popover tightening closes the *actionable*
+  cross-scope palette-drag path). This popover tightening closes the _actionable_
   path to a wrong-polarity route now; the only residue of the read/write
   asymmetry below is the passive `edgeFlows.total` pill, which is display-only and
   self-heals on the next `getCanvas`.
@@ -187,11 +187,11 @@ When a change touches `routeFlow`, the boundary derivation, or the palette-drag
 gesture, confirm:
 
 1. **`routeFlow` still selects `flow.polarity`** and enforces `INBOUND ⇒ owner =
-   target` / `OUTBOUND ⇒ owner = source` before resolving the inner Edge. A
+target` / `OUTBOUND ⇒ owner = source` before resolving the inner Edge. A
    dropped `polarity: true` in the select makes the check read `undefined` and
    silently pass — the four-case test matrix pins it.
 2. **The rejection stays a `ValidationError` with `details.reason =
-   "POLARITY_MISMATCH"`** — not a new `ArchitectureErrorCode`, not a silent write.
+"POLARITY_MISMATCH"`** — not a new `ArchitectureErrorCode`, not a silent write.
 3. **`boundaryProxies` exposes both orientations** (`ownerSourceEdgeId` /
    `ownerTargetEdgeId`); the canvas picks by polarity and offers the reverse
    Connection when the matching side is null.

@@ -83,7 +83,7 @@ There is **no third "FlowRoute" edge class** — see Context fact 2.
 
 ### The on-path characterization (block-cut tree, NOT path enumeration)
 
-A vertex/edge is *on a path between A and B* iff it lies on **at least one simple
+A vertex/edge is _on a path between A and B_ iff it lies on **at least one simple
 path** from A to B. Enumerating simple paths is NP-hard. The correct polynomial
 equivalent: within a **biconnected-component decomposition**, a vertex `v` lies
 on some simple A–B path **iff** `v` is in a block on the A–B path of the
@@ -111,7 +111,7 @@ map. The recursive CTE is cited as the established ancestry-walk precedent
 ancestors). On overflow the service sorts by id (so truncation is deterministic),
 slices, keeps only Connections whose **both** endpoints survive, and returns
 `truncated: true` + a `warning` string. It **never hangs and never throws** —
-distinct from `getCanvas`'s depth-cap *throw*; here truncation is a normal,
+distinct from `getCanvas`'s depth-cap _throw_; here truncation is a normal,
 user-visible outcome, surfaced as a non-blocking banner. The Zod input also caps
 `nodeIds` at 500 (defense in depth).
 

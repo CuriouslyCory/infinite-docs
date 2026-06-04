@@ -132,7 +132,7 @@ justifying the new entities travels with the slice that introduces them.
   existing `conflictingEdgeIds?` does not change existing callers.
 - **OpenAPI is the only realized parser in Slice 1.** `ASYNCAPI` / `TS_SIGNATURE` / `GRAPHQL` /
   `CUSTOM` persist source verbatim with `parseError = "Parser for <kind> is not implemented
-  yet."` and zero derived Flows. The enum stays complete so the API contract is stable for the
+yet."` and zero derived Flows. The enum stays complete so the API contract is stable for the
   MCP follow-up; additional parsers land additively. Webhooks, callbacks, and external `$ref`
   are intentionally NOT extracted from OpenAPI specs — the walker iterates the closed set
   `paths.*.{get,put,post,delete,patch,options,head,trace}` and never resolves a `$ref` (the

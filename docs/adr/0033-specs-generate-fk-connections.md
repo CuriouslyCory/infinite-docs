@@ -24,7 +24,7 @@ A SQL DDL Spec's foreign keys are the architecture's dependency edges, but
 
 1. **The parser discarded FKs.** It read `PRIMARY KEY` to flag columns and
    ignored every `FOREIGN KEY` — including the out-of-line `ALTER TABLE … ADD
-   CONSTRAINT … FOREIGN KEY` statements Prisma emits for *every* relation.
+CONSTRAINT … FOREIGN KEY` statements Prisma emits for _every_ relation.
 
 2. **An Edge had no Spec provenance.** A Node carries `sourceSpecId` + `specKey`
    so a re-parse can re-identify and reconcile it; an Edge carried neither, so

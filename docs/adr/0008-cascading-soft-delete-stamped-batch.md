@@ -2,13 +2,13 @@
 
 ## Status
 
-Accepted. *Amended by [ADR-0014](0014-deleteedge-restoreedge-cascade.md), which
+Accepted. _Amended by [ADR-0014](0014-deleteedge-restoreedge-cascade.md), which
 extends this stamped-batch mechanism to the `deleteEdge` / `restoreEdge`
 FlowRoute cascade (Slice 2 of flow-routed-connections) — the conditional
 `deletionId`, the `restoreEdge` inverse, the additive `deleteNode` /
 `restoreNode` FlowRoute arms, and the caller-supplied-transaction contract all
 live there. The "lone delete" wording below still describes the no-FlowRoute
-path correctly.*
+path correctly._
 
 ## Context
 

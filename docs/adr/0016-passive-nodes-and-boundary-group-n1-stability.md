@@ -15,7 +15,7 @@ island whose React Flow store is seeded once per mount from
 
 Slice 3 introduced the per-proxy `boundary-proxy` Canvas node — a derived,
 read-only stand-in rendered alongside interactive Components. Slice 4 folds
-every *inherited* boundary proxy at a scope into one `boundary-group`
+every _inherited_ boundary proxy at a scope into one `boundary-group`
 container so deep Canvases are not buried under N stand-ins for externals the
 viewer cannot act on here. Direct proxies still render individually because
 they are the **routable** surface (ADR-0012).
@@ -24,7 +24,7 @@ The implementation is render-layer only — no schema, mutation, service, or
 derivation change — but it crystallizes two render-layer decisions that
 neither slice's PR description nor any existing ADR captures. Both are the
 kind of "judgment baked into a code comment" that ADR-0015 explicitly warns
-against: the *why* lives only at the call site, so a future contributor
+against: the _why_ lives only at the call site, so a future contributor
 "simplifying" the code has no record of what it is buying.
 
 1. **Is "passive node" a real taxonomy term or just a helper?** Slice 3 had
@@ -47,7 +47,7 @@ against: the *why* lives only at the call site, so a future contributor
    the Canvas as a client island that seeds React Flow's `nodes` from
    `useSuspenseQuery` **exactly once per mount**; nothing reseeds the store
    when an in-page `getCanvas` cache invalidation lands, so the inherited
-   count cannot *flip* mid-session at all. The decision is defensible only as
+   count cannot _flip_ mid-session at all. The decision is defensible only as
    forward-compat for if-and-when reseed-on-refetch is added. That subtlety
    belongs in an ADR, not buried in a comment a reader may discount.
 
@@ -63,7 +63,7 @@ warm). The current members are `boundary-proxy` (per-proxy stand-in, Slice 3)
 and `boundary-group` (the inherited-proxy container, Slice 4). Passive nodes
 carry no `Node` row, are never `selectable` or `deletable`, and are recognized
 by a single discriminator — `isPassiveNode(node)` in `canvas.tsx` — that the
-three interactive *pointer* handlers (`onNodeClick`, `onNodeDoubleClick`,
+three interactive _pointer_ handlers (`onNodeClick`, `onNodeDoubleClick`,
 `onNodeMouseEnter`) call in identical shape (`if (isPassiveNode(node)) return;`).
 
 **Drag exception (amended by [ADR-0036](0036-boundary-proxy-placement-persistence.md),
@@ -72,7 +72,7 @@ proxy is draggable for an **editor** so its per-scope placement can persist — 
 INHERITS the Canvas's `nodesDraggable={canEdit}` (so a viewer still cannot drag it)
 rather than pinning `draggable:false`, and `onNodeDragStop` is the sole interactive
 handler it participates in. This is a deliberately narrow widening of the
-passive-node contract: the proxy stays out of the three *pointer* handlers above and
+passive-node contract: the proxy stays out of the three _pointer_ handlers above and
 stays non-selectable / non-connectable / non-deletable — it is "passive" with
 respect to every interactive surface EXCEPT a single placement-persisting drag.
 ADR-0036 owns the persistence and the reviewable invariant that the drag key is
@@ -84,7 +84,7 @@ things at once: (a) a stray non-Canvas node cannot be smuggled in as the
 argument; (b) adding a fourth member to `CanvasRFNode` exposes
 `isPassiveNode` to the exhaustiveness check, so a new passive kind cannot be
 introduced without the helper acknowledging it; (c) it documents the
-function's contract — *every* RF node on the Canvas runs through this
+function's contract — _every_ RF node on the Canvas runs through this
 discriminator before the interactive paths execute, not just the ones the
 caller happens to have on hand.
 
@@ -93,8 +93,8 @@ The term is recorded in CONTEXT.md under **Passive node**, and the
 is deliberately **passive** rather than "read-only" (which is overloaded
 with the capability-URL viewer surface — owner-edit vs viewer-read) or
 "non-interactive" (which over-claims — passive nodes still expand and
-collapse their own internals; they are inert *with respect to the Canvas's
-interactive surfaces*, not globally inert).
+collapse their own internals; they are inert _with respect to the Canvas's
+interactive surfaces_, not globally inert).
 
 ### The boundary-group container wraps even N=1
 
@@ -116,15 +116,15 @@ framing, selection state, and the user's expand toggle across the change.
 The forward-compat framing is the entire justification. Rejected
 alternatives:
 
-- *Render the lone inherited proxy directly at N=1, switch to a container at
-  N≥2.* The transition reshuffles the React Flow `nodes` array — the lone
+- _Render the lone inherited proxy directly at N=1, switch to a container at
+  N≥2._ The transition reshuffles the React Flow `nodes` array — the lone
   proxy disappears, a new container node appears at a different id —
   costing fitView framing and the user's expand toggle.
-- *Decide the wrap threshold at render time from a config or feature flag.*
+- _Decide the wrap threshold at render time from a config or feature flag._
   Adds a knob with no current consumer; the threshold is a property of the
   semantics ("inherited proxies are context that gets bundled"), not a UX
   parameter.
-- *Defer the decision until the reseed bridge actually lands.* Costs a
+- _Defer the decision until the reseed bridge actually lands._ Costs a
   second migration (every existing Canvas with one inherited external would
   re-render through a node-id change), and pushes the justification out of
   the slice that introduced the container.
@@ -134,7 +134,7 @@ alternatives:
 - **`isPassiveNode` is the single extension point for new passive kinds.**
   A new passive node kind is added by (a) extending `CanvasRFNode`, (b)
   extending the disjunction in `isPassiveNode`, and (c) registering the type
-  in `nodeTypes` — *not* by sprinkling a fresh inline guard through the
+  in `nodeTypes` — _not_ by sprinkling a fresh inline guard through the
   pointer handlers. The pointer handlers stay closed against passive
   extensions.
 - **Tightening the parameter to `CanvasRFNode` is the guard that keeps that
@@ -145,14 +145,14 @@ alternatives:
 - **The boundary-group container is structurally stable across
   inherited-count transitions.** A refactor that drops the N=1 wrap to
   render the lone proxy directly regresses this ADR, even though `pnpm
-  check` and today's runtime will not surface the difference (the seed-once
+check` and today's runtime will not surface the difference (the seed-once
   model masks the transition entirely). The reviewer signal is the
   comment-and-cross-reference at `canvas.tsx:toBoundaryGroupRFNode` plus the
   Boundary-group glossary entry.
 - **The seed-once Canvas (ADR-0004) is no longer the only thing keeping the
   expand toggle stable across refetches.** Two defenses now stack: the seed
   prevents an in-page refetch from re-creating the container (ADR-0004),
-  and — *if* the seed-once model is ever loosened — the N=1 wrap prevents
+  and — _if_ the seed-once model is ever loosened — the N=1 wrap prevents
   the container from being created and destroyed as the inherited count
   crosses 1. A future ADR that lifts the seed-once model inherits this
   ADR's N=1 wrap; a future ADR that lifts the N=1 wrap must replace it with

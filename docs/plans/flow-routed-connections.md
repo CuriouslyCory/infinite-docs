@@ -28,7 +28,7 @@ current model lacks:
 1. **The pipe's contents are first-class** — an OpenAPI operation, a WebSocket
    channel, a function call: each is addressable, indexable, individually
    soft-deletable.
-2. **Contents are owned by the *Component*, not the *Connection*** — an API
+2. **Contents are owned by the _Component_, not the _Connection_** — an API
    "exposes" `GET /users` whether anyone is calling it or not. Drawing a
    Connection picks which exposed flows travel.
 3. **Refinement is an explicit binding** between an outer Connection and inner
@@ -117,7 +117,7 @@ model FlowRoute {
 // Edge unchanged in shape; only relation arms widen.
 ```
 
-`Edge.label` stays — it names the *pipe* (e.g. "primary HTTPS"). Flow titles
+`Edge.label` stays — it names the _pipe_ (e.g. "primary HTTPS"). Flow titles
 name the per-call content. They're complementary.
 
 ## Direction stays structural (ADR-0009 verbatim)
@@ -135,7 +135,7 @@ endpoint is its owner:
 user adds an OUTBOUND Flow on the API and only a Web Server → API Connection
 exists, the canvas offers one-click "Add API → Web Server Connection to carry
 this?" The data model never knows what "bidirectional" means; it always knows
-what *flows go what way*.
+what _flows go what way_.
 
 ## The OpenAPI worked example, end-to-end
 
@@ -144,9 +144,9 @@ OpenAPI YAML. Single mutation
 `attachFlowSpec({ownerNodeId: apiId, kind: OPENAPI, source})`. Server parses
 with a bounded loader (size + depth caps so a hostile spec can't OOM), upserts
 one Flow per operation with `polarity = INBOUND`. The API Component now shows
-a "14 flows" pill. *Re-pasting later: matching keys preserved, dropped keys
+a "14 flows" pill. _Re-pasting later: matching keys preserved, dropped keys
 soft-deleted with a fresh deletionId — FlowRoutes survive as orphans visible
-in `getCanvas`, so an edit doesn't silently delete the user's wiring.*
+in `getCanvas`, so an edit doesn't silently delete the user's wiring._
 
 **Scene 2 — Draw the Connection.** User drags Web Server's output Port to API's
 input Port. Today's `connectNodes`, unchanged. The new Connection renders with
@@ -176,7 +176,7 @@ The service:
 2. Creates the inner Edge
    `(canvasNodeId: webId, sourceId: searchHandlerId, targetId: apiId)`. **This
    is the ONE place ADR-0005's same-Canvas rule loosens.** `apiId.parentId =
-   null` but the Edge sits on `webId`. The loosening is gated: `connectNodes`
+null` but the Edge sits on `webId`. The loosening is gated: `connectNodes`
    stays strict; only `routeFlow` may write a cross-scope Edge, and only when
    the cross-scope endpoint matches the outer Edge's boundary endpoint. New
    ADR-0012 documents this single exception.
@@ -203,7 +203,7 @@ round trip preserved.**
 or via AsyncAPI spec). Palette is now 15 items.
 
 User descends into Web Server, drops `TickConsumer`, drags the API boundary
-proxy's `tickUpdates` palette item *to* `TickConsumer`'s input Port. The canvas
+proxy's `tickUpdates` palette item _to_ `TickConsumer`'s input Port. The canvas
 detects: polarity is OUTBOUND, owner is API, existing outer Edge is web→api —
 routing here would point the arrow backwards.
 
@@ -213,7 +213,7 @@ Web Server Connection to carry it?" On confirm, one batched mutation:
 1. `connectNodes` creates the reverse outer Edge `(api → web, root)`.
 2. `routeFlow` creates the inner Edge
    `(canvasNodeId: webId, sourceId: apiId, targetId: tickConsumerId)` plus the
-   FlowRoute on the *new* outer Edge.
+   FlowRoute on the _new_ outer Edge.
 
 Going back up, root Canvas now shows **two Connections** between Web Server
 and API — `Web Server → API` "1 / 14 routed" and `API → Web Server` "1 / 1
@@ -226,7 +226,7 @@ routed". Two arrows, two stories, each enumerable. ADR-0009 vindicated.
    is the backstop.
 2. **A FlowRoute's outerEdge must touch the Flow's owner** (source or target).
 3. **A FlowRoute's innerEdge (when present) sits on a Canvas that is the
-   interior of the outer Edge's *other* endpoint** — i.e. inside the consumer
+   interior of the outer Edge's _other_ endpoint** — i.e. inside the consumer
    (INBOUND) or producer (OUTBOUND). Its cross-scope end is a boundary proxy
    of the owner.
 4. **`connectNodes` is strict, `routeFlow` is the only bounded-loose writer.**
@@ -256,11 +256,13 @@ routed". Two arrows, two stories, each enumerable. ADR-0009 vindicated.
 ## Markdown / MCP (deterministic, addressable)
 
 ```markdown
-## API (External API)  {id:apiId}
+## API (External API) {id:apiId}
+
 ### Flows (14 inbound from openapi; 1 outbound)
-- INBOUND  GET /pets         (op:listPets)   routed at: root → WebServer→API; refined at: WebServer → SearchHandler→API[boundary]
-- INBOUND  POST /pets        (op:createPet)  unrouted
-- OUTBOUND channel:tickUpdates (sse)         routed at: root → API→WebServer; refined at: WebServer → API[boundary]→TickConsumer
+
+- INBOUND GET /pets (op:listPets) routed at: root → WebServer→API; refined at: WebServer → SearchHandler→API[boundary]
+- INBOUND POST /pets (op:createPet) unrouted
+- OUTBOUND channel:tickUpdates (sse) routed at: root → API→WebServer; refined at: WebServer → API[boundary]→TickConsumer
 ```
 
 New MCP resources: `flow/:id`, `flow-route/:id`. New tools: `attach-flow-spec`,
@@ -268,15 +270,15 @@ New MCP resources: `flow/:id`, `flow-route/:id`. New tools: `attach-flow-spec`,
 tool gains `flows:[]` and `routes:[]` arms. The `apply_graph` substrate itself
 landed in #20 (Components + Connections); the additive `flows:[]` / `routes:[]`
 arms remain Slice 5 / #38 work. All additive; the agent's mental model becomes
-*"Components own contracts; Connections route them."*
+_"Components own contracts; Connections route them."_
 
 ## Performance posture
 
 - `getCanvas` adds two reads to its `Promise.all`: a Flow `findMany` for
   boundary-proxy palettes on this scope, and a FlowRoute aggregation grouped by
   `outerEdgeId`. Still one round trip.
-- Boundary-palette set per scope is bounded by *boundary proxies with
-  spec-derived Flows* (typically 1–2 per Canvas). For worst-case (200 ops per
+- Boundary-palette set per scope is bounded by _boundary proxies with
+  spec-derived Flows_ (typically 1–2 per Canvas). For worst-case (200 ops per
   spec), the bundled palette ships the first 50 with `hasMore`, backed by a
   separate `getFlowPalette({ownerNodeId, cursor})` for the inspector.
 - Spec parsing is **server-side only, parse-on-write into rows** — never on
@@ -329,8 +331,8 @@ on conflict, `edgeFlows` count in `getCanvas`, a "+ flow" affordance on a
 selected Connection. The "draw Connection, see 14 flows available" moment.
 M3-independent.
 
-**Slice 3 — M3 boundary proxies + refinement.** *(Shipped: #36, absorbing #13
-boundary derivation + #14 boundary-proxy rendering.)* Boundary derivation
+**Slice 3 — M3 boundary proxies + refinement.** _(Shipped: #36, absorbing #13
+boundary derivation + #14 boundary-proxy rendering.)_ Boundary derivation
 (transitive, derived-only, one recursive CTE in `getCanvas`), boundary-proxy
 node type + Flow palette, `routeFlow` with inner edge (the gated ADR-0005
 exception — ADR-0012 documents it). The inner-Edge write converges on
@@ -339,9 +341,10 @@ so a shared inner Edge carries many FlowRoutes and the transaction is never
 aborted — ADR-0010 names `routeFlow` as the second Edge writer that closes this
 race. The sweep is reference-counted (a shared inner Edge dies only with its
 last route). Drag-from-palette-to-child synthesizes the optimistic interior Edge
-+ FlowRoute. `getCanvas` gained `boundaryProxies` + `flowPalettes`, with
-`getFlowPalette` paging the overflow. MCP `route-flow` arg deferred to #42.
-**This is the delight slice.**
+
+- FlowRoute. `getCanvas` gained `boundaryProxies` + `flowPalettes`, with
+  `getFlowPalette` paging the overflow. MCP `route-flow` arg deferred to #42.
+  **This is the delight slice.**
 
 **Slice 4 — Bidirectional reconciliation.** Polarity validation in
 `routeFlow`; the "create reverse Connection?" canvas UX; tests for
@@ -407,15 +410,15 @@ each decision lives.
 
 ## What was preserved, and from where
 
-| Idea | From |
-|------|------|
-| Spec is owned by the Component (FlowSpec on a Node) | Architect A & Engineer A |
-| Flow is a first-class row | Architect B & Engineer A |
-| FlowRoute binds outer Edge to inner Edge | Engineer A |
-| `routeFlow` is the gated cross-scope writer | Engineer A |
-| Polarity (owner-derived per-Flow direction) | Engineer A (named clearly) |
-| Re-paste soft-deletes dropped keys; routes orphan visibly | Engineer A |
-| Sliced migration plan | Engineer A |
-| "Two Connections for two-way is already the law" anchor | Engineer B |
-| Refinement-chain coherence rule (descendant of ancestor) | Architect B |
-| Aggregation lives in `getCanvas`, one round trip | Both engineer plans |
+| Idea                                                      | From                       |
+| --------------------------------------------------------- | -------------------------- |
+| Spec is owned by the Component (FlowSpec on a Node)       | Architect A & Engineer A   |
+| Flow is a first-class row                                 | Architect B & Engineer A   |
+| FlowRoute binds outer Edge to inner Edge                  | Engineer A                 |
+| `routeFlow` is the gated cross-scope writer               | Engineer A                 |
+| Polarity (owner-derived per-Flow direction)               | Engineer A (named clearly) |
+| Re-paste soft-deletes dropped keys; routes orphan visibly | Engineer A                 |
+| Sliced migration plan                                     | Engineer A                 |
+| "Two Connections for two-way is already the law" anchor   | Engineer B                 |
+| Refinement-chain coherence rule (descendant of ancestor)  | Architect B                |
+| Aggregation lives in `getCanvas`, one round trip          | Both engineer plans        |

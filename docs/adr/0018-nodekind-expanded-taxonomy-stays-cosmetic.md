@@ -20,8 +20,8 @@ they expect `TABLE` and `STORED_PROCEDURE`; inside a `FUNCTION`, `BRANCH` and
 `VARIABLE`.
 
 This slice expands the enum from 6 to 26 values. The expansion is the moment a
-contributor first asks the dangerous question — *"now that `DATABASE` exists and
-`TABLE` exists, shouldn't a `TABLE` only be creatable inside a `DATABASE`?"* —
+contributor first asks the dangerous question — _"now that `DATABASE` exists and
+`TABLE` exists, shouldn't a `TABLE` only be creatable inside a `DATABASE`?"_ —
 i.e. should kind start constraining the graph. The answer must be on record
 before someone "tightens" it, because the entire data model rests on kind being
 inert.
@@ -89,7 +89,7 @@ row, one serializer label. No code-path branch is ever required.
 - **"Should kind X only nest inside kind Y" is answered: no.** A reviewer
   proposing a Prisma constraint, a service-side `assertKindAllowedUnder`, or any
   kind-gated branch regresses this ADR. Such a rule belongs nowhere — see
-  ADR-0019 for why even the *picker* only ranks, never restricts.
+  ADR-0019 for why even the _picker_ only ranks, never restricts.
 - **The picker does not get unusable at 26 kinds** because the kind palette is
   search-first and affinity-ranked (ADR-0019); the flat `<select>` it replaced
   would have. Should the enum grow toward terminal-leaf sprawl

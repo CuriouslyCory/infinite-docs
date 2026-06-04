@@ -34,7 +34,7 @@ unrelated routes to the Canvas.
 - The Canvas is a **client-only island** (`"use client"`), loaded via
   `next/dynamic` with **`{ ssr: false }`** from a thin client wrapper, so it
   never executes on the server and never enters the RSC render path. (`ssr:
-  false` is itself disallowed inside a server component in Next.js, which forces
+false` is itself disallowed inside a server component in Next.js, which forces
   this wrapper layering.) `@xyflow/react` is imported in exactly **one** module,
   behind that lazy boundary, so it stays out of the page's first-load bundle.
 - The island is scoped to **its own provider** (`ReactFlowProvider`), mounted
@@ -46,7 +46,7 @@ unrelated routes to the Canvas.
   types **only from the tRPC router-output inference helpers** (`RouterOutputs`,
   re-exported through `~/lib/types`) using **top-level `import type`** — never
   from `~/server/...`. **Zod input schemas live in a Zod-only module
-  (`~/lib/schemas`)** so client forms can import them as *values* without
+  (`~/lib/schemas`)** so client forms can import them as _values_ without
   dragging server code.
 - This rule is enforced, not just documented: an **ESLint `no-restricted-imports`
   guard** forbids importing `~/server/**` from the client directories
@@ -73,10 +73,10 @@ unrelated routes to the Canvas.
 - Because `pnpm check` can't see a leak, the slice's Definition of Done includes
   a **build-and-inspect** step: `pnpm build`, then confirm the client chunks
   (`​.next/static/chunks`) contain no `pg` / `node:dns` / `PrismaClient` /
-  `adapter-pg`, and that React Flow loads as a *separate* lazy chunk (not in the
+  `adapter-pg`, and that React Flow loads as a _separate_ lazy chunk (not in the
   route's first-load JS). The ESLint guard is the static half; this is the
   runtime half.
-- Anything mounted *inside* the island is also client-only; server-derived data
+- Anything mounted _inside_ the island is also client-only; server-derived data
   must arrive via the tRPC hydration cache (prefetch → `HydrateClient` → the
   island reads cache). For this slice the Canvas is empty and reads nothing;
   this is the seam the single-round-trip `getCanvas` payload fills in a later

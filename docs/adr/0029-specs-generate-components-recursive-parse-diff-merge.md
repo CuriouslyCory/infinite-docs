@@ -14,8 +14,8 @@ projects an owner-relative Flow set; it materialises a tree of ordinary child
 the parser registry shape (kind-keyed, exhaustive `Record<SpecKind, …>`,
 shared bounded loader, no `$ref` resolution) survives unchanged — only the
 **output** is re-pointed from Flows to a recursive `ParsedComponent` tree. The
-"rejected alternative" ADR-0025 named — *Spec → child Components instead of
-Flows (a SQL schema explodes into TABLE sub-nodes with FK Connections)* —
+"rejected alternative" ADR-0025 named — _Spec → child Components instead of
+Flows (a SQL schema explodes into TABLE sub-nodes with FK Connections)_ —
 **becomes the decision** here, vindicated by #62: with Flows gone there is no
 routable model to project into, but Components are exactly the model an LLM and
 the canvas both already understand.
@@ -38,7 +38,7 @@ Component across this slice's re-attach).
 Issue `#62` retired the Flow capability model entirely: `Flow`/`FlowSpec`/`FlowRoute`
 and their indexes are gone, the `Spec` model is renamed and reshaped to point at
 derived child Nodes via `Node.sourceSpecId` + `Node.specKey`, and the cascade
-arms exist — but no code yet *creates* a Spec or *generates* its children.
+arms exist — but no code yet _creates_ a Spec or _generates_ its children.
 ADR-0025's parser registry was only ever documentation; with Flows gone there is
 nothing for it to project into.
 
@@ -71,11 +71,11 @@ The shape rides three pieces that compose by construction:
 
 1. **Recursive parse → `ParsedComponent` tree.** Each parser emits a recursive
    tree whose nodes carry `{ specKey, kind, title, documentation?, metadata?,
-   children? }`. Depth is whatever the parser implements — ship OpenAPI
+children? }`. Depth is whatever the parser implements — ship OpenAPI
    (endpoint → params) and SQL-DDL (table → columns) shallow first, with nested
    request bodies summarised into `metadata`; deepen additively later with no
    model change. Anti-OOM safety bounds (node count cap, depth cap, source byte
-   cap) are *not* feature limits: a breach surfaces a single `parseError` and
+   cap) are _not_ feature limits: a breach surfaces a single `parseError` and
    the parser generates nothing (never partial). `specKey` anchors on the most
    stable per-format identity: OpenAPI's `operationId` when present else
    `METHOD path`; SQL table name; child keys are qualified by their parent's so
@@ -86,23 +86,23 @@ The shape rides three pieces that compose by construction:
 
 2. **Pure `parseSpecDiff`** classifies the parsed tree against existing
    generated children (`sourceSpecId` = this Spec) into `{ new[], changed[],
-   dropped[], matchedKeyToId }`. Match key is `specKey`. A row is *changed* when
+dropped[], matchedKeyToId }`. Match key is `specKey`. A row is _changed_ when
    its derived fields (title / kind / metadata) differ; **documentation is
    never compared** — once seeded on create, docs are user-owned. Pure: no DB,
    trivially unit-testable.
 
 3. **User-resolved merge.** Nothing writes until the user confirms (cancel =
    zero writes). The conflict modal is driven by the diff:
-   - *changed* → per-row skip / overwrite, plus a per-row keep-documentation /
+   - _changed_ → per-row skip / overwrite, plus a per-row keep-documentation /
      wipe-documentation toggle on overwrite. Bulk "skip all" / "overwrite all"
      are pure client conveniences that set per-row decisions. The default for
      an unresolved key is **skip** (safe).
-   - *dropped* → per-row **keep (detach)** / delete. `keep` clears
+   - _dropped_ → per-row **keep (detach)** / delete. `keep` clears
      `sourceSpecId`+`specKey`, leaving the now-user-owned Component with its
      docs and Connections; `delete` soft-deletes the subtree and its incident
      Connections via the existing cascade (ADR-0008). The default for an
      unresolved nodeId is **keep** (non-destructive).
-   - *new* are always created.
+   - _new_ are always created.
    - **Position and incident Connections are never in the prompt — always
      preserved.** Documentation is the only keep/wipe axis.
    - **Matched Components keep their Node id**, so Connections drawn to a
@@ -117,7 +117,7 @@ The applier RE-PARSES and RE-DIFFS server-side from the saved `source` — the
 client's tree is never trusted, because `source` is untrusted user-pasted
 content (prompt-injection standing note). The whole apply runs inside one
 transaction so a per-row reject rolls everything back; the existing
-`applyGraph` insert path is reused for the *new* arm with `documentation` /
+`applyGraph` insert path is reused for the _new_ arm with `documentation` /
 `metadata` / `sourceSpecId` / `specKey` added to `createNode` as additive
 optional fields (the plain canvas create path is unchanged). The live Spec row
 is 1:1 with its owner Component (`idx_spec_owner_live`); re-attach updates the
@@ -166,7 +166,7 @@ Components, and the project-wide "Connect to…" search are sibling issues
   affinity, picker grouping) to fork on provenance; defeats the goal that a
   generated Endpoint and a hand-placed Endpoint render and behave alike.
 - **Best-effort partial parse on a bounds breach.** Silently truncated trees
-  fail open: the diff would mark the missing tail as *dropped* on the next
+  fail open: the diff would mark the missing tail as _dropped_ on the next
   clean re-parse and offer to delete real Components. Atomic generate-nothing
   fails closed and keeps re-parse identity intact.
 - **Overwrite the existing Spec row on re-attach by inserting a fresh one.**
@@ -177,6 +177,7 @@ Components, and the project-wide "Connect to…" search are sibling issues
 ## Test plan
 
 Service tests (vitest, real test DB) for:
+
 - Parser tree shape + `specKey` anchors (OpenAPI `operationId`, falls back to
   `METHOD path`; SQL table name; column keys qualified by table).
 - Bounds breach (depth / node count / duplicate `specKey`) → single

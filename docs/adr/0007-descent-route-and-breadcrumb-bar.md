@@ -38,7 +38,7 @@ Two questions had more than one defensible answer — and each invites a future
   is the Node's.
 - The route nests under `/p/[slug]/…`, so the bearer-slug response headers
   (`Referrer-Policy: no-referrer`, `X-Robots-Tag`, `Cache-Control: private,
-  no-store`) already set on the `/p/:path*` matcher cover it with no extra work
+no-store`) already set on the `/p/:path*` matcher cover it with no extra work
   (ADR-0002/0004).
 - **Descent is wired at the React-Flow node level** (`onNodeDoubleClick`):
   double-click opens the interior Canvas. Inline rename moved to an explicit
@@ -56,20 +56,20 @@ Two questions had more than one defensible answer — and each invites a future
 - This is deliberately **not** "`await getCanvas` in the server component to
   render breadcrumbs there." `@trpc/react-query/rsc`'s `createHydrationHelpers`
   runs the caller on **every** invocation, and the shared (cached) query client
-  dedups query *storage*, not the *call* — so an `await` for breadcrumbs **plus**
+  dedups query _storage_, not the _call_ — so an `await` for breadcrumbs **plus**
   a `prefetch` for the island would execute the recursive CTE **twice** per
   navigation. Prefetch-once + read-from-cache keeps it single-round-trip
   (ADR-0001), which matters because that CTE is the repo's one piece of raw SQL.
-- **The Project is the presentational root crumb.** The breadcrumb *trail* (the
+- **The Project is the presentational root crumb.** The breadcrumb _trail_ (the
   data) is ordered root → current and is `[]` at the root scope — no `"root"`
   sentinel ever lives in it (that string is an island key only; ADR-0004). The
-  *bar* (the UI) prepends the Project title as the root crumb and marks the
+  _bar_ (the UI) prepends the Project title as the root crumb and marks the
   trail's last entry as the current (non-link) scope.
 - A `nodeId` that resolves to no live Node in this Project throws `NOT_FOUND`
   inside that shared read. A client suspense throw cannot call the server-only
   `notFound()`, so the route's **`error.tsx`** renders the not-found UI. Showing
   it for a bad scope is acceptable existence-hiding under ADR-0002: the slug
-  already grants read to the whole Project, so a bad scope *within* it reveals
+  already grants read to the whole Project, so a bad scope _within_ it reveals
   nothing about a foreign secret.
 
 ## Consequences
@@ -85,7 +85,7 @@ Two questions had more than one defensible answer — and each invites a future
   prefetched read rather than add a second.
 - The bad-scope 404 is a **client** boundary (`error.tsx`), not a server
   `notFound()`. Like the ADR-0004 bundle constraint, this is invisible to `pnpm
-  check`, so descent, the instant-prefetch path, and the bad-scope path are part
+check`, so descent, the instant-prefetch path, and the bad-scope path are part
   of this slice's **run-the-app** Definition of Done, not just the static gate.
 - The island stays **keyed by scope** (ADR-0004): a Descent — or an ancestor
   crumb click — changes the `nodeId`, which flips the island key, remounting the

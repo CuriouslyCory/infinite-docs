@@ -14,9 +14,9 @@ the derived edge row carries `interaction` unchanged; arrowhead derivation from
 
 **Completes the supersede** of [ADR-0005](0005-edge-scope-and-service-enforced-invariants.md)
 begun by ADR-0028: ADR-0005's stored-scope endpoint model is fully replaced —
-scope is *derived from endpoint ancestry*, here, at read time. **Completes the
+scope is _derived from endpoint ancestry_, here, at read time. **Completes the
 supersede** of [ADR-0012](0012-routeflow-sole-cross-scope-edge-writer.md): its
-writer was deleted in #62; its boundary-endpoint *read* derivation is replaced
+writer was deleted in #62; its boundary-endpoint _read_ derivation is replaced
 here.
 
 **Supersedes the boundary-group half** of
@@ -39,7 +39,7 @@ plural.
 
 After #62 a Connection may link any two Components at any scope, but `getCanvas`
 still filtered its interior Connections to edges with BOTH endpoints' `parentId`
-equal to the scope. A cross-scope Connection therefore rendered on *neither*
+equal to the scope. A cross-scope Connection therefore rendered on _neither_
 endpoint's Canvas — it vanished. The motivating user need ("wire a Component to
 one in another subtree and see it on both sides") was invisible.
 
@@ -49,7 +49,7 @@ common-ancestor Canvas (both ends shown as the ancestor Components that contain
 them). Because an Edge stores no scope (ADR-0028), this is a derivation over the
 endpoints' `parentId` ancestry, not a stored column.
 
-The pre-#62 **boundary proxy** (ADR-0012/0016) was a *transitive* construct: an
+The pre-#62 **boundary proxy** (ADR-0012/0016) was a _transitive_ construct: an
 external a Component connected to on its parent Canvas, projected inward and
 inherited down the subtree, partitioned into `direct` vs `inherited`, and
 collapsed into a boundary group. That whole model died with the Flow capability
@@ -89,7 +89,7 @@ down, because the prose is easy to misread:
   with a **boundary proxy of `parent`** as the other end. This is what "a lineal
   Connection renders as boundary-proxy-of-ancestor → descendant on the
   descendant's home Canvas" means — **home Canvas, i.e. the parent's interior
-  Canvas**, never "inside the child" (the child's *own* interior Canvas has
+  Canvas**, never "inside the child" (the child's _own_ interior Canvas has
   nothing to render for this edge).
 - **On `S = root`** (parent at the root): `rep(parent, root) === parent`,
   `rep(child, root) === parent` (the child's ancestor whose parent is null is the
@@ -114,7 +114,7 @@ filter had.
 `getCanvas` returns `{ interiorNodes, interiorEdges, boundaryProxies, breadcrumbs }`.
 
 - Each `interiorEdges` row is `{ id, sourceId, targetId, sourceRepr, targetRepr,
-  interaction, label }`. `sourceId`/`targetId` stay the real endpoints; the
+interaction, label }`. `sourceId`/`targetId` stay the real endpoints; the
   `*Repr` fields resolve each end onto this scope (the real Node, an ancestor for
   the altitude view, or the off-scope end's boundary-proxy synthetic id). The
   reprs are a per-scope read-time projection, never stored on the Edge.
@@ -141,7 +141,7 @@ unambiguous.
 ### Scope of this ADR (and the export's lingering shape)
 
 This ADR governs the **`getCanvas`** read shape only. The markdown export's
-boundary derivation (`export.service.ts`) still carries a *different* shape
+boundary derivation (`export.service.ts`) still carries a _different_ shape
 today — a subtree-incident `origin: "direct" | "inherited"` set — and its rewrite
 to the per-edge model is #67 (which amends ADR-0017). A reviewer should **not**
 flag the export's surviving `origin` field as an ADR-0031 violation pending #67;
@@ -158,10 +158,10 @@ different consumers, and are not to be DRY'd into one CTE.
 - **Reviewable invariant:** a `boundaryProxies` row's DERIVED identity is exactly
   `{ nodeId, title, kind, realEndpointId, edgeId }`. Re-introducing `origin`,
   `isDirect`, `inherited`, or any transitive-projection field regresses this ADR.
-  *(Realized in #91 → [ADR-0036](0036-boundary-proxy-placement-persistence.md):
+  _(Realized in #91 → [ADR-0036](0036-boundary-proxy-placement-persistence.md):
   the row gains additive nullable `posX`/`posY` — a persisted view coordinate
   joined from a separate table — which leaves the five derived fields frozen and
-  is NOT a transitive-projection field.)*
+  is NOT a transitive-projection field.)_
 - **Reviewable invariant:** boundary proxies are **per crossing edge** — the data
   layer never de-dupes them by far Node. Visual coalescing belongs to the canvas
   client (#65).
@@ -170,14 +170,14 @@ different consumers, and are not to be DRY'd into one CTE.
   Connection.
 - **The boundary proxy's IDENTITY persists no rows.** It is derived on every read;
   no `BoundaryProxy` table exists or should be added, and a proposal to materialize
-  the *identity* (title/kind/realEndpointId/edgeId) would regress the "derived, not
-  stored" posture this ADR shares with ADR-0016's passive-node design. *(Realized in
+  the _identity_ (title/kind/realEndpointId/edgeId) would regress the "derived, not
+  stored" posture this ADR shares with ADR-0016's passive-node design. _(Realized in
   #91 → [ADR-0036](0036-boundary-proxy-placement-persistence.md): a separate
   `BoundaryProxyPlacement` table persists ONLY a per-scope view coordinate, keyed by
   `(containerNodeId, realEndpointId)` and joined back as the additive nullable
   `posX`/`posY` above. This does not materialize the proxy — the proxy still exists
   iff the cross-scope derivation emits it — so the "derived, not stored" identity
-  invariant holds; ADR-0036 reconciles the two.)*
+  invariant holds; ADR-0036 reconciles the two.)_
 - **`pnpm check` cannot see into raw SQL** (ADR-0006): a wrong identifier or a
   rep-math error passes ESLint and `tsc` and fails only at runtime, so this
   slice's correctness rests on the service tests running against real Postgres

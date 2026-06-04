@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted *(realizes the partial-unique-index hardening ADR-0005 named as
+Accepted _(realizes the partial-unique-index hardening ADR-0005 named as
 deferred future work; amends ADR-0005's consequences §3 by name. Amended by
 [ADR-0023](0023-connection-direction-derived-from-flows.md) — `idx_edge_dedup`
 becomes an EXPRESSION index over `(canvasNodeId, LEAST(sourceId, targetId),
@@ -21,7 +21,7 @@ indexes keyed on `projectId`**: a **directional** index over
 non-null). The named pattern and the service-primary / index-backstop doctrine
 are unchanged; the collision matcher (`isEdgeDedupCollision`) now accepts both
 index names. The migration pre-flights an unordered-duplicate guard before
-creating the indexes.)*
+creating the indexes.)_
 
 ## Context
 
@@ -94,12 +94,11 @@ covers both.
 5. **Move the repo from `prisma db push` to `prisma migrate`.** The partial
    unique index cannot be expressed in the Prisma schema model. The
    workflow is codified:
-
    - **Authoring**: `pnpm prisma migrate diff --from-empty --to-schema
-     prisma/schema.prisma --script > <new-migration>/migration.sql`, then
+prisma/schema.prisma --script > <new-migration>/migration.sql`, then
      hand-edit for raw SQL. No shadow DB required.
    - **Applying** (everywhere — dev, test, prod): `pnpm prisma migrate
-     deploy`. Idempotent; needs no shadow DB.
+deploy`. Idempotent; needs no shadow DB.
    - **Never used**: `prisma migrate dev`. That command needs a shadow DB,
      which would force every contributor (and every CI run) onto a
      two-branch Neon setup for nothing. The `db push` script is retired
@@ -116,7 +115,6 @@ covers both.
    partial-unique-backstop + named P2002 catch" is the canonical shape for
    every future soft-deletable de-dupe rule in this codebase. Preconditions
    for the pattern:
-
    - (a) the canonical key has bounded cardinality (composable into a
      Postgres index);
    - (b) the underlying row is soft-deletable (carries a `deletedAt`
@@ -164,9 +162,9 @@ covers both.
   "duplicate values" error.
 - **Baselining the migration history on existing databases** (one-time
   step on each environment): `pnpm prisma migrate resolve --applied
-  <baseline-migration>` against each `DATABASE_URL`. Run before the first
+<baseline-migration>` against each `DATABASE_URL`. Run before the first
   `migrate deploy` on any database that already carries the schema from
   the previous `db push` regime.
 - **Drift gate** between schema and live DB before applying:
   `pnpm prisma migrate diff --from-schema prisma/schema.prisma
-  --to-config-datasource --exit-code`. Exit code 0 = no drift.
+--to-config-datasource --exit-code`. Exit code 0 = no drift.

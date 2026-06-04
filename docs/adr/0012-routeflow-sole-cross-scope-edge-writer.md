@@ -26,8 +26,8 @@ sweep-race lock are all untouched.
 
 Slice 3 is the refinement slice: descend into a Component, see the externals it
 connects to as read-only **boundary proxies**, and drag one of a proxy's
-**Flows** onto a child Component to say *"this Flow, one scope deeper, continues
-as this interior Connection."* That binding is a **FlowRoute** whose
+**Flows** onto a child Component to say _"this Flow, one scope deeper, continues
+as this interior Connection."_ That binding is a **FlowRoute** whose
 `innerEdgeId` finally points at a real **Edge** — the **inner Edge** between the
 child and the boundary proxy.
 
@@ -35,7 +35,7 @@ That inner Edge is the one place the system must write an Edge whose endpoints
 sit at **different scope levels**: the child lives on the current Canvas
 (`parentId === canvasNodeId`), but the boundary proxy is the real external
 Component, which lives higher up (`parentId !== canvasNodeId`). ADR-0005 made
-Edge scope an *explicit, recorded* `canvasNodeId` precisely so this could exist
+Edge scope an _explicit, recorded_ `canvasNodeId` precisely so this could exist
 with no schema change — and said in as many words that "only the validation rule
 will loosen." This ADR records that loosening and the four judgment calls it
 forced, none derivable from ADR-0005 alone:
@@ -43,7 +43,7 @@ forced, none derivable from ADR-0005 alone:
 1. **Who may write a cross-scope Edge, and how is the loosening bounded** so it
    does not become a hole in the same-Canvas invariant?
 2. **How is the inner-Edge write made race-safe** under `idx_edge_dedup`, given
-   that two refinements of the same outer Edge legitimately *share* one inner
+   that two refinements of the same outer Edge legitimately _share_ one inner
    Edge rather than conflicting?
 3. **What sweeps a shared inner Edge**, when an Edge is now a pipe that several
    FlowRoutes may ride?
@@ -64,13 +64,13 @@ any other service, regresses ADR-0005. A regression test pins it
 ### The loosening is bounded to the derived boundary endpoint
 
 `parentId !== canvasNodeId` is permitted for an inner-Edge endpoint **iff** that
-endpoint is the **boundary endpoint** — and the boundary endpoint is *derived,
-never taken from input*. `routeFlow` accepts `{ flowId, outerEdgeId,
+endpoint is the **boundary endpoint** — and the boundary endpoint is _derived,
+never taken from input_. `routeFlow` accepts `{ flowId, outerEdgeId,
 sourceNodeId?, targetNodeId? }`; it computes the boundary endpoint `B` as the
 Flow's owner (already required, by the touches-endpoint invariant, to be an
 endpoint of the outer Edge) and requires that exactly one of the supplied
 endpoints equals `B`. The other is the **interior endpoint**, which must be a
-child of the outer Edge's *other* endpoint (the Canvas the inner Edge sits on).
+child of the outer Edge's _other_ endpoint (the Canvas the inner Edge sits on).
 Because no input names `B` directly — the client supplies two endpoint ids and
 the service pins one of them to the derived owner — a caller **cannot smuggle an
 arbitrary foreign Node in as the cross-scope endpoint**. There is no
@@ -99,7 +99,7 @@ surviving row. This is deliberate over a bare `create` with a `P2002` catch:
 transaction**. A bare `create` that hit `idx_edge_dedup` inside the FlowRoute
 transaction would poison it (Postgres marks an aborted transaction unusable), and
 the catch-then-re-query convergence pattern `connectNodes` uses only works
-*outside* a transaction. The `createMany` form lets the inner Edge and the
+_outside_ a transaction. The `createMany` form lets the inner Edge and the
 FlowRoute commit **atomically in one transaction with no retry loop**. This names
 `routeFlow` as the **second writer that closes the `idx_edge_dedup` race**
 (ADR-0010 anticipated a second adopter); convergence here is correctness-defining,
@@ -111,7 +111,7 @@ serving the common sequential case.
 ### A shared inner Edge is swept only when no other active FlowRoute references it
 
 Because inner Edges are shared, the cascade is **reference-counted**, not
-one-to-one. `unrouteFlow` sweeps a FlowRoute's inner Edge **only when no *other*
+one-to-one. `unrouteFlow` sweeps a FlowRoute's inner Edge **only when no _other_
 active FlowRoute references it** (the count excludes the row being deleted); when
 it does sweep, it mints one `deletionId` and stamps both rows so `restoreEdge`
 revives them as a unit, otherwise it is a lone soft-delete with no `deletionId`
@@ -124,7 +124,7 @@ is a reviewable invariant**, pinned by tests.
 
 The reference-count read and the conditional sweep are **read-then-write**, so
 under Postgres' default READ COMMITTED isolation two concurrent sweeps of the
-last routes on one inner Edge could each see the *other* still active and both
+last routes on one inner Edge could each see the _other_ still active and both
 skip the sweep — orphaning an active inner Edge with zero active routes. **The
 last-referer decision is serialized per inner Edge by a `SELECT … FOR UPDATE` row
 lock in the caller's transaction**, taken before the count. All three cross-scope
@@ -169,7 +169,7 @@ proxy is context-only, routed at the scope where the direct Connection lives.
   endpoints; accepting an `innerEdgeId` (or an unchecked boundary id) as input
   would reopen the hole the derivation closes.
 - **The inner-Edge and FlowRoute writes must stay `createMany`/`ON CONFLICT DO
-  NOTHING`** (not `create` + `P2002` catch) so the shared transaction is never
+NOTHING`** (not `create` + `P2002` catch) so the shared transaction is never
   aborted. A reviewer "simplifying" them back to `create` reintroduces the
   transaction-poisoning bug and breaks convergence.
 - **Shared inner Edges are first-class.** Sweep logic that deletes an inner Edge
@@ -182,7 +182,7 @@ proxy is context-only, routed at the scope where the direct Connection lives.
   see this; the concurrent-race tests are the backstop.
 - **A refinement route leaves the parent Connection's routed-count pill stale
   until the user ascends.** The route is written one scope below the outer Edge,
-  so the client refreshes the *interior* Edge (optimistically) and the parent's
+  so the client refreshes the _interior_ Edge (optimistically) and the parent's
   unrouted-filter cache (`getRoutedFlowIdsForEdge`), but **not** the parent
   scope's `getCanvas` — the pill is a `routed/total` count that re-reads on the
   next ascend (a fresh `getCanvas`). This is a deliberate Philosophy-#1 choice:
@@ -195,7 +195,7 @@ proxy is context-only, routed at the scope where the direct Connection lives.
 - **ADR-0013 (Slice 4) discharges this slice's direction-blind write.**
   [ADR-0013](0013-polarity-not-stored-direction.md) adds the polarity refinement
   of the touches-endpoint invariant (`INBOUND ⇒ owner = target`, `OUTBOUND ⇒
-  owner = source`) and the reverse-Connection reconciliation, and replaces this
+owner = source`) and the reverse-Connection reconciliation, and replaces this
   slice's single `outerEdgeId` proxy field with the orientation-split
   `ownerSourceEdgeId` / `ownerTargetEdgeId` pair (see the boundary-derivation
   note above — "polarity picks the right one in Slice 4" is now realized).
@@ -207,9 +207,9 @@ proxy is context-only, routed at the scope where the direct Connection lives.
   non-UI caller (the MCP `route-flow` resource, deferred to #42), that handle-
   level guard is gone — the polarity check must move into the service (the
   ADR-0013 work) **before** that exposure lands, or an agent with the input
-  schema can write a wrong-polarity inner Edge. *(Satisfied by
+  schema can write a wrong-polarity inner Edge. _(Satisfied by
   [ADR-0013](0013-polarity-not-stored-direction.md): the polarity invariant now
-  lives in `routeFlow`, so #42 inherits it.)*
+  lives in `routeFlow`, so #42 inherits it.)_
 
 ## Reviewer checklist (cross-scope writer)
 
@@ -223,7 +223,7 @@ When a change touches Edge writes, confirm:
    both endpoints' `parentId` is `resolveInnerEdgeId`.** Any new Edge write
    elsewhere must satisfy ADR-0005's same-Canvas rule (both endpoints'
    `parentId === canvasNodeId`). The `connectNodes still rejects a cross-scope
-   endpoint` test pins `connectNodes`.
+endpoint` test pins `connectNodes`.
 2. **`resolveInnerEdgeId` still derives the boundary endpoint from the Flow's
    owner** and pins it against a supplied endpoint — no `innerEdgeId` (or raw
    boundary id) is accepted as input.

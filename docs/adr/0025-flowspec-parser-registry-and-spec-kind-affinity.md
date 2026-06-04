@@ -19,7 +19,7 @@ sense on API-flavored Components, and the paste UI offered all five raw enum
 values on every Component regardless of kind — a `NETWORK` was invited to attach
 an OpenAPI document.
 
-We want every Component kind to accept a spec that *makes sense for that kind*: a
+We want every Component kind to accept a spec that _makes sense for that kind_: a
 `DATABASE` takes SQL DDL whose tables route through the diagram exactly as API
 operations do; a `TOPIC` takes AsyncAPI channels; a `SERVICE` takes TypeScript
 signatures. The data model already supports this — `FlowSpec → Flow → FlowRoute`
@@ -60,7 +60,7 @@ writes whatever `kind`/`interaction`/`signature` the parser returns.
 Each parser sets a Flow's **interaction** from the owning Component's perspective
 (ADR-0023), which is occasionally inverted from the document's verb. The load-
 bearing case is AsyncAPI v2: per the 2.x spec, `publish` describes messages
-*consumed by* the application and `subscribe` describes messages *produced by* it,
+_consumed by_ the application and `subscribe` describes messages _produced by_ it,
 so the owner-relative mapping is `publish → SUBSCRIBE`, `subscribe → PUSH` — the
 opposite of the intuitive reading. AsyncAPI v3's explicit `action` removes the
 ambiguity (`send → PUSH`, `receive → SUBSCRIBE`). GraphQL subscriptions stream
@@ -80,8 +80,8 @@ empty list and the Attach-spec section **hides entirely**.
 Critically, this is presentation-only, exactly as ADR-0019 made Component-kind
 affinity presentation-only. `attachFlowSpec` accepts **any** `FlowSpecKind` on any
 Component — there is no `assertSpecKindAllowedFor`. Spec kind is orthogonal to the
-cosmetic Component kind; the picker decides what is *offered*, never what is
-*allowed*. The module is client-safe (imports only `~/lib/schemas`), so it loads
+cosmetic Component kind; the picker decides what is _offered_, never what is
+_allowed_. The module is client-safe (imports only `~/lib/schemas`), so it loads
 in the Canvas island without dragging the server graph into the browser bundle
 (ADR-0004).
 
@@ -89,7 +89,7 @@ in the Canvas island without dragging the server graph into the browser bundle
 
 - **Spec → child Components instead of Flows** (a SQL schema explodes into `TABLE`
   sub-nodes with FK Connections). Rejected for this work: the product ask was
-  "routable like API endpoints," which *is* the Flow model, and it reuses the
+  "routable like API endpoints," which _is_ the Flow model, and it reuses the
   entire Flow → FlowRoute → canvas → (future) markdown stack. Spec-to-subgraph
   generation remains a possible separate feature; FK → Connection materialization
   is recorded in the `signature` but deferred.

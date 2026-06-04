@@ -6,14 +6,14 @@ Accepted (#62, the re-founding slice).
 
 **Supersedes** [ADR-0005](0005-edge-scope-and-service-enforced-invariants.md)'s
 same-Canvas endpoint invariant and its explicit-`canvasNodeId`-scope decision:
-an Edge no longer stores its scope; scope is *derived* from endpoint ancestry
-(the derivation lands in #63). The service-enforced-invariant *posture*
+an Edge no longer stores its scope; scope is _derived_ from endpoint ancestry
+(the derivation lands in #63). The service-enforced-invariant _posture_
 (correctness lives in the service, not the DB) survives — only the same-Canvas
 and explicit-scope sub-decisions are superseded.
 
 **Supersedes** [ADR-0012](0012-routeflow-sole-cross-scope-edge-writer.md)
 (`routeFlow` as the sole bounded cross-scope Edge writer) — the gated exception
-is obsolete because *all* `connectNodes` writes may now be cross-scope;
+is obsolete because _all_ `connectNodes` writes may now be cross-scope;
 `routeFlow` and the boundary-endpoint derivation are deleted with the Flow model.
 
 **Amends** [ADR-0024](0024-movenode-reparent-reject-orphaning.md) (`moveNode`
@@ -27,7 +27,7 @@ ADR-0005 enforced "both endpoints sit on the same Canvas as the Edge," recording
 scope in an explicit `canvasNodeId` and anticipating exactly one gated loosening
 (the M5 refinement Connection, realized as `routeFlow` in ADR-0012).
 
-The re-founding model makes cross-scope the *common* case, not a gated
+The re-founding model makes cross-scope the _common_ case, not a gated
 exception: a Connection should link a top-level external API directly to a deep
 internal handler, or a parent Component to a child it contains. The same-Canvas
 rule and its single-exception writer are now friction, not safety.
@@ -37,7 +37,7 @@ A parent→child (**lineal**) Connection has real meaning: it records **ingress*
 lineal endpoints, not just sibling-cross-scope ones.
 
 Storing scope (`canvasNodeId`) is now actively wrong: an Edge spanning scopes has
-no single owning Canvas. Scope becomes a *derived* property of endpoint ancestry
+no single owning Canvas. Scope becomes a _derived_ property of endpoint ancestry
 (the derivation, and the boundary-proxy rendering it feeds, is #63).
 
 ## Decision
@@ -54,8 +54,8 @@ constrained.
 
 A parent→child Connection (an ancestor and one of its descendants) is explicitly
 legal and means **ingress**: traffic entering the parent and continuing to the
-descendant. There is no lineal-reject. *(This is the load-bearing record the
-issue mandates — "lineal connections = ingress, recorded explicitly.")*
+descendant. There is no lineal-reject. _(This is the load-bearing record the
+issue mandates — "lineal connections = ingress, recorded explicitly.")_
 
 ### Edge scope is derived from endpoint ancestry, not stored
 
@@ -82,11 +82,11 @@ independent of edge scope and remains `moveNode`'s sole rejection.
 
 ## Consequences
 
-- **Reviewable invariant:** *`connectNodes` rejects only `sourceId === targetId`.
+- **Reviewable invariant:** _`connectNodes` rejects only `sourceId === targetId`.
   Re-introducing a same-Canvas check, a stored `canvasNodeId`, a lineal-reject,
-  or a separate gated cross-scope writer regresses this ADR.*
+  or a separate gated cross-scope writer regresses this ADR._
 - ADR-0005's "scope is explicit, not inferred" reviewable invariant is
-  **inverted**: scope is now *derived*, and a future stored `canvasNodeId` is the
+  **inverted**: scope is now _derived_, and a future stored `canvasNodeId` is the
   regression. Called out so a reviewer reading ADR-0005 in isolation is not
   misled.
 - The Edge cascade sweep that unioned `canvasNodeId` (ADR-0008) loses that column
@@ -96,4 +96,4 @@ independent of edge scope and remains `moveNode`'s sole rejection.
   find-or-create convergence (all ADR-0012) are gone with `routeFlow`.
 - **Deferred to #63:** deriving an Edge's scope from ancestry; rendering an Edge
   whose endpoints span scopes (the redefined boundary proxy / ADR-0031). #62 can
-  *create* cross-scope Edges but does not yet *render* them cross-scope.
+  _create_ cross-scope Edges but does not yet _render_ them cross-scope.
