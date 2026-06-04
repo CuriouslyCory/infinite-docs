@@ -56,8 +56,11 @@ import {
   type ComponentNode,
 } from "./component-node";
 import {
+  buildEdgeGroups,
   ConnectionEdgeView,
+  EdgeGroupContext,
   EditEdgeContext,
+  SelectEdgeContext,
   SetEdgeInteractionContext,
   type ConnectionEdge,
 } from "./connection-edge";
@@ -562,6 +565,17 @@ function CanvasInner({
   ]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<ConnectionEdge>(
     interiorEdges.map((e) => toRFEdge(e, seedRemap)),
+  );
+
+  // Connections sharing a node pair stack their labels at one point, so group
+  // them once per edges change; the edge component collapses each group into a
+  // single on-demand chip (ADR-0039). `selectEdge` lets a group-list row focus
+  // exactly one Connection, surfacing its lone-edge picker.
+  const edgeGroups = useMemo(() => buildEdgeGroups(edges), [edges]);
+  const selectEdge = useCallback(
+    (edgeId: string) =>
+      setEdges((es) => es.map((e) => ({ ...e, selected: e.id === edgeId }))),
+    [setEdges],
   );
 
   const { screenToFlowPosition, getNodes } = useReactFlow<
@@ -2036,181 +2050,185 @@ function CanvasInner({
     <RenameComponentContext.Provider value={commitRename}>
       <EditEdgeContext.Provider value={commitEdgeEdit}>
         <SetEdgeInteractionContext.Provider value={commitEdgeInteraction}>
-          <DescendComponentContext.Provider value={descend}>
-            <DeleteComponentContext.Provider value={removeComponent}>
-              <CanEditContext.Provider value={canEdit}>
-                <ReactFlow<CanvasRFNode, ConnectionEdge>
-                  nodes={nodes}
-                  edges={edges}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onConnect={(c) => void handleConnect(c)}
-                  // Loose connection mode: a Connection can be drawn between any
-                  // two handles in either direction — Components are not
-                  // directional, so a Port has no input/output role and the drag
-                  // direction carries no meaning here (a Connection's interaction
-                  // is set separately; #65). The draw order is preserved on the
-                  // Edge for the eventual arrowhead derivation (ADR-0027).
-                  connectionMode={ConnectionMode.Loose}
-                  // Instant drag feedback: reject a self-link and a still-optimistic
-                  // (temp_) endpoint by snapping back. Duplicates are deliberately
-                  // allowed through (passing [] skips the duplicate rule) so
-                  // onConnect can surface a toast — blocking them here would snap a
-                  // duplicate back silently, with no explanation.
-                  isValidConnection={(c) => {
-                    const { source, target } = c;
-                    if (!source || !target) return false;
-                    if (
-                      source.startsWith("temp_") ||
-                      target.startsWith("temp_")
-                    ) {
-                      return false;
-                    }
-                    return canConnect({ source, target }, []).ok;
-                  }}
-                  onEdgesDelete={handleEdgesDelete}
-                  onNodeClick={(_event, node) => {
-                    // Passive nodes (boundary proxies) have no editable record —
-                    // never open the detail panel for them (ADR-0016).
-                    if (isPassiveNode(node)) return;
-                    // A `temp_…` Component has no server id yet; opening the
-                    // detail panel would query for a node the server cannot
-                    // find. Single-click selection only for real Components —
-                    // double-click still descends.
-                    if (node.id.startsWith("temp_")) return;
-                    setSelectedNodeId(node.id);
-                  }}
-                  onPaneClick={() => setSelectedNodeId(null)}
-                  onNodeDoubleClick={(_event, node) => {
-                    // A boundary proxy descends through its own "go to real"
-                    // affordance (to the off-scope endpoint), not the generic
-                    // double-click (ADR-0016).
-                    if (isPassiveNode(node)) return;
-                    descend(node.id);
-                  }}
-                  onNodeMouseEnter={(_event, node) => {
-                    // Make Descent feel instant: warm the interior Canvas payload (tRPC
-                    // cache, the same key the descended island reads) and the route shell.
-                    // Also warm the Plate docs-editor chunk so first selection of a
-                    // Component doesn't pay a "Loading editor…" flash (ADR-0015 §6).
-                    // Passive nodes have no interior to warm (ADR-0016).
-                    if (isPassiveNode(node)) return;
-                    if (node.id.startsWith("temp_")) return;
-                    void utils.architecture.getCanvas.prefetch({
-                      slug,
-                      canvasNodeId: node.id,
-                    });
-                    router.prefetch(`/p/${slug}/n/${node.id}`);
-                    // Viewers open the read-only docs panel too, so warm the
-                    // Plate chunk for everyone — no first-open flash (perf #1).
-                    prefetchDocsEditor();
-                  }}
-                  onNodeDragStop={(_event, node, dragged) => {
-                    // A boundary proxy is the one draggable passive node (#91): it
-                    // persists a single per-scope placement keyed by realEndpointId,
-                    // never a batched Component position. It is `selectable:false`,
-                    // so it can never be part of a multi-select drag — route it on
-                    // its own; everything else is a Component position write.
-                    if (node.type === "boundary-proxy") {
-                      void persistProxyPlacement(node);
-                    } else {
-                      void persistPositions(dragged);
-                    }
-                  }}
-                  onSelectionDragStop={(_event, dragged) =>
-                    void persistPositions(dragged)
-                  }
-                  nodeTypes={nodeTypes}
-                  edgeTypes={edgeTypes}
-                  nodesDraggable={canEdit}
-                  nodesConnectable={canEdit}
-                  deleteKeyCode={canEdit ? undefined : null}
-                  fitView
-                >
-                  <Background />
-                  <Controls />
-                  <Panel position="top-left" className="flex gap-2">
-                    {canEdit && (
-                      <AddComponent
-                        onAdd={addComponent}
-                        parentKind={parentKind}
-                        pending={createNode.isPending}
-                      />
-                    )}
-                    {/* Slug-readable: visible to any viewer, not gated on
+          <EdgeGroupContext.Provider value={edgeGroups}>
+            <SelectEdgeContext.Provider value={selectEdge}>
+              <DescendComponentContext.Provider value={descend}>
+                <DeleteComponentContext.Provider value={removeComponent}>
+                  <CanEditContext.Provider value={canEdit}>
+                    <ReactFlow<CanvasRFNode, ConnectionEdge>
+                      nodes={nodes}
+                      edges={edges}
+                      onNodesChange={onNodesChange}
+                      onEdgesChange={onEdgesChange}
+                      onConnect={(c) => void handleConnect(c)}
+                      // Loose connection mode: a Connection can be drawn between any
+                      // two handles in either direction — Components are not
+                      // directional, so a Port has no input/output role and the drag
+                      // direction carries no meaning here (a Connection's interaction
+                      // is set separately; #65). The draw order is preserved on the
+                      // Edge for the eventual arrowhead derivation (ADR-0027).
+                      connectionMode={ConnectionMode.Loose}
+                      // Instant drag feedback: reject a self-link and a still-optimistic
+                      // (temp_) endpoint by snapping back. Duplicates are deliberately
+                      // allowed through (passing [] skips the duplicate rule) so
+                      // onConnect can surface a toast — blocking them here would snap a
+                      // duplicate back silently, with no explanation.
+                      isValidConnection={(c) => {
+                        const { source, target } = c;
+                        if (!source || !target) return false;
+                        if (
+                          source.startsWith("temp_") ||
+                          target.startsWith("temp_")
+                        ) {
+                          return false;
+                        }
+                        return canConnect({ source, target }, []).ok;
+                      }}
+                      onEdgesDelete={handleEdgesDelete}
+                      onNodeClick={(_event, node) => {
+                        // Passive nodes (boundary proxies) have no editable record —
+                        // never open the detail panel for them (ADR-0016).
+                        if (isPassiveNode(node)) return;
+                        // A `temp_…` Component has no server id yet; opening the
+                        // detail panel would query for a node the server cannot
+                        // find. Single-click selection only for real Components —
+                        // double-click still descends.
+                        if (node.id.startsWith("temp_")) return;
+                        setSelectedNodeId(node.id);
+                      }}
+                      onPaneClick={() => setSelectedNodeId(null)}
+                      onNodeDoubleClick={(_event, node) => {
+                        // A boundary proxy descends through its own "go to real"
+                        // affordance (to the off-scope endpoint), not the generic
+                        // double-click (ADR-0016).
+                        if (isPassiveNode(node)) return;
+                        descend(node.id);
+                      }}
+                      onNodeMouseEnter={(_event, node) => {
+                        // Make Descent feel instant: warm the interior Canvas payload (tRPC
+                        // cache, the same key the descended island reads) and the route shell.
+                        // Also warm the Plate docs-editor chunk so first selection of a
+                        // Component doesn't pay a "Loading editor…" flash (ADR-0015 §6).
+                        // Passive nodes have no interior to warm (ADR-0016).
+                        if (isPassiveNode(node)) return;
+                        if (node.id.startsWith("temp_")) return;
+                        void utils.architecture.getCanvas.prefetch({
+                          slug,
+                          canvasNodeId: node.id,
+                        });
+                        router.prefetch(`/p/${slug}/n/${node.id}`);
+                        // Viewers open the read-only docs panel too, so warm the
+                        // Plate chunk for everyone — no first-open flash (perf #1).
+                        prefetchDocsEditor();
+                      }}
+                      onNodeDragStop={(_event, node, dragged) => {
+                        // A boundary proxy is the one draggable passive node (#91): it
+                        // persists a single per-scope placement keyed by realEndpointId,
+                        // never a batched Component position. It is `selectable:false`,
+                        // so it can never be part of a multi-select drag — route it on
+                        // its own; everything else is a Component position write.
+                        if (node.type === "boundary-proxy") {
+                          void persistProxyPlacement(node);
+                        } else {
+                          void persistPositions(dragged);
+                        }
+                      }}
+                      onSelectionDragStop={(_event, dragged) =>
+                        void persistPositions(dragged)
+                      }
+                      nodeTypes={nodeTypes}
+                      edgeTypes={edgeTypes}
+                      nodesDraggable={canEdit}
+                      nodesConnectable={canEdit}
+                      deleteKeyCode={canEdit ? undefined : null}
+                      fitView
+                    >
+                      <Background />
+                      <Controls />
+                      <Panel position="top-left" className="flex gap-2">
+                        {canEdit && (
+                          <AddComponent
+                            onAdd={addComponent}
+                            parentKind={parentKind}
+                            pending={createNode.isPending}
+                          />
+                        )}
+                        {/* Slug-readable: visible to any viewer, not gated on
                       edit. Always exports the whole project (ADR-0017 /
                       #15) — the scope-specific export lives on the
                       breadcrumb bar. */}
-                    <CopyMarkdownToolbar slug={slug} />
-                  </Panel>
-                  {selectedNodeId !== null &&
-                    (canEdit ? (
-                      <Panel
-                        key={selectedNodeId}
-                        position="top-right"
-                        className="top-0! right-0! bottom-0! m-0! flex"
-                      >
-                        {/* Owner mode: full edit affordances wired to the
+                        <CopyMarkdownToolbar slug={slug} />
+                      </Panel>
+                      {selectedNodeId !== null &&
+                        (canEdit ? (
+                          <Panel
+                            key={selectedNodeId}
+                            position="top-right"
+                            className="top-0! right-0! bottom-0! m-0! flex"
+                          >
+                            {/* Owner mode: full edit affordances wired to the
                           canvas's mutations. Discriminated `readOnly: false`
                           keeps write callbacks visible at compile time (#16). */}
-                        <ComponentDetailPanel
-                          readOnly={false}
-                          ownerNodeId={selectedNodeId}
-                          slug={slug}
-                          currentKind={selectedNode?.kind ?? "GENERIC"}
-                          parentKind={parentKind}
-                          initialDocumentation={
-                            selectedNode?.documentation ?? ""
-                          }
-                          onClose={closeDetailPanel}
-                          onChangeKind={commitNodeKind}
-                          onConnect={commitConnect}
-                          onDeleteConnection={commitDeleteConnection}
-                          onCommitDocumentation={commitDocumentation}
-                          onPreviewSpec={handlePreviewSpec}
-                          specPreviewPending={
-                            activePreviewOwnerId === selectedNodeId
-                          }
-                          specPreviewError={
-                            specPreviewError?.ownerNodeId === selectedNodeId
-                              ? specPreviewError.message
-                              : null
-                          }
-                        />
-                      </Panel>
-                    ) : (
-                      <Panel
-                        key={selectedNodeId}
-                        position="top-right"
-                        className="top-0! right-0! bottom-0! m-0! flex"
-                      >
-                        {/* Viewer mode: read-only docs, zero write affordances.
+                            <ComponentDetailPanel
+                              readOnly={false}
+                              ownerNodeId={selectedNodeId}
+                              slug={slug}
+                              currentKind={selectedNode?.kind ?? "GENERIC"}
+                              parentKind={parentKind}
+                              initialDocumentation={
+                                selectedNode?.documentation ?? ""
+                              }
+                              onClose={closeDetailPanel}
+                              onChangeKind={commitNodeKind}
+                              onConnect={commitConnect}
+                              onDeleteConnection={commitDeleteConnection}
+                              onCommitDocumentation={commitDocumentation}
+                              onPreviewSpec={handlePreviewSpec}
+                              specPreviewPending={
+                                activePreviewOwnerId === selectedNodeId
+                              }
+                              specPreviewError={
+                                specPreviewError?.ownerNodeId === selectedNodeId
+                                  ? specPreviewError.message
+                                  : null
+                              }
+                            />
+                          </Panel>
+                        ) : (
+                          <Panel
+                            key={selectedNodeId}
+                            position="top-right"
+                            className="top-0! right-0! bottom-0! m-0! flex"
+                          >
+                            {/* Viewer mode: read-only docs, zero write affordances.
                           Discriminated `readOnly: true` omits mutations at
                           compile time (#16). */}
-                        <ComponentDetailPanel
-                          readOnly={true}
-                          ownerNodeId={selectedNodeId}
-                          slug={slug}
-                          currentKind={selectedNode?.kind ?? "GENERIC"}
-                          parentKind={parentKind}
-                          initialDocumentation={
-                            selectedNode?.documentation ?? ""
-                          }
-                          onClose={closeDetailPanel}
-                        />
-                      </Panel>
-                    ))}
-                  {!nodes.some((n) => n.type === "component") && (
-                    <Panel position="top-center">
-                      <p className="mt-2 text-sm text-white/50">
-                        Empty canvas. Add a Component to start modeling.
-                      </p>
-                    </Panel>
-                  )}
-                </ReactFlow>
-              </CanEditContext.Provider>
-            </DeleteComponentContext.Provider>
-          </DescendComponentContext.Provider>
+                            <ComponentDetailPanel
+                              readOnly={true}
+                              ownerNodeId={selectedNodeId}
+                              slug={slug}
+                              currentKind={selectedNode?.kind ?? "GENERIC"}
+                              parentKind={parentKind}
+                              initialDocumentation={
+                                selectedNode?.documentation ?? ""
+                              }
+                              onClose={closeDetailPanel}
+                            />
+                          </Panel>
+                        ))}
+                      {!nodes.some((n) => n.type === "component") && (
+                        <Panel position="top-center">
+                          <p className="mt-2 text-sm text-white/50">
+                            Empty canvas. Add a Component to start modeling.
+                          </p>
+                        </Panel>
+                      )}
+                    </ReactFlow>
+                  </CanEditContext.Provider>
+                </DeleteComponentContext.Provider>
+              </DescendComponentContext.Provider>
+            </SelectEdgeContext.Provider>
+          </EdgeGroupContext.Provider>
         </SetEdgeInteractionContext.Provider>
       </EditEdgeContext.Provider>
       {/* Spec attach/merge modal (#64 / ADR-0029). Portaled by Base UI, so it
