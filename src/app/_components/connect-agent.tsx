@@ -1,10 +1,13 @@
 "use client";
 
-import { Check, Copy, KeyRound } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Toaster, toast } from "sonner";
 
 import { api, type RouterOutputs } from "~/trpc/react";
+
+import { CopyButton } from "./copy-button";
+import { McpInstructions } from "./mcp-instructions";
 
 /**
  * Owner-only Connect-an-agent surface: mints API tokens (revealed exactly once),
@@ -61,12 +64,10 @@ export function ConnectAgent() {
   const [label, setLabel] = useState("");
   const [expiry, setExpiry] = useState<string>("90");
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const createToken = api.token.create.useMutation({
     onSuccess: async ({ token }) => {
       setRevealedToken(token);
-      setCopied(false);
       setLabel("");
       setExpiry("90");
       await utils.token.list.invalidate();
@@ -106,19 +107,6 @@ export function ConnectAgent() {
       label: trimmed.length > 0 ? trimmed : undefined,
       expiresInDays: expiryToDays(expiry),
     });
-  }
-
-  async function handleCopy() {
-    if (!revealedToken) return;
-    try {
-      await navigator.clipboard.writeText(revealedToken);
-      setCopied(true);
-      toast.success("Token copied to clipboard.");
-    } catch {
-      toast.error(
-        "Couldn’t copy automatically — select the token and copy it manually.",
-      );
-    }
   }
 
   return (
@@ -182,18 +170,7 @@ export function ConnectAgent() {
             <code className="flex-1 overflow-x-auto rounded-lg bg-black/40 px-3 py-2 font-mono text-sm text-white">
               {revealedToken}
             </code>
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="inline-flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold transition hover:bg-white/20"
-            >
-              {copied ? (
-                <Check className="h-4 w-4" />
-              ) : (
-                <Copy className="h-4 w-4" />
-              )}
-              {copied ? "Copied" : "Copy"}
-            </button>
+            <CopyButton value={revealedToken} />
           </div>
           <button
             type="button"
@@ -204,6 +181,8 @@ export function ConnectAgent() {
           </button>
         </div>
       )}
+
+      <McpInstructions token={revealedToken} />
 
       <div>
         <h2 className="mb-3 text-lg font-semibold">Your tokens</h2>
