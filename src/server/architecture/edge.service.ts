@@ -67,11 +67,12 @@ export function activeDuplicateWhere(
  * backstop (ADR-0010), both surfaced as the same `ConflictError` shape
  * (`details.conflictingEdgeIds` names the active Edge that blocked the write).
  *
- * Owner-only: the Project is addressed by `projectId` (an internal handle,
- * never the capability slug — writes are never slug-granted, ADR-0002) and the
- * write is authorized through `access.assertCanWrite` against `project.ownerId`.
- * Ownership comes from the actor, never from `input` (ADR-0001). `label` is
- * UNTRUSTED user content, stored verbatim (prompt-injection standing note).
+ * Requires `edit` capability — owner, ADMIN, or EDITOR member (ADR-0040). The
+ * Project is addressed by `projectId` (an internal handle, never the capability
+ * slug — writes are never slug-granted, ADR-0002) and the write is authorized
+ * through `access-db.authorizeProjectWrite(…, "edit")`. The actor identity comes
+ * from the session, never from `input` (ADR-0001). `label` is UNTRUSTED user
+ * content, stored verbatim (prompt-injection standing note).
  */
 export async function connectNodes(
   db: Db,
@@ -243,8 +244,9 @@ function duplicateConnectionMessage(label: string | null): string {
 /**
  * Edits a Connection's `label`. Addressed by the Edge `id` — the natural key
  * for an existing row, and how a future MCP tool arrives: the service loads the
- * Edge, resolves its Project, and authorizes owner-only through
- * `access.assertCanWrite` (ADR-0001). Only `label` changes — `label: null`
+ * Edge, resolves its Project, and authorizes via
+ * `authorizeProjectWrite(…, "edit")` — `edit` capability: owner, ADMIN, or EDITOR
+ * member (ADR-0040). Only `label` changes — `label: null`
  * clears it, `label: undefined` leaves it. A Connection's `interaction` is set
  * at creation and (until the #65 picker) is not edited here. `label` is
  * UNTRUSTED user content, stored verbatim (prompt-injection standing note).
@@ -272,8 +274,9 @@ export async function updateEdge(
 
 /**
  * Upgrades a Connection's `interaction` (the picker on the selected edge; #65).
- * Addressed by the Edge `id`; loaded, its Project resolved, and authorized
- * owner-only through `access.assertCanWrite` (ADR-0001).
+ * Addressed by the Edge `id`; loaded, its Project resolved, and authorized via
+ * `authorizeProjectWrite(…, "edit")` — `edit` capability: owner, ADMIN, or EDITOR
+ * member (ADR-0040).
  *
  * Unlike `updateEdge` (label-only, never collides), changing `interaction` can
  * collide with the de-dupe indexes: the four directional values de-dupe on the
@@ -349,8 +352,9 @@ export async function updateEdgeInteraction(
  * Removes a Connection via soft-delete (sets `deletedAt`) so the action stays
  * recoverable — the safety net that matters because AI agents mutate the graph
  * (CONTEXT.md "Soft-delete + undo"). Addressed by the Edge `id`; loaded, its
- * Project resolved, and authorized owner-only through `access.assertCanWrite`
- * (ADR-0001). Idempotent in spirit: an already-deleted Edge reads as not-found.
+ * Project resolved, and authorized via `authorizeProjectWrite(…, "edit")` —
+ * `edit` capability: owner, ADMIN, or EDITOR member (ADR-0040). Idempotent in
+ * spirit: an already-deleted Edge reads as not-found.
  *
  * `deleteEdge` is a plain LONE soft-delete (ADR-0008's carve-out, now the only
  * path): it sets `deletedAt` on the one Edge and mints NO `deletionId` — there
@@ -382,8 +386,9 @@ export async function deleteEdge(
  * the batch handle is consumed. An unknown / already-restored / lone-`deleteEdge`
  * id (those mint no `deletionId`) matches no rows and reads as not-found.
  *
- * Undo is a WRITE — owner-only via the stamped Edge's Project (ADR-0001 /
- * ADR-0002); a capability-URL viewer cannot undo. Pre-checks the de-dupe
+ * Undo is a WRITE — requires `edit` capability (owner, ADMIN, or EDITOR member;
+ * ADR-0040) via the stamped Edge's Project (ADR-0001 / ADR-0002); a read-only
+ * (guest-VIEW) viewer cannot undo. Pre-checks the de-dupe
  * invariant the revival must not violate — for each revived Edge, its
  * interaction-appropriate slot (`idx_edge_dedup` directional or
  * `idx_edge_assoc_dedup` association) — and surfaces a readable `ConflictError`
