@@ -309,7 +309,14 @@ export function ConnectionEdgeView({
               />
             ) : pickerOpen ? (
               <Popover open onOpenChange={() => undefined}>
-                <PopoverTrigger render={labelChip ?? <span />} />
+                {/* The labelled chip renders a <span>, the empty-edge affordance a
+                    <button> — tell Base UI which so it doesn't assume a native
+                    button and warn (the chip is the popover anchor, not a real
+                    submit control). */}
+                <PopoverTrigger
+                  nativeButton={!hasLabel}
+                  render={labelChip ?? <span />}
+                />
                 <PopoverPanel
                   side="bottom"
                   align="center"
