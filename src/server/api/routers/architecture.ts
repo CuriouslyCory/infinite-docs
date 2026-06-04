@@ -32,6 +32,10 @@ import {
   updateEdge,
   updateEdgeInteraction,
 } from "~/server/architecture/edge.service";
+import {
+  claimInvite,
+  createInvite,
+} from "~/server/architecture/invite.service";
 import { exportMarkdown } from "~/server/architecture/export.service";
 import {
   createTrace,
@@ -48,7 +52,9 @@ import {
 } from "~/server/architecture/spec.service";
 import {
   applySpecInput,
+  claimInviteInput,
   connectNodesInput,
+  createInviteInput,
   createNodeInput,
   createProjectInput,
   createTraceInput,
@@ -162,6 +168,38 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await getProjectAccess(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // ADMIN+ mutation: mint a role-bearing invite link (#106). The service gates on
+  // `admin` via the id-keyed write seam (owner or ADMIN member; ADR-0040) and
+  // returns the raw `infinv_…` token EXACTLY once. `protectedProcedure` is the
+  // transport gate; real authz is in the service (ADR-0001/0040).
+  createInvite: protectedProcedure
+    .input(createInviteInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await createInvite(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Signed-in mutation: redeem an invite link into a Membership (#106). The whole
+  // race-safe/idempotent/non-disclosing claim protocol lives in the service (one
+  // READ COMMITTED transaction; ADR-0040). Every invalid state collapses to one
+  // `NOT_FOUND` the `/i/[token]` shell renders as "invalid or expired" — no
+  // project disclosure. `protectedProcedure` enforces the signed-in requirement;
+  // anon is redirected to sign-in by the route shell before this is ever called.
+  claimInvite: protectedProcedure
+    .input(claimInviteInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await claimInvite(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

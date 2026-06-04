@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { CopyButton } from "~/app/_components/copy-button";
+import { InviteCreate } from "~/app/p/[slug]/_components/invite-create";
 import { Popover, PopoverPanel, PopoverTrigger } from "~/components/ui/popover";
 import { guestAccessLevel, type GuestAccessLevel } from "~/lib/schemas";
 import { api } from "~/trpc/react";
@@ -74,7 +75,12 @@ export function ShareMenu({
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-white/10 px-3 py-2 text-sm font-medium transition hover:bg-white/20"
           />
         </div>
-        {canManage && <GuestAccessToggle slug={slug} projectId={projectId} />}
+        {canManage && (
+          <>
+            <GuestAccessToggle slug={slug} projectId={projectId} />
+            <InviteCreate projectId={projectId} />
+          </>
+        )}
       </PopoverPanel>
     </Popover>
   );

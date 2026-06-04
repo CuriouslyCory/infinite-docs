@@ -64,6 +64,61 @@ export const getProjectAccessInput = z.object({
 export type GetProjectAccessInput = z.infer<typeof getProjectAccessInput>;
 
 /**
+ * A Member's assignable Role (#106). Client-safe source of truth for the value
+ * set — the ShareMenu invite-create role picker imports `projectRole.options`
+ * as values, exactly like the kind palette imports `nodeKind`. The Prisma
+ * `ProjectRole` enum mirrors it; a compile-time parity guard in the service
+ * layer (`invite.service.ts`) fails the build on drift. There is no OWNER or
+ * NONE member role — owner is the `ownerId` identity, "none" is the absence of a
+ * grant (ADR-0040). NEVER import the Prisma enum into client code — it reaches
+ * the server graph (ADR-0004); import this.
+ */
+export const projectRole = z.enum(["VIEWER", "EDITOR", "ADMIN"]);
+export type ProjectRoleInput = z.infer<typeof projectRole>;
+
+/**
+ * The expiry choices the invite-create flow offers, in days. Mirrors
+ * `apiTokenExpiresInDays` (a bounded day-count, never a raw date — sidesteps
+ * past-date and clock-skew classes) but defaults to **7**: invites churn faster
+ * than API tokens, so a short default is the safer good-default (philosophy #2).
+ * `null` is a non-expiring invite — an allowed but standing exposure (warned in
+ * the UI). The service computes `expiresAt` from this.
+ */
+export const inviteExpiresInDays = z
+  .union([z.literal(7), z.literal(30), z.literal(90), z.null()])
+  .default(7);
+
+/**
+ * Input for minting a role-bearing invite link (`createInvite`, #106). Addressed
+ * by `projectId` (an internal handle the manager already holds in the ShareMenu),
+ * NOT the slug — writes are never slug-granted (ADR-0002). Gated ADMIN+ in the
+ * service. `role` is the Role the link grants on redemption; `maxUses` null =
+ * unlimited (a positive int caps the redemptions, hard-bounded at 1000 so an
+ * accidental huge value can't mint a near-unlimited standing link).
+ */
+export const createInviteInput = z.object({
+  projectId: z.string().min(1),
+  role: projectRole,
+  expiresInDays: inviteExpiresInDays,
+  maxUses: z.number().int().positive().max(1000).nullable().default(null),
+});
+// `z.input` so callers may omit the defaulted `expiresInDays`/`maxUses`; the
+// service re-parses to materialize the defaults.
+export type CreateInviteInput = z.input<typeof createInviteInput>;
+
+/**
+ * Input for redeeming an invite link (`claimInvite`, #106). Carries only the raw
+ * `infinv_…` bearer token — the `/i/[token]` route shell passes it; the actor
+ * comes from the session (claim is signed-in only). Every invalid state (missing
+ * / expired / revoked / maxed / soft-deleted project) collapses to one
+ * non-disclosing `NotFoundError` in the service (ADR-0040 redemption protocol).
+ */
+export const claimInviteInput = z.object({
+  token: z.string().min(1),
+});
+export type ClaimInviteInput = z.infer<typeof claimInviteInput>;
+
+/**
  * The expiry choices the Connect-an-agent mint flow offers, in days. `null`
  * means a non-expiring token — an allowed owner choice that carries a standing
  * security exposure (warned in the UI; recorded in ADR-0020). The service

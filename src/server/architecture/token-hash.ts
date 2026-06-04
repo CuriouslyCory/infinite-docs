@@ -21,6 +21,13 @@ import { createHmac, randomBytes } from "node:crypto";
  */
 
 const TOKEN_PREFIX = "infdoc_";
+// A distinct issuer tag for invite links (#106) so the two bearer secrets are
+// greppably separate in logs and routable to the right table by a future
+// cross-table lookup, and registrable with secret scanners as their own class
+// (ADR-0040). The hash machinery (pepper, HMAC, key version) is shared verbatim;
+// only the human-facing prefix differs. `tokenPrefix` slices the first 12 chars
+// and works unchanged for either tag.
+const INVITE_PREFIX = "infinv_";
 const PREFIX_DISPLAY_LENGTH = 12;
 
 /**
@@ -58,6 +65,18 @@ function pepperForVersion(keyVersion: number): string {
  */
 export function generateRawToken(): string {
   return TOKEN_PREFIX + randomBytes(32).toString("base64url");
+}
+
+/**
+ * Generates a fresh raw invite link token (#106): the `infinv_` issuer tag (a
+ * distinct, greppable class from the `infdoc_` API token) followed by 32 bytes
+ * (256 bits) of CSPRNG entropy, URL-safe base64 so it rides the `/i/[token]`
+ * path unescaped. Shown to the admin exactly once at mint; stored only as its
+ * keyed HMAC (`hashToken`, shared with API tokens — lookups are table-scoped, so
+ * the shared pepper carries no cross-table confusion risk; ADR-0040).
+ */
+export function generateRawInviteToken(): string {
+  return INVITE_PREFIX + randomBytes(32).toString("base64url");
 }
 
 /**
