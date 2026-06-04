@@ -535,13 +535,9 @@ export const deleteEdgeInput = z.object({
 });
 export type DeleteEdgeInput = z.infer<typeof deleteEdgeInput>;
 
-/**
- * Typed output of the `delete_component` MCP tool — the cascade's soft-delete
- * receipt. Drives MCP's `outputSchema` (SDK 1.26.0) so the agent receives
- * `structuredContent` on the wire. `deletionId` is the undo handle the agent
- * passes to `restore_component`; `nodeIds`/`edgeIds`/`specIds` name the rows the
- * cascade tombstoned. Mirrors `deleteNode`'s return (ADR-0008, ADR-0030).
- */
+// MCP `outputSchema` (SDK 1.26.0): the agent receives `structuredContent`, not a
+// message blob. `deletionId` is the undo handle for `restore_component`.
+// Mirrors `deleteNode`'s return (ADR-0008, ADR-0030).
 export const deleteComponentOutput = z.object({
   deletionId: z.string(),
   nodeIds: z.array(z.string()),
@@ -550,15 +546,10 @@ export const deleteComponentOutput = z.object({
 });
 export type DeleteComponentOutput = z.infer<typeof deleteComponentOutput>;
 
-/** `restoreNode` returns the identical shape — the revived rows the handle
- *  resolved — so the `restore_component` tool reuses the delete output schema. */
+// `restoreNode` returns the identical shape — reuse the delete output schema.
 export const restoreComponentOutput = deleteComponentOutput;
 
-/**
- * Typed output of the `delete_connection` MCP tool. A lone `deleteEdge` mints no
- * `deletionId` (ADR-0030), so the receipt carries only the removed Connection's
- * id — there is no undo handle to surface.
- */
+// A lone `deleteEdge` mints no `deletionId` (ADR-0030) — no undo handle to surface.
 export const deleteConnectionOutput = z.object({
   edgeId: z.string(),
 });
