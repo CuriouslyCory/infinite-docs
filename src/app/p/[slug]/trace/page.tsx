@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { ProjectHeader } from "~/app/p/[slug]/_components/project-header";
 import { TraceIsland } from "~/app/p/[slug]/trace/trace-island";
-import { auth } from "~/server/auth";
+import { capabilityAtLeast } from "~/server/architecture/access";
 import { HydrateClient, api } from "~/trpc/server";
 
 /**
@@ -25,7 +25,6 @@ export default async function TraceViewPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const session = await auth();
 
   let project;
   try {
@@ -37,7 +36,7 @@ export default async function TraceViewPage({
     throw error;
   }
 
-  const canEdit = session?.user?.id === project.ownerId;
+  const canEdit = capabilityAtLeast(project.viewerCapability, "edit");
 
   void api.architecture.listProjectComponents.prefetch({ slug });
   // The header's Breadcrumbs reads `getCanvas` with the same `{ slug,

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { CanvasIsland } from "~/app/p/[slug]/_canvas";
 import { ProjectHeader } from "~/app/p/[slug]/_components/project-header";
-import { auth } from "~/server/auth";
+import { capabilityAtLeast } from "~/server/architecture/access";
 import { HydrateClient, api } from "~/trpc/server";
 
 /**
@@ -27,21 +27,21 @@ export default async function InteriorCanvasPage({
   params: Promise<{ slug: string; nodeId: string }>;
 }) {
   const { slug, nodeId } = await params;
-  const session = await auth();
 
   let project;
   try {
     project = await api.architecture.getProjectBySlug({ slug });
   } catch (error) {
-    // A missing OR soft-deleted Project both surface as the same 404 (ADR-0002);
-    // any other error propagates so a DB outage isn't disguised as "not found".
+    // A missing, soft-deleted, OR access-denied Project all surface as the same
+    // 404 (ADR-0002/0040); any other error propagates so a DB outage isn't
+    // disguised as "not found".
     if (error instanceof TRPCError && error.code === "NOT_FOUND") {
       notFound();
     }
     throw error;
   }
 
-  const canEdit = session?.user?.id === project.ownerId;
+  const canEdit = capabilityAtLeast(project.viewerCapability, "edit");
 
   // Seed the scoped Canvas so the island and the breadcrumb bar both read it
   // from the hydration cache — one fetch, no waterfall. The input MUST match the

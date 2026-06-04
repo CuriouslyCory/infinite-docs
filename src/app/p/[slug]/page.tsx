@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { CanvasIsland } from "~/app/p/[slug]/_canvas";
 import { ProjectHeader } from "~/app/p/[slug]/_components/project-header";
-import { auth } from "~/server/auth";
+import { capabilityAtLeast } from "~/server/architecture/access";
 import { HydrateClient, api } from "~/trpc/server";
 
 /**
@@ -19,23 +19,26 @@ export default async function ProjectPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const session = await auth();
 
   let project;
   try {
     project = await api.architecture.getProjectBySlug({ slug });
   } catch (error) {
-    // A missing OR soft-deleted project both surface as NOT_FOUND, and we
-    // render the same 404 — never revealing whether a slug exists-but-forbidden
-    // (ADR-0002). Any other error propagates to the error boundary, so a DB
-    // outage is not disguised as "project doesn't exist".
+    // A missing, soft-deleted, OR access-denied project (guestAccess=NONE for a
+    // non-member) all surface as NOT_FOUND, and we render the same 404 — never
+    // revealing whether a slug exists-but-forbidden (ADR-0002/0040). Any other
+    // error propagates to the error boundary, so a DB outage is not disguised as
+    // "project doesn't exist".
     if (error instanceof TRPCError && error.code === "NOT_FOUND") {
       notFound();
     }
     throw error;
   }
 
-  const canEdit = session?.user?.id === project.ownerId;
+  // Derive the edit affordance from the server-resolved capability and pass a
+  // plain boolean to the client island — the Capability type (whose module graph
+  // reaches Prisma) never crosses into the client bundle (ADR-0040, ADR-0004).
+  const canEdit = capabilityAtLeast(project.viewerCapability, "edit");
 
   // Prefetch the root Canvas so the client island reads it from the hydration
   // cache with no extra round trip (ADR-0004 names this route as that seam). The
