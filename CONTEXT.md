@@ -255,6 +255,14 @@ Edge half — same-Canvas, altitude, and cross-scope — is realized now too; re
 is realized now via **getCanvas**, and user-facing navigation into it is realized now via
 **Descent**. Client rendering of the cross-scope Edges and proxies is realized now (#65).)*
 
+On a hub-dense Canvas the **active** Connection — the one hovered or selected — lifts its label
+clear of its neighbours and shows the full untruncated text in place, while every other label
+recedes (dims and blurs) so the focused one reads; the interaction picker for a selected Connection
+floats in a **popover** off the bezier midpoint rather than piling onto it. Label layering is plain
+CSS `z-index` within the single shared label portal, **not** React Flow's edge `zIndex` (which
+raises the SVG edge group, not the label). Presentation-only — no Edge, Connection, or Interaction
+data changes (ADR-0039).
+
 ### getCanvas
 The single service read that materializes a **Canvas** for a given **Canvas
 scope** in one round trip. Its result is
@@ -689,7 +697,13 @@ untyped plain-line Connection. *(Realized now as a per-Connection field set at `
 the canonical `~/lib/connection-direction` helper shared with the exporter (ADR-0027). User-facing
 labels live in `INTERACTION_LABEL` (`~/lib/interactions.ts`), keyed by `Interaction` so a new value
 fails to compile until labelled — the same exhaustiveness guard `KIND_LABEL` gives Component
-kinds.)*
+kinds. Each directional interaction also carries a resting-Canvas **glyph** in `INTERACTION_GLYPH`
+(`~/lib/interactions.ts`, `Record<Interaction, LucideIcon | null>`), so a directional Connection
+reads at a glance before selection; `ASSOCIATION` maps to `null` by design — a plain relationship
+stays bare. Keyed by `Interaction` so a new value fails to compile until it gets a glyph, the same
+guard the labels above carry and the `KIND_ICON` precedent in `~/lib/node-kinds.ts`. The glyph is a
+*kind* cue, never a direction signal — the arrow stays derived from `(interaction, source, target)`
+(ADR-0027, ADR-0039).)*
 
 ### Component-detail panel
 The slide-in surface that opens when a **Component** is selected on the **Canvas** — a sidebar,

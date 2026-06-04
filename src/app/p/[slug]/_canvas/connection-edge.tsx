@@ -4,12 +4,16 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
+  useStore,
   type Edge,
   type EdgeProps,
 } from "@xyflow/react";
 import { createContext, useContext, useRef, useState } from "react";
 
+import { Popover, PopoverPanel, PopoverTrigger } from "~/components/ui/popover";
+import { Tooltip, TooltipPanel, TooltipTrigger } from "~/components/ui/tooltip";
 import {
+  INTERACTION_GLYPH,
   INTERACTION_HINT,
   INTERACTION_LABEL,
   INTERACTION_ORDER,
@@ -96,7 +100,13 @@ export function ConnectionEdgeView({
   const onSetInteraction = useContext(SetEdgeInteractionContext);
   const canEditCanvas = useContext(CanEditContext);
   const [editing, setEditing] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const [draft, setDraft] = useState(d.label ?? "");
+  // A boolean "is any edge selected" — not the selected id — so this flips
+  // false↔true once per selection change and every edge re-renders on the
+  // transition, not per pixel (performance-above-all; ADR-0039). It powers the
+  // sibling-recede: when some OTHER edge is active, this one's label dims.
+  const anyEdgeSelected = useStore((s) => s.edges.some((e) => e.selected));
   // Enter commits, then blurs the unmounting input — which would fire a second
   // commit; this latch makes commit/cancel idempotent for one edit session.
   const settled = useRef(false);
@@ -108,6 +118,22 @@ export function ConnectionEdgeView({
   const canEdit = !d.optimistic && canEditCanvas;
   const isSelected = selected ?? false;
   const hasLabel = d.label !== null && d.label.length > 0;
+
+  const Glyph = INTERACTION_GLYPH[d.interaction];
+  const isDirectional = Glyph !== null;
+  // The focused edge — hovered or selected — reads loud; everything else stays
+  // quiet. Hover overrides recede so pointing at a dimmed sibling lifts it back.
+  const active = hovered || isSelected;
+  const recede = anyEdgeSelected && !isSelected && !hovered;
+  // Labels render as flat siblings in ONE shared EdgeLabelRenderer portal, so
+  // React Flow's edge zIndex / elevateEdgesOnSelect (they raise the SVG group,
+  // not the label) can't lift the active one — plain CSS z-index on this div is
+  // the only lever (ADR-0039).
+  const zIndex = isSelected ? 40 : hovered ? 30 : 1;
+  // Empty + plain ASSOCIATION stays bare at rest (nothing to show); a directional
+  // edge still shows its glyph, and any selected/editing edge shows its chip.
+  const showLabelLayer = hasLabel || editing || isSelected || isDirectional;
+  const pickerOpen = isSelected && canEdit;
 
   function beginEditing() {
     if (!canEdit) return;
@@ -132,6 +158,113 @@ export function ConnectionEdgeView({
     setEditing(false);
   }
 
+  // The visible midpoint element that anchors the picker popover: the label chip
+  // (full-text-on-active), the "+ label" affordance on a selected empty edge, or
+  // a faint glyph dot for an unlabelled directional edge at rest. `Glyph` (not the
+  // `isDirectional` alias) gates the render so TS narrows the nullable icon.
+  const labelChip = hasLabel ? (
+    <span
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        beginEditing();
+      }}
+      title={canEdit ? "Double-click to edit label" : undefined}
+      className={`flex items-center gap-1 rounded-md border bg-[#1f2138]/85 px-2 py-0.5 text-xs leading-tight font-medium shadow-sm backdrop-blur-sm ${
+        active
+          ? "border-[hsl(280,100%,70%)]/60 bg-[#1f2138]/95 text-white shadow-lg"
+          : "border-white/10 text-white/90"
+      } ${isDirectional ? "border-l-2 border-l-[hsl(280,100%,70%)]/40" : ""}`}
+    >
+      {Glyph && (
+        <Glyph
+          size={11}
+          aria-hidden
+          className="shrink-0 text-[hsl(280,100%,80%)]/70"
+        />
+      )}
+      <span
+        className={
+          active
+            ? "max-w-[20rem] break-words whitespace-normal"
+            : "max-w-[12rem] truncate"
+        }
+      >
+        {d.label}
+      </span>
+    </span>
+  ) : canEdit && isSelected ? (
+    <button
+      type="button"
+      className="flex items-center gap-1 rounded-md border border-[hsl(280,100%,70%)]/60 bg-[#1f2138]/95 px-2 py-0.5 text-xs font-medium text-white shadow-lg backdrop-blur-sm transition hover:bg-[#1f2138]"
+      onClick={(e) => {
+        e.stopPropagation();
+        beginEditing();
+      }}
+    >
+      {Glyph && (
+        <Glyph
+          size={11}
+          aria-hidden
+          className="shrink-0 text-[hsl(280,100%,80%)]/70"
+        />
+      )}
+      + label
+    </button>
+  ) : Glyph ? (
+    <span
+      title={INTERACTION_HINT[d.interaction]}
+      className={`flex size-4 items-center justify-center rounded-full border border-white/10 bg-[#1f2138]/70 text-[hsl(280,100%,80%)] shadow-sm backdrop-blur-sm transition ${
+        active ? "opacity-100" : "opacity-60"
+      }`}
+    >
+      <Glyph size={11} aria-hidden />
+    </span>
+  ) : null;
+
+  // Interaction picker — a segmented control offered only on a selected, editable
+  // Connection (viewers see arrowheads but no picker). It now floats in a popover
+  // anchored off the bezier midpoint rather than piling onto it (ADR-0039).
+  // Selecting a value upgrades the Connection's interaction in place; draw order
+  // is preserved, so a directional value points the arrow the way it was drawn
+  // (ADR-0027). Labelled "Interaction", never "type". Each option's hint surfaces
+  // through the shared Tooltip rather than a slow, unstyled native `title`.
+  const picker = (
+    <div
+      role="group"
+      aria-label="Interaction"
+      className="flex items-center gap-0.5"
+    >
+      {INTERACTION_ORDER.map((value) => {
+        const isCurrent = d.interaction === value;
+        return (
+          <Tooltip key={value}>
+            <TooltipTrigger
+              delay={300}
+              render={
+                <button
+                  type="button"
+                  aria-pressed={isCurrent}
+                  className={`rounded-md px-2 py-1 text-xs leading-none font-medium transition-colors ${
+                    isCurrent
+                      ? "bg-[hsl(280,100%,70%)]/90 font-semibold text-black"
+                      : "text-white/55 hover:bg-white/10 hover:text-white"
+                  }`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!isCurrent) onSetInteraction(id, value);
+                  }}
+                >
+                  {INTERACTION_LABEL[value]}
+                </button>
+              }
+            />
+            <TooltipPanel>{INTERACTION_HINT[value]}</TooltipPanel>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+
   return (
     <>
       <BaseEdge
@@ -140,98 +273,54 @@ export function ConnectionEdgeView({
         markerStart={markerStart}
         markerEnd={markerEnd}
       />
-      {(hasLabel || editing || isSelected) && (
+      {showLabelLayer && (
         <EdgeLabelRenderer>
           <div
             style={{
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
               pointerEvents: "all",
+              zIndex,
             }}
-            className="nodrag nopan flex flex-col items-center gap-1"
+            className={`nodrag nopan flex flex-col items-center transition duration-150 ${
+              recede ? "opacity-40 blur-[1px]" : "opacity-100"
+            }`}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
           >
-            <div className="flex items-center gap-1">
-              {editing ? (
-                <input
-                  className="nodrag w-[10rem] rounded bg-white/10 px-1 py-0.5 text-xs text-white outline-none"
-                  aria-label="Label connection"
-                  autoFocus
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onFocus={(e) => e.currentTarget.select()}
-                  onBlur={commit}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      commit();
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      cancel();
-                    }
-                  }}
-                />
-              ) : hasLabel ? (
-                <span
-                  className="max-w-[12rem] truncate rounded bg-[#1f2138] px-1.5 py-0.5 text-xs text-white shadow"
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    beginEditing();
-                  }}
-                  title={canEdit ? "Double-click to edit label" : undefined}
+            {editing ? (
+              <input
+                className="nodrag w-[10rem] rounded bg-white/10 px-1 py-0.5 text-xs text-white outline-none"
+                aria-label="Label connection"
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onFocus={(e) => e.currentTarget.select()}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commit();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    cancel();
+                  }
+                }}
+              />
+            ) : pickerOpen ? (
+              <Popover open onOpenChange={() => undefined}>
+                <PopoverTrigger render={labelChip ?? <span />} />
+                <PopoverPanel
+                  side="bottom"
+                  align="center"
+                  sideOffset={10}
+                  className="flex items-center gap-0.5 rounded-lg border border-white/15 bg-[#1f2138]/95 p-1 shadow-2xl backdrop-blur-md"
                 >
-                  {d.label}
-                </span>
-              ) : (
-                isSelected &&
-                canEdit && (
-                  <button
-                    type="button"
-                    className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-white/70 transition hover:text-white"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      beginEditing();
-                    }}
-                  >
-                    + label
-                  </button>
-                )
-              )}
-            </div>
-            {/* Interaction picker — an inline segmented control offered only on a
-                selected, editable Connection (viewers see arrowheads but no
-                picker). Selecting a value upgrades the Connection's interaction
-                in place; draw order is preserved, so a directional value points
-                the arrow the way it was drawn (ADR-0027). Labelled "Interaction",
-                never "type". */}
-            {isSelected && canEdit && (
-              <div
-                role="group"
-                aria-label="Interaction"
-                className="flex items-center gap-0.5 rounded bg-[#1f2138] p-0.5 shadow"
-              >
-                {INTERACTION_ORDER.map((value) => {
-                  const active = d.interaction === value;
-                  return (
-                    <button
-                      key={value}
-                      type="button"
-                      aria-pressed={active}
-                      title={INTERACTION_HINT[value]}
-                      className={`rounded px-1.5 py-0.5 text-xs transition ${
-                        active
-                          ? "bg-white/20 text-white"
-                          : "text-white/60 hover:text-white"
-                      }`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!active) onSetInteraction(id, value);
-                      }}
-                    >
-                      {INTERACTION_LABEL[value]}
-                    </button>
-                  );
-                })}
-              </div>
+                  {picker}
+                </PopoverPanel>
+              </Popover>
+            ) : (
+              labelChip
             )}
           </div>
         </EdgeLabelRenderer>
