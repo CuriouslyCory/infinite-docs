@@ -1,6 +1,9 @@
 import { type Project } from "../../../generated/prisma/client";
 import { type Capability } from "./access";
-import { authorizeProjectRead, authorizeProjectWrite } from "./access-db";
+import {
+  authorizeProjectRead,
+  resolveWritableProjectBySlug,
+} from "./access-db";
 import type { Actor, Db } from "./actor";
 import { NotFoundError } from "./errors";
 import { isSlugCollision } from "./prisma-errors";
@@ -65,13 +68,17 @@ export async function getProjectBySlug(
 
 /**
  * Owner-only soft-delete: resolve the Project by its capability slug, enforce
- * owner access, then stamp `deletedAt`. The conditional `updateMany` (the
- * `deletedAt: null` predicate) closes the TOCTOU race against a concurrent
- * delete — `count === 0` means another writer won, reported as not-found. A
- * soft-delete leaves child rows intact (no cascade fires); the project simply
- * stops resolving anywhere `deletedAt: null` is filtered. Like `deleteEdge`,
- * this is a *lone* soft-delete — no `deletionId`, no cascade — not the batched,
- * undoable form `deleteTrace`/`deleteNode` use.
+ * owner access, then stamp `deletedAt`. Destroying a Project requires `owner` —
+ * a non-owner ADMIN cannot delete (ADR-0040). The slug-keyed write seam keeps a
+ * true non-member of a `guestAccess=NONE` project non-disclosed (`NotFoundError`,
+ * the slug could be stale) while surfacing `ForbiddenError` to anyone who can
+ * read but is below `owner`. The conditional `updateMany` (the `deletedAt: null`
+ * predicate) closes the TOCTOU race against a concurrent delete — `count === 0`
+ * means another writer won, reported as not-found. A soft-delete leaves child
+ * rows intact (no cascade fires); the project simply stops resolving anywhere
+ * `deletedAt: null` is filtered. Like `deleteEdge`, this is a *lone* soft-delete
+ * — no `deletionId`, no cascade — not the batched, undoable form
+ * `deleteTrace`/`deleteNode` use.
  */
 export async function deleteProject(
   db: Db,
@@ -79,16 +86,7 @@ export async function deleteProject(
   input: DeleteProjectInput,
 ): Promise<{ id: string }> {
   const { slug } = deleteProjectInput.parse(input);
-  const found = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!found) {
-    throw new NotFoundError();
-  }
-  // Destroying a Project requires `owner` — a non-owner ADMIN cannot delete
-  // (ADR-0040). Authorized by internal id; ownership comes from the actor.
-  const project = await authorizeProjectWrite(db, actor, found.id, "owner");
+  const project = await resolveWritableProjectBySlug(db, actor, slug, "owner");
 
   const { count } = await db.project.updateMany({
     where: { id: project.id, deletedAt: null },

@@ -20,7 +20,10 @@ import {
 } from "~/lib/schemas";
 import type { Actor, Db } from "./actor";
 import { assertCanRead } from "./access";
-import { authorizeProjectWrite, resolveReadableProject } from "./access-db";
+import {
+  resolveReadableProject,
+  resolveWritableProjectBySlug,
+} from "./access-db";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { serializeTrace, type SerializerNode } from "./markdown";
 import { isTraceNameCollision } from "./prisma-errors";
@@ -639,29 +642,23 @@ export interface SavedTrace {
 /**
  * Resolve a Project by its capability slug for a Trace write, gated on `edit`
  * (ADR-0040). A Trace write is an edit, not owner-only — an EDITOR member can
- * create/rename/delete a Trace. Resolve the id by slug (the only handle a write
- * carries), then authorize by internal id; a non-member of a `guestAccess=NONE`
- * project never reaches here because the slug resolves nothing for them... but a
- * non-owner non-member who CAN read (guest VIEW) is rejected with Forbidden, the
- * correct write-deny posture (the actor already proved read access).
+ * create/rename/delete a Trace. Delegates to the slug-keyed write seam, so a true
+ * non-member of a `guestAccess=NONE` project sees `NotFoundError` (non-disclosure,
+ * the slug could be stale), while a non-owner non-member who CAN read (guest VIEW)
+ * is rejected with `ForbiddenError` — the correct write-deny posture once read
+ * access is already proven.
  */
 async function resolveWritableProject(
   db: Db,
   actor: Actor,
   slug: string,
 ): Promise<{ id: string }> {
-  const found = await db.project.findFirst({
-    where: { slug, deletedAt: null },
-    select: { id: true },
-  });
-  if (!found) {
-    throw new NotFoundError();
-  }
-  return authorizeProjectWrite(db, actor, found.id, "edit");
+  return resolveWritableProjectBySlug(db, actor, slug, "edit");
 }
 
 /**
- * createTrace — owner-only. Resolve the Project by slug → `assertCanWrite`, filter
+ * createTrace — requires `edit` capability (owner, ADMIN, or EDITOR member;
+ * ADR-0040). Resolve the Project by slug → `resolveWritableProject`, filter
  * `nodeIds` to LIVE, in-Project Components (dedup) BEFORE writing; fewer than two
  * survivors → `ValidationError` (no useless 1-point Trace). Creates the Trace +
  * its `TracePoint` rows; the router wraps this in `db.$transaction` so they are
@@ -792,8 +789,9 @@ export async function getTrace(
 }
 
 /**
- * renameTrace — owner-only. `assertCanWrite`, then rename the live Trace scoped to
- * the Project. Re-checks live-name uniqueness (pre-check + P2002 catch). Does NOT
+ * renameTrace — requires `edit` capability (owner, ADMIN, or EDITOR member;
+ * ADR-0040). `resolveWritableProject`, then rename the live Trace scoped to the
+ * Project. Re-checks live-name uniqueness (pre-check + P2002 catch). Does NOT
  * change the point set — #59 keeps rename narrow; editing points is future work.
  */
 export async function renameTrace(
@@ -853,7 +851,8 @@ export async function renameTrace(
 }
 
 /**
- * deleteTrace — owner-only soft-delete. `assertCanWrite`, then stamp `deletedAt`
+ * deleteTrace — soft-delete requiring `edit` capability (owner, ADMIN, or EDITOR
+ * member; ADR-0040). `resolveWritableProject`, then stamp `deletedAt`
  * + a fresh `deletionId` on the live Trace (mirroring `deleteNode`'s stamped
  * batch, ADR-0030). `TracePoint` rows are not separately stamped — they have no
  * `deletedAt` and ride the Trace (hard-cascade only). Idempotent: deleting an

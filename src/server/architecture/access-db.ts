@@ -21,9 +21,16 @@ import { NotFoundError } from "./errors";
  *    `NotFoundError`, never `ForbiddenError`, so a `guestAccess=NONE` project is
  *    indistinguishable from a missing one for any non-member — anonymous OR
  *    logged-in (ADR-0002's non-disclosure rule, extended to the whole ladder).
- *  - WRITES are id-keyed and load-then-authorize: a denial surfaces
- *    `ForbiddenError` (the caller already holds the internal handle, so the
- *    denial leaks nothing new).
+ *  - WRITES come in two keyings:
+ *      - id-keyed (`authorizeProjectWrite`): the caller already holds the internal
+ *        handle, so a denial below `min` surfaces `ForbiddenError` — it leaks
+ *        nothing new.
+ *      - slug-keyed (`resolveWritableProjectBySlug`): the slug is a capability URL
+ *        a non-member could hold stale, so it MUST stay non-disclosing for a true
+ *        non-member (`cap === none` → `NotFoundError`, mirroring the read seam),
+ *        and only surface `ForbiddenError` once the actor has at least `view` (a
+ *        guest-VIEW reader or a too-low member already knows it exists, so
+ *        Forbidden discloses nothing). See ADR-0040's non-disclosure invariant.
  *
  * Both funnel through the ONE pure resolver, so the policy is single-sourced.
  * The membership relation is omitted from the select entirely when `actor` is
@@ -178,6 +185,64 @@ export async function authorizeProjectWrite(
   }
   const { memberships, ...rest } = project;
   const cap = resolveCapability(actor, rest, memberships[0] ?? null);
+  requireCapability(cap, min);
+  return rest;
+}
+
+/**
+ * Slug-keyed WRITE seam: resolve a Project by its capability slug, pull the
+ * actor's membership (one round trip, skipped for anon), resolve the capability,
+ * then gate on `min`. Unlike the id-keyed {@link authorizeProjectWrite}, the slug
+ * is a capability URL a non-member could possess stale, so this seam stays
+ * non-disclosing for true non-members: `cap === "none"` maps to `NotFoundError`
+ * (exactly as the read seam does) — a `guestAccess=NONE` project looks missing to
+ * anyone who could not even read it. Only once the actor clears `view` does a
+ * shortfall below `min` surface `ForbiddenError` (a guest-VIEW reader or a too-low
+ * member already proved the project exists, so Forbidden discloses nothing new).
+ * This closes the existence-oracle the old `findFirst + authorizeProjectWrite`
+ * preamble opened on slug-keyed writes (ADR-0040).
+ */
+export async function resolveWritableProjectBySlug(
+  db: Db,
+  actor: Actor | null,
+  slug: string,
+  min: Capability,
+): Promise<{ id: string; ownerId: string; guestAccess: GuestAccess }> {
+  const project = await db.project.findFirst({
+    where: { slug, deletedAt: null },
+    select: {
+      id: true,
+      ownerId: true,
+      guestAccess: true,
+      ...(actor
+        ? {
+            memberships: {
+              where: { userId: actor.userId },
+              select: { role: true },
+              take: 1,
+            },
+          }
+        : {}),
+    },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+
+  const { memberships, ...rest } = project as {
+    id: string;
+    ownerId: string;
+    guestAccess: GuestAccess;
+    memberships?: { role: ProjectRole }[];
+  };
+  const membership = actor ? (memberships?.[0] ?? null) : null;
+  const cap = resolveCapability(actor, rest, membership);
+
+  // Non-disclosure: a true non-member (could not even read it) sees not-found,
+  // never forbidden — mirrors the read seam so a NONE project stays invisible.
+  if (cap === "none") {
+    throw new NotFoundError();
+  }
   requireCapability(cap, min);
   return rest;
 }

@@ -331,3 +331,48 @@ describe("deleteProject — owner-only, ADMIN cannot delete (ADR-0040)", () => {
     expect(persisted?.deletedAt).toBeNull();
   });
 });
+
+describe("deleteProject — non-disclosure on slug-keyed write (ADR-0040)", () => {
+  it("throws NotFoundError (not Forbidden) for a logged-in non-member of a guestAccess=NONE project", async () => {
+    const owner = await makeUser("Owner");
+    const stranger = await makeUser("Stranger");
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Locked" },
+    );
+    await testDb.project.update({
+      where: { id: project.id },
+      data: { guestAccess: "NONE" },
+    });
+
+    await expect(
+      deleteProject(testDb, { userId: stranger.id }, { slug: project.slug }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    const persisted = await testDb.project.findUnique({
+      where: { id: project.id },
+    });
+    expect(persisted?.deletedAt).toBeNull();
+  });
+
+  it("throws ForbiddenError (existence already proven) for a guest-VIEW reader who is not the owner", async () => {
+    const owner = await makeUser("Owner");
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Public but undeletable" },
+    );
+
+    // Default guestAccess is VIEW, so a non-member stranger CAN read this
+    // project — they have proven it exists and a write-deny discloses nothing.
+    await expect(
+      deleteProject(testDb, { userId: "stranger" }, { slug: project.slug }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    const persisted = await testDb.project.findUnique({
+      where: { id: project.id },
+    });
+    expect(persisted?.deletedAt).toBeNull();
+  });
+});
