@@ -47,7 +47,8 @@ T3 Stack app: Next.js 16 (App Router + React Server Components), tRPC v11, Prism
 ## Commands
 
 - `pnpm dev` — dev server (Turbopack)
-- `pnpm check` — `eslint .` + `tsc --noEmit`; the primary validation gate (there is no test runner configured)
+- `pnpm check` — `eslint .` + `tsc --noEmit`; the lint/type gate. It does **not** run the test suite — run `pnpm test` separately when you touch a tested module
+- `pnpm test` / `pnpm test:watch` — Vitest (`vitest run` / watch); the automated-test gate (see ADR-0003)
 - `pnpm typecheck` — types only
 - `pnpm lint` / `pnpm lint:fix`
 - `pnpm format:write` / `pnpm format:check` — Prettier
@@ -62,7 +63,7 @@ Database:
 
 Authoring a new migration: run `pnpm db:author <name>`, which creates `prisma/migrations/<ts>_<name>/migration.sql` populated with the live-DB-to-schema diff. Hand-edit the file for any raw SQL Prisma cannot express (e.g. partial unique indexes), then apply with `pnpm db:migrate`. The author/check commands compare against the live dev DB (not migration history) because `--from-migrations` requires a shadow DB that this repo deliberately does not configure; for that to be accurate, the dev DB must be at the head of the migration history (run `pnpm db:migrate` if it has fallen behind). Never use `prisma migrate dev` (needs a shadow DB) or `prisma db push` (desyncs migration history) — see ADR-0010.
 
-There are no automated tests in this repo; `pnpm check` is the closest thing to CI validation.
+Automated tests run under Vitest: `pnpm test` (`vitest run`, node environment, co-located `src/**/*.test.ts`) against an isolated test database, per ADR-0003. `pnpm check` (lint + types) and `pnpm test` together are the CI validation gates. Note that `pnpm check` does **not** execute the test suite, so a change that alters a tested module's observable shape can pass `pnpm check` while breaking Vitest — run `pnpm test` whenever you touch a tested module (especially the `src/server/architecture/*` service layer and `src/lib/*` pure modules).
 
 ## Architecture
 
