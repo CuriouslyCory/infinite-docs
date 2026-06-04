@@ -612,6 +612,8 @@ describe("getCanvas cross-scope rendering", () => {
         kind: "EXTERNAL_API",
         realEndpointId: outside.id,
         edgeId: edge.id,
+        posX: null,
+        posY: null,
       },
     ]);
   });
@@ -649,6 +651,8 @@ describe("getCanvas cross-scope rendering", () => {
       "edgeId",
       "kind",
       "nodeId",
+      "posX",
+      "posY",
       "realEndpointId",
       "title",
     ]);
@@ -739,6 +743,8 @@ describe("getCanvas cross-scope rendering", () => {
         kind: "HOST",
         realEndpointId: parent.id,
         edgeId: edge.id,
+        posX: null,
+        posY: null,
       },
     ]);
   });
