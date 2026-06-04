@@ -1,12 +1,24 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { type Actor } from "~/server/architecture/actor";
+import { connectNodes } from "~/server/architecture/edge.service";
 import { createNode } from "~/server/architecture/node.service";
 import { createProject } from "~/server/architecture/project.service";
-import { applySpecOutput } from "~/lib/schemas";
+import {
+  applySpecOutput,
+  deleteComponentOutput,
+  deleteConnectionOutput,
+  restoreComponentOutput,
+} from "~/lib/schemas";
 import { resetDb, testDb } from "~/server/architecture/__tests__/helpers/test-db";
 
-import { WRITE_TOOLS } from "../tool-catalog";
+import { type McpWriteTool, WRITE_TOOLS } from "../tool-catalog";
+
+function descriptorFor(name: string): McpWriteTool {
+  const descriptor = WRITE_TOOLS.find((t) => t.name === name);
+  if (!descriptor) throw new Error(`${name} descriptor missing`);
+  return descriptor;
+}
 
 beforeEach(async () => {
   await resetDb();
@@ -69,5 +81,119 @@ describe("WRITE_TOOLS catalog", () => {
     expect(parsed.deleted).toBe(0);
     expect(result.message).toContain(`Component ${owner.id}`);
     expect(result.message).toContain("created 2");
+  });
+
+  it("registers the delete/restore tools (#19)", () => {
+    const names = WRITE_TOOLS.map((t) => t.name);
+    expect(names).toContain("delete_component");
+    expect(names).toContain("delete_connection");
+    expect(names).toContain("restore_component");
+  });
+
+  it("invokes delete_component end-to-end: cascades the subtree and returns the deletionId handle", async () => {
+    const user = await testDb.user.create({ data: { name: "Owner" } });
+    const actor: Actor = { userId: user.id, via: "token", scopes: ["read"] };
+    const project = await createProject(
+      testDb,
+      { userId: user.id },
+      { title: "P" },
+    );
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+
+    const result = await testDb.$transaction((tx) =>
+      descriptorFor("delete_component").invoke(tx, actor, { id: parent.id }),
+    );
+
+    const parsed = deleteComponentOutput.parse(result.structured);
+    expect(new Set(parsed.nodeIds)).toEqual(new Set([parent.id, child.id]));
+    expect(parsed.deletionId).toBeTruthy();
+    expect(result.message).toContain(parsed.deletionId);
+    for (const id of [parent.id, child.id]) {
+      const row = await testDb.node.findUnique({ where: { id } });
+      expect(row?.deletedAt).not.toBeNull();
+      expect(row?.deletionId).toBe(parsed.deletionId);
+    }
+  });
+
+  it("invokes restore_component end-to-end: revives exactly the rows the deletionId stamped", async () => {
+    const user = await testDb.user.create({ data: { name: "Owner" } });
+    const actor: Actor = { userId: user.id, via: "token", scopes: ["read"] };
+    const project = await createProject(
+      testDb,
+      { userId: user.id },
+      { title: "P" },
+    );
+    const parent = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "Parent",
+    });
+    const child = await createNode(testDb, actor, {
+      projectId: project.id,
+      parentId: parent.id,
+      title: "Child",
+    });
+
+    const deleted = deleteComponentOutput.parse(
+      (
+        await testDb.$transaction((tx) =>
+          descriptorFor("delete_component").invoke(tx, actor, { id: parent.id }),
+        )
+      ).structured,
+    );
+
+    const result = await testDb.$transaction((tx) =>
+      descriptorFor("restore_component").invoke(tx, actor, {
+        deletionId: deleted.deletionId,
+      }),
+    );
+
+    const parsed = restoreComponentOutput.parse(result.structured);
+    expect(new Set(parsed.nodeIds)).toEqual(new Set([parent.id, child.id]));
+    for (const id of [parent.id, child.id]) {
+      const row = await testDb.node.findUnique({ where: { id } });
+      expect(row?.deletedAt).toBeNull();
+      expect(row?.deletionId).toBeNull();
+    }
+  });
+
+  it("invokes delete_connection end-to-end: soft-deletes one Connection with no undo handle", async () => {
+    const user = await testDb.user.create({ data: { name: "Owner" } });
+    const actor: Actor = { userId: user.id, via: "token", scopes: ["read"] };
+    const project = await createProject(
+      testDb,
+      { userId: user.id },
+      { title: "P" },
+    );
+    const a = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, actor, {
+      projectId: project.id,
+      title: "B",
+    });
+    const edge = await connectNodes(testDb, actor, {
+      projectId: project.id,
+      sourceId: a.id,
+      targetId: b.id,
+    });
+
+    const result = await testDb.$transaction((tx) =>
+      descriptorFor("delete_connection").invoke(tx, actor, { id: edge.id }),
+    );
+
+    const parsed = deleteConnectionOutput.parse(result.structured);
+    expect(parsed.edgeId).toBe(edge.id);
+    const row = await testDb.edge.findUnique({ where: { id: edge.id } });
+    expect(row?.deletedAt).not.toBeNull();
+    expect(row?.deletionId).toBeNull();
   });
 });

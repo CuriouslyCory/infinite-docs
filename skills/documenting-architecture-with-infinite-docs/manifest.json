@@ -5,7 +5,7 @@
     "discoveryDoc": "/llms.txt",
     "resourceScheme": "architecture",
     "resources": ["index", "project", "subtree", "trace"],
-    "tools": ["create_component", "connect_components", "update_component_docs", "move_component", "apply_graph", "apply_spec"],
-    "noDeleteTool": true
+    "tools": ["create_component", "connect_components", "update_component_docs", "move_component", "apply_graph", "apply_spec", "delete_component", "delete_connection", "restore_component"],
+    "noDeleteTool": false
   }
 }

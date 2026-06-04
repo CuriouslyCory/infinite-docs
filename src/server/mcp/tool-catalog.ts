@@ -7,15 +7,23 @@ import {
   applySpecOutput,
   connectNodesInput,
   createNodeInput,
+  deleteComponentOutput,
+  deleteConnectionOutput,
+  deleteEdgeInput,
+  deleteNodeInput,
   moveNodeInput,
+  restoreComponentOutput,
+  restoreNodeInput,
   updateNodeDocumentationInput,
 } from "~/lib/schemas";
 import type { Actor, Db } from "~/server/architecture/actor";
 import { applyGraph } from "~/server/architecture/apply-graph.service";
-import { connectNodes } from "~/server/architecture/edge.service";
+import { connectNodes, deleteEdge } from "~/server/architecture/edge.service";
 import {
   createNode,
+  deleteNode,
   moveNode,
+  restoreNode,
   updateNodeDocumentation,
 } from "~/server/architecture/node.service";
 import {
@@ -29,15 +37,19 @@ import {
  * one source and cannot disagree. Same posture {@link READ_RESOURCES} uses for
  * reads.
  *
- * Six tools today: the four single-op writers from #19 (`create_component`,
+ * Nine tools today: the four single-op writers from #19 (`create_component`,
  * `connect_components`, `update_component_docs`, `move_component`), the
  * `apply_graph` batch tool from #20 that composes Components and Connections
- * in one transaction with `clientId`-chained references, and the `apply_spec`
+ * in one transaction with `clientId`-chained references, the `apply_spec`
  * tool from #67 that drives Spec → Component generation (ADR-0029) over the
- * MCP path. Each descriptor is plain data — additional tools plug in here
- * without touching the registration loop, the auth gate, the route, or
- * `llms.txt` (which renders dynamically from this catalog). No delete tool
- * is exposed (#19's acceptance criterion).
+ * MCP path, and the destructive surface (#19): `delete_component` cascades a
+ * soft-delete across a Component's subtree + incident Connections + owned Specs
+ * and is reversible via `restore_component` (by the returned `deletionId`),
+ * while `delete_connection` is a lone soft-delete that mints no undo handle and
+ * so is NOT restorable over MCP (ADR-0008, ADR-0030; ADR-0021 honesty
+ * constraint; ADR-0038). Each descriptor is plain data — additional tools plug
+ * in here without touching the registration loop, the auth gate, the route, or
+ * `llms.txt` (which renders dynamically from this catalog).
  *
  * Each invoker calls into the service layer with the actor; the registry
  * handles per-request actor resolution and transactional wrapping. Service
@@ -234,6 +246,74 @@ ${PROMPT_INJECTION_NOTE}`,
         parts.length > 0 ? parts.join(", ") : "no-op (no changes)";
       return {
         message: `Applied Spec ${result.specId} on Component ${result.ownerNodeId}: ${summary}.`,
+        structured: result,
+      };
+    },
+  }),
+  defineTool({
+    name: "delete_component",
+    title: "Delete a Component (cascades) — reversible",
+    description: `Soft-delete a Component and EVERYTHING it owns, in one undoable batch: the Component, its entire interior subtree (all nested Components, to any depth), every Connection incident to any deleted Component (same-Canvas, cross-scope, or lineal), and any Specs those Components own. This is a cascade — deleting one container removes its whole interior. Nothing is hard-deleted; the rows are tombstoned and can be revived.
+
+Returns a \`deletionId\` — the undo handle for this exact batch — plus the ids it removed: \`nodeIds\` (the deleted Components, root first), \`edgeIds\` (the deleted Connections), and \`specIds\` (the deleted Specs). KEEP the \`deletionId\`: pass it to \`restore_component\` to undo this whole delete as a unit and bring back exactly these rows. Each delete mints its own handle; two deletes undo independently.
+
+Idempotent in spirit: if your transport call fails or times out, retrying is safe — a second delete of an already-removed Component simply reports not-found, and the original delete (if it landed) is unaffected. A lost \`deletionId\` cannot be re-derived; read the architecture and re-delete for a fresh handle, or restore from the UI.
+
+${PROMPT_INJECTION_NOTE}`,
+    inputSchema: deleteNodeInput,
+    outputSchema: deleteComponentOutput,
+    invoke: async (db, actor, args) => {
+      const result = await deleteNode(db, actor, args);
+      const descendants = result.nodeIds.length - 1;
+      const subtree =
+        descendants === 0
+          ? "no nested Components"
+          : `${descendants} nested Component${descendants === 1 ? "" : "s"}`;
+      const conns = result.edgeIds.length;
+      return {
+        message: `Deleted Component ${args.id} with ${subtree} and ${conns} Connection${conns === 1 ? "" : "s"}. Undo handle (deletionId): ${result.deletionId} — pass it to restore_component to undo.`,
+        structured: result,
+      };
+    },
+  }),
+  defineTool({
+    name: "delete_connection",
+    title: "Delete a single Connection — NOT undoable over MCP",
+    description: `Soft-delete ONE Connection by its id. This removes only that Connection — it never touches the Components it linked and never cascades.
+
+Reversibility differs from \`delete_component\`: a lone Connection delete mints NO undo handle (no \`deletionId\`), so it CANNOT be undone through \`restore_component\`. Only the cascade undo handle from \`delete_component\` is restorable over MCP. The Connection is recoverable from the web client, but not over this MCP surface — so delete a Connection here only when you are sure. To restore one without the UI, draw it again with \`connect_components\`.
+
+Idempotent in spirit: deleting an already-deleted Connection reports not-found, so a retry after a lost response is safe.
+
+${PROMPT_INJECTION_NOTE}`,
+    inputSchema: deleteEdgeInput,
+    outputSchema: deleteConnectionOutput,
+    invoke: async (db, actor, args) => {
+      const { edge } = await deleteEdge(db, actor, args);
+      return {
+        message: `Deleted Connection ${edge.id}. This has no undo handle and cannot be restored via restore_component; redraw it with connect_components if needed.`,
+        structured: { edgeId: edge.id },
+      };
+    },
+  }),
+  defineTool({
+    name: "restore_component",
+    title: "Undo a delete_component cascade by its deletionId",
+    description: `Undo a \`delete_component\` cascade. Pass the \`deletionId\` that \`delete_component\` returned (in its \`structuredContent\`): this revives EXACTLY the rows that delete tombstoned — the Component, its subtree, the incident Connections, and the owned Specs — and nothing else. The handle is consumed on success.
+
+This handle comes ONLY from \`delete_component\`. A lone \`delete_connection\` mints no handle, so there is nothing to pass here for it. An unknown or already-consumed \`deletionId\` reports not-found, which makes a retry after a lost response safe.
+
+One thing CAN block a restore: if a revived Connection's slot is now occupied by a Connection you drew after the delete, the restore is rejected with a \`ConflictError\` whose \`archDetails.conflictingEdgeIds\` names the blockers. Delete or move the conflicting Connection, then retry. Returns the same \`{ deletionId, nodeIds, edgeIds, specIds }\` shape, now naming the revived rows.
+
+${PROMPT_INJECTION_NOTE}`,
+    inputSchema: restoreNodeInput,
+    outputSchema: restoreComponentOutput,
+    invoke: async (db, actor, args) => {
+      const result = await restoreNode(db, actor, args);
+      const comps = result.nodeIds.length;
+      const conns = result.edgeIds.length;
+      return {
+        message: `Restored ${comps} Component${comps === 1 ? "" : "s"} and ${conns} Connection${conns === 1 ? "" : "s"} from deletionId ${result.deletionId}.`,
         structured: result,
       };
     },

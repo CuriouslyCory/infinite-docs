@@ -64,7 +64,13 @@ ${resourceBlock}
 Call tools/list to see the full input schema for each tool. Tools are
 single-operation and reuse the same invariants the web client does
 (authorization, de-dupe, cycle prevention, no self-Connections).
-No destructive tool is exposed; deletion lives elsewhere.
+Delete is available and reversible. delete_component soft-deletes a Component
+and its whole subtree plus every incident Connection and owned Spec in one
+batch, and returns a deletionId — pass that to restore_component to undo the
+whole cascade. delete_connection soft-deletes one Connection only; it mints NO
+undo handle, so it cannot be restored over MCP (redraw it with
+connect_components). Deletes are recoverable, not destructive — but the lone
+Connection delete has no MCP undo, so use it deliberately.
 
 ${toolBlock}
 

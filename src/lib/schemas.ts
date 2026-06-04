@@ -535,6 +535,26 @@ export const deleteEdgeInput = z.object({
 });
 export type DeleteEdgeInput = z.infer<typeof deleteEdgeInput>;
 
+// MCP `outputSchema` (SDK 1.26.0): the agent receives `structuredContent`, not a
+// message blob. `deletionId` is the undo handle for `restore_component`.
+// Mirrors `deleteNode`'s return (ADR-0008, ADR-0030).
+export const deleteComponentOutput = z.object({
+  deletionId: z.string(),
+  nodeIds: z.array(z.string()),
+  edgeIds: z.array(z.string()),
+  specIds: z.array(z.string()),
+});
+export type DeleteComponentOutput = z.infer<typeof deleteComponentOutput>;
+
+// `restoreNode` returns the identical shape — reuse the delete output schema.
+export const restoreComponentOutput = deleteComponentOutput;
+
+// A lone `deleteEdge` mints no `deletionId` (ADR-0030) — no undo handle to surface.
+export const deleteConnectionOutput = z.object({
+  edgeId: z.string(),
+});
+export type DeleteConnectionOutput = z.infer<typeof deleteConnectionOutput>;
+
 /**
  * Input for the per-Component connection list shown in the Component-detail
  * panel's Connections section (#66). Addressed by the capability `slug` (the
