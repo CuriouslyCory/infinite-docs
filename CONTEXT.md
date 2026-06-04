@@ -508,7 +508,9 @@ tokens** for connecting an **agent**. User-facing title is **"Connect an agent"*
 manages are **API tokens**. It is the *producer* side of the token; the *consumer* side (resolving
 a token to an **Actor** over MCP) is **realized now** (#18, see ADR-0022). Not a "settings", "API
 keys", or "developers" page — it is framed around the user's goal (connect an agent), per the
-convenience philosophy.
+convenience philosophy. It also renders copy-paste **MCP path** setup snippets for seven agent
+clients (Claude Code, Codex CLI/IDE, OpenCode, OpenClaw, Hermes, Cursor) from the pure
+`~/lib/mcp-clients` catalog, filling in the revealed **API token** when one is present (#94).
 
 ### Agent
 An AI client that speaks the **MCP path**, authenticating with an **API token** that grants it the
