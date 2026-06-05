@@ -49,9 +49,11 @@ export default async function InteriorCanvasPage({
     throw error;
   }
 
-  // Read-only inside an embed this slice (#119): exploration of a foreign project
-  // through a portal is view-only regardless of the actor's capability on the HOST
-  // project. Force `canEdit` false whenever a crossing stack is present.
+  // This boolean reflects the HOST capability only and governs the host scope;
+  // inside a portal the island re-derives the edit affordance from the FOREIGN
+  // project's capability (`activeProject.canEdit`) and owns the foreign-scope UI,
+  // so we force it false there to avoid double-signalling (#121, ADR-0042).
+  // `embedded` tells the header to defer the view-only badge to the island.
   const canEdit =
     embedPath.length === 0 &&
     capabilityAtLeast(project.viewerCapability, "edit");
@@ -78,6 +80,7 @@ export default async function InteriorCanvasPage({
           canManage={canManage}
           projectId={project.id}
           embedPath={embedPath}
+          embedded={embedPath.length > 0}
         />
         <div className="min-h-0 flex-1">
           <CanvasIsland

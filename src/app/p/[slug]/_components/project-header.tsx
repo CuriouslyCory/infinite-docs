@@ -29,6 +29,7 @@ export function ProjectHeader({
   canManage,
   projectId,
   embedPath = [],
+  embedded = false,
 }: {
   slug: string;
   projectTitle: string;
@@ -39,6 +40,15 @@ export function ProjectHeader({
   projectId: string;
   /** Portal crossing stack (#119); threaded to the breadcrumb bar's getCanvas key. */
   embedPath?: string[];
+  /**
+   * True once descended THROUGH a portal (#121). The shell forces `canEdit`
+   * false in a foreign scope, so the header's own view-only badge would lie
+   * ("View only") while the canvas island may be fully editable against the
+   * foreign project. When embedded, suppress the shell badge and let the canvas
+   * island own the foreign-scope affordance — the "Editing embedded project"
+   * banner when editable, the absent edit affordances otherwise (ADR-0042).
+   */
+  embedded?: boolean;
 }) {
   return (
     <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
@@ -59,7 +69,7 @@ export function ProjectHeader({
         />
       </Suspense>
       <div className="ml-auto flex items-center gap-2">
-        {!canEdit && <ViewOnlyBadge />}
+        {!canEdit && !embedded && <ViewOnlyBadge />}
         <Link
           href={`/p/${slug}/trace`}
           className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-xs font-medium text-white/80 no-underline transition hover:bg-white/15 hover:text-white"

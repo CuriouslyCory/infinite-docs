@@ -369,8 +369,16 @@ descent feels instant. See ADR-0007.)_ Descent may **cross a project boundary**:
 **portal** descends into its **embedded project** rather than a `parentId` child — the one Descent
 that **leaves the host graph**. The crossing is recorded in the **scope path** (`?via=`) and
 **re-gated per-actor** (`resolveReadableProjectById`, not-found on denial); the URL stays under the
-host slug, exploration is **read-only in this slice**, and the breadcrumb spine spans the boundary
-(host trail → portal marker → foreign trail). _(#119, ADR-0041.)_
+host slug, and the breadcrumb spine spans the boundary
+(host trail → portal marker → foreign trail). A descended actor holding **≥ edit** on the
+embedded project **edits its interior through the portal**: the existing write seam
+`authorizeProjectWrite(db, actor, node.projectId, "edit")` **re-authorizes against the FOREIGN
+project** (a Node in the embedded graph carries the foreign `projectId`), so edits **persist to that
+project standalone** and a **target viewer** still gets **Forbidden** at the seam — no new write
+authz. The descended client's **`canEdit` derives from the active foreign project's capability,
+never the host's**; a persistent **"Editing embedded project: B"** banner shows on edit-through
+descent (the honesty seam — same URL, same chrome — so a foreign mutation is never a surprise).
+_(#119, #121, ADR-0041, ADR-0042.)_
 
 ### Boundary proxy
 
@@ -500,9 +508,12 @@ capability ladder (ADR-0040), resolved against the **embedded project** for the 
 via `resolveReadableProjectById`. The **host's** capability **never** governs which tier; only the
 descending actor's capability **on the target** does.
 
-- **enterable** (target capability ≥ **edit**) — descends; the view-vs-edit write split is **#121**.
+- **enterable** (target capability ≥ **edit**) — descends and **edits through the portal** (#121,
+  ADR-0042): the existing write seam re-authorizes against the **foreign** project, so edits persist
+  standalone and `canEdit` renders the edit surface.
 - **read-only** (target capability = **view**) — descends into a **read-only foreign scope**; the
-  existing **viewer** affordance-suppression applies (`canEdit = false`), no new write code.
+  existing **viewer** affordance-suppression applies (`canEdit = false`), **derived from the foreign
+  capability, never the host's** (ADR-0042), no new write code.
 - **locked** (target capability **none**) — non-descending, greyed "No access" **LOCKED SENTINEL**.
   The host **Node** legitimately exists and is **host-owned**, so this is **not** **NotFound** — the
   host read **acknowledges the node** while **withholding the embedded project's identity** (its
@@ -513,6 +524,20 @@ descending actor's capability **on the target** does.
 
 Resolved **per-actor on every host read**, **never stored** — a **live pointer**, so a grant or
 revoke flips the state on the next read. _(#120, ADR-0041, ADR-0040.)_
+
+### Portal-interior guard
+
+A **portal has no host interior** — its interior **IS the embedded project's root**, reached by
+**Descent** + per-actor re-gate, **never** a `parentId` child (`parentId` cannot cross a project
+boundary, ADR-0041). So `createNode` and `moveNode` **reject any resolved parent whose
+`embeddedProjectId != null`** with a **`ValidationError`** ("a portal Component has no host
+interior") — a host child under a portal would fabricate a host interior the descent model denies
+and bleed the host and foreign graphs together. The guard is a **behavioral rule on the FK
+discriminator** (`embeddedProjectId != null`), **never on `kind`** — a portal keeps an ordinary
+cosmetic kind (ADR-0018 / ADR-0041). It **composes with the reparent reject rules (ADR-0024) by
+extension**: a parent precondition **evaluated before** the subtree cycle (`ValidationError`) and
+incident-edge orphan (`ConflictError`) checks, orthogonal to both. _(#121, ADR-0042, ADR-0024,
+ADR-0018.)_
 
 ### Capability URL / slug
 
