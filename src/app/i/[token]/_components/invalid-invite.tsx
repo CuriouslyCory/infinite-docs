@@ -9,15 +9,15 @@ import Link from "next/link";
  */
 export function InvalidInvite(): React.JSX.Element {
   return (
-    <main className="flex h-dvh flex-col items-center justify-center gap-4 bg-[#15162c] px-4 text-center text-white">
+    <main className="flex h-dvh flex-col items-center justify-center gap-4 bg-background px-4 text-center text-foreground">
       <h1 className="text-3xl font-bold">Invite unavailable</h1>
-      <p className="max-w-md text-white/60">
+      <p className="max-w-md text-muted-foreground">
         This invite link is invalid or has expired. Ask the project owner for a
         new one.
       </p>
       <Link
         href="/"
-        className="rounded-full bg-white/10 px-8 py-2 font-semibold no-underline transition hover:bg-white/20"
+        className="rounded-full bg-muted px-8 py-2 font-semibold no-underline transition hover:bg-muted"
       >
         Go to your projects
       </Link>

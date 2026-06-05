@@ -88,7 +88,7 @@ export function MemberAdd({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center justify-center gap-2 rounded-lg bg-white/10 px-3 py-2 text-sm font-medium transition hover:bg-white/20"
+        className="inline-flex items-center justify-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-medium transition hover:bg-muted"
       >
         <UserPlus size={14} aria-hidden />
         Add a member by email
@@ -99,22 +99,22 @@ export function MemberAdd({
   return (
     <form onSubmit={handleAdd} className="flex flex-col gap-2.5">
       <label className="flex flex-col gap-1">
-        <span className="text-white/60">Email</span>
+        <span className="text-muted-foreground">Email</span>
         <input
           type="email"
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="teammate@example.com"
-          className="rounded-lg bg-white/10 px-3 py-2 text-white placeholder:text-white/40 focus:bg-white/15 focus:outline-none"
+          className="rounded-lg bg-muted px-3 py-2 text-foreground placeholder:text-muted-foreground/70 focus:bg-muted focus:outline-none"
         />
       </label>
       <label className="flex flex-col gap-1">
-        <span className="text-white/60">Role</span>
+        <span className="text-muted-foreground">Role</span>
         <select
           value={role}
           onChange={(e) => setRole(e.target.value as ProjectRoleInput)}
-          className="rounded-lg bg-white/10 px-3 py-2 text-white focus:bg-white/15 focus:outline-none"
+          className="rounded-lg bg-muted px-3 py-2 text-foreground focus:bg-muted focus:outline-none"
         >
           {projectRole.options.map((opt) => (
             <option key={opt} value={opt} className="text-black">
@@ -126,7 +126,7 @@ export function MemberAdd({
       <button
         type="submit"
         disabled={grant.isPending}
-        className="inline-flex items-center justify-center gap-2 rounded-lg bg-[hsl(280,100%,70%)] px-3 py-2 text-sm font-semibold text-black transition hover:bg-[hsl(280,100%,80%)] disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary disabled:cursor-not-allowed disabled:opacity-50"
       >
         {grant.isPending ? "Adding…" : "Add member"}
       </button>
@@ -134,7 +134,7 @@ export function MemberAdd({
       {notice && (
         <p
           className={`text-xs ${
-            notice.kind === "success" ? "text-emerald-300/90" : "text-white/70"
+            notice.kind === "success" ? "text-secondary/90" : "text-muted-foreground"
           }`}
         >
           {notice.message}

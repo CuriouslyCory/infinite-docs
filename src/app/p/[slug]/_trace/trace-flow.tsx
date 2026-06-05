@@ -95,7 +95,7 @@ function TraceFlowInner({ slug, data }: { slug: string; data: TraceView }) {
   return (
     <div ref={hostRef} className="relative h-full w-full">
       {data.truncated && data.warning && (
-        <div className="absolute top-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-200">
+        <div className="absolute top-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded border border-edit/30 bg-edit/10 px-3 py-1.5 text-xs text-edit">
           <AlertTriangle size={13} aria-hidden />
           {data.warning}
         </div>
@@ -136,7 +136,7 @@ function TraceFlowInner({ slug, data }: { slug: string; data: TraceView }) {
                   ? `/p/${slug}/n/${selected.parentId}`
                   : `/p/${slug}`
               }
-              className="mx-4 mb-4 flex items-center justify-center gap-1.5 rounded bg-[hsl(280,100%,70%)]/20 px-3 py-2 text-xs font-medium text-[hsl(280,100%,85%)] transition hover:bg-[hsl(280,100%,70%)]/30"
+              className="mx-4 mb-4 flex items-center justify-center gap-1.5 rounded bg-primary/20 px-3 py-2 text-xs font-medium text-primary transition hover:bg-primary/30"
             >
               <ArrowUpRight size={13} aria-hidden />
               Go to canvas

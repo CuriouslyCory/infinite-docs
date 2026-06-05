@@ -8,7 +8,7 @@ export function CopyButton({
   value,
   label = "Copy",
   copiedLabel = "Copied",
-  className = "inline-flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold transition hover:bg-white/20",
+  className = "inline-flex items-center gap-2 rounded-lg bg-muted px-4 py-2 text-sm font-semibold transition hover:bg-muted",
 }: {
   value: string;
   label?: string;

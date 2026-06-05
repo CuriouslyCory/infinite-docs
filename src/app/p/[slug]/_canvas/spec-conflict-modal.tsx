@@ -104,7 +104,7 @@ export function SpecConflictModal({
       }}
     >
       <DialogPanel>
-        <header className="flex flex-col gap-1 border-b border-white/10 px-5 py-4">
+        <header className="flex flex-col gap-1 border-b border-border px-5 py-4">
           <DialogTitle>Re-attach spec</DialogTitle>
           <DialogDescription>
             Re-parsing produced changes from the previous attach. Decide what to
@@ -134,7 +134,7 @@ export function SpecConflictModal({
 
           {(preview.connectionsToCreate > 0 ||
             preview.connectionsToRemove > 0) && (
-            <p className="text-xs text-white/50">
+            <p className="text-xs text-muted-foreground">
               Foreign keys:{" "}
               {preview.connectionsToCreate > 0 &&
                 `${preview.connectionsToCreate} connection${
@@ -156,14 +156,14 @@ export function SpecConflictModal({
             preview.dropped.length === 0 &&
             preview.connectionsToCreate === 0 &&
             preview.connectionsToRemove === 0 && (
-              <p className="text-sm text-white/60">
+              <p className="text-sm text-muted-foreground">
                 Spec parses cleanly with no changes. Confirming will refresh the
                 stored source without altering any components.
               </p>
             )}
 
           {droppedDeleteWithConnections > 0 && (
-            <div className="flex items-start gap-2 rounded border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            <div className="flex items-start gap-2 rounded border border-edit/30 bg-edit/10 px-3 py-2 text-xs text-edit">
               <AlertTriangle
                 size={14}
                 aria-hidden
@@ -179,12 +179,12 @@ export function SpecConflictModal({
           )}
         </div>
 
-        <footer className="flex items-center justify-end gap-2 border-t border-white/10 px-5 py-3">
+        <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
           <button
             type="button"
             onClick={onCancel}
             disabled={pending}
-            className="rounded px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5 disabled:opacity-50"
+            className="rounded px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-foreground/5 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -192,7 +192,7 @@ export function SpecConflictModal({
             type="button"
             onClick={handleConfirm}
             disabled={pending}
-            className="rounded bg-[hsl(280,100%,70%)] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[hsl(280,100%,75%)] disabled:opacity-50"
+            className="rounded bg-primary px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-primary disabled:opacity-50"
           >
             {pending ? "Applying…" : "Apply changes"}
           </button>
@@ -227,7 +227,7 @@ function SectionHeader({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <h3 className="text-xs font-semibold tracking-wide text-white/60 uppercase">
+      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         {title} · {count}
       </h3>
       {bulkControls && (
@@ -247,20 +247,20 @@ function NewSection({ rows }: { rows: SpecPreview["new"] }) {
           return (
             <li
               key={row.specKey}
-              className="flex items-center gap-2 rounded bg-white/5 px-2 py-1.5 text-sm"
+              className="flex items-center gap-2 rounded bg-muted px-2 py-1.5 text-sm"
             >
               <FilePlus2
                 size={14}
                 aria-hidden
-                className="shrink-0 text-emerald-300"
+                className="shrink-0 text-secondary"
               />
               <Icon
                 size={14}
                 aria-hidden
-                className="shrink-0 text-[hsl(280,100%,80%)]"
+                className="shrink-0 text-primary"
               />
               <span className="truncate">{row.title}</span>
-              <span className="ml-auto shrink-0 text-xs text-white/40">
+              <span className="ml-auto shrink-0 text-xs text-muted-foreground/70">
                 {KIND_LABEL[row.kind]}
               </span>
             </li>
@@ -316,17 +316,17 @@ function ChangedSection({
           return (
             <li
               key={row.specKey}
-              className="flex flex-col gap-1 rounded bg-white/5 px-2 py-1.5 text-sm"
+              className="flex flex-col gap-1 rounded bg-muted px-2 py-1.5 text-sm"
             >
               <div className="flex items-center gap-2">
                 <Pencil
                   size={14}
                   aria-hidden
-                  className="shrink-0 text-sky-300"
+                  className="shrink-0 text-portal"
                 />
                 <span className="truncate">{row.title}</span>
                 {row.changedFields.includes("title") && (
-                  <span className="shrink-0 text-xs text-white/40">
+                  <span className="shrink-0 text-xs text-muted-foreground/70">
                     was “{row.previousTitle}”
                   </span>
                 )}
@@ -363,7 +363,7 @@ function ChangedSection({
               </div>
               <ChangedDelta row={row} />
               {decision.action === "overwrite" && (
-                <label className="flex items-center gap-2 pl-6 text-xs text-white/60">
+                <label className="flex items-center gap-2 pl-6 text-xs text-muted-foreground">
                   <input
                     type="checkbox"
                     checked={decision.wipeDocumentation}
@@ -396,7 +396,7 @@ function ChangedDelta({ row }: { row: SpecPreview["changed"][number] }) {
   const metadataChanged = row.changedFields.includes("metadata");
   if (!kindChanged && !metadataChanged) return null;
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-6 text-xs text-white/40">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-6 text-xs text-muted-foreground/70">
       {kindChanged && (
         <span>
           kind {KIND_LABEL[row.previousKind]} → {KIND_LABEL[row.kind]}
@@ -442,20 +442,20 @@ function DroppedSection({
           return (
             <li
               key={row.nodeId}
-              className="flex items-center gap-2 rounded bg-white/5 px-2 py-1.5 text-sm"
+              className="flex items-center gap-2 rounded bg-muted px-2 py-1.5 text-sm"
             >
               <Trash2
                 size={14}
                 aria-hidden
                 className={`shrink-0 ${
-                  action === "delete" ? "text-rose-300" : "text-white/40"
+                  action === "delete" ? "text-destructive" : "text-muted-foreground/70"
                 }`}
               />
               <span className="truncate">{row.title}</span>
               {row.hasIncidentConnections && (
                 <span
                   title="This component has incident Connections that would be removed if deleted."
-                  className="flex shrink-0 items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] tracking-wide text-amber-200 uppercase"
+                  className="flex shrink-0 items-center gap-1 rounded bg-edit/10 px-1.5 py-0.5 text-[10px] tracking-wide text-edit uppercase"
                 >
                   <AlertTriangle size={10} aria-hidden /> has connections
                 </span>
@@ -503,7 +503,7 @@ function BulkButton({
     <button
       type="button"
       onClick={onClick}
-      className="rounded px-2 py-0.5 text-white/60 transition hover:bg-white/10 hover:text-white"
+      className="rounded px-2 py-0.5 text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"
     >
       {children}
     </button>
@@ -525,8 +525,8 @@ function SegmentedButton({
       onClick={onClick}
       className={`rounded px-2 py-0.5 text-xs transition ${
         active
-          ? "bg-[hsl(280,100%,70%)] text-white"
-          : "bg-white/5 text-white/60 hover:bg-white/10 hover:text-white"
+          ? "bg-primary text-foreground"
+          : "bg-muted text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
       }`}
     >
       {children}

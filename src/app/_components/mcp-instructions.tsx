@@ -30,10 +30,10 @@ export function McpInstructions({ token }: { token: string | null }) {
   const snippet = endpoint ? active.render(endpoint, token) : null;
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-white/10 bg-white/5 p-4">
+    <div className="flex flex-col gap-4 rounded-xl border border-border bg-muted p-4">
       <div>
         <h2 className="font-semibold">Connect your client</h2>
-        <p className="text-sm text-white/70">
+        <p className="text-sm text-muted-foreground">
           Pick your agent and paste the snippet to point it at your
           architecture.
         </p>
@@ -50,8 +50,8 @@ export function McpInstructions({ token }: { token: string | null }) {
               aria-pressed={isActive}
               className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
                 isActive
-                  ? "bg-[hsl(280,100%,70%)] text-black"
-                  : "bg-white/10 text-white hover:bg-white/20"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-foreground hover:bg-muted"
               }`}
             >
               {client.name}
@@ -61,24 +61,24 @@ export function McpInstructions({ token }: { token: string | null }) {
       </div>
 
       <div className="flex flex-col gap-2">
-        <span className="font-mono text-xs text-white/50">
+        <span className="font-mono text-xs text-muted-foreground">
           {active.configPath}
         </span>
         {snippet ? (
-          <pre className="overflow-x-auto rounded-lg bg-black/40 px-3 py-2 font-mono text-sm whitespace-pre text-white">
+          <pre className="overflow-x-auto rounded-lg bg-black/40 px-3 py-2 font-mono text-sm whitespace-pre text-foreground">
             {snippet}
           </pre>
         ) : (
           <div className="h-20 animate-pulse rounded-lg bg-black/40" />
         )}
-        {active.note && <p className="text-xs text-white/50">{active.note}</p>}
+        {active.note && <p className="text-xs text-muted-foreground">{active.note}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2">
           {snippet ? <CopyButton value={snippet} /> : <span className="h-9" />}
           <a
             href={active.docsUrl}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1 text-sm text-white/60 underline-offset-2 transition hover:text-white hover:underline"
+            className="inline-flex items-center gap-1 text-sm text-muted-foreground underline-offset-2 transition hover:text-foreground hover:underline"
           >
             {active.name} MCP docs
             <ExternalLink className="h-3.5 w-3.5" />

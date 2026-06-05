@@ -15,7 +15,7 @@ const TraceView = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="px-6 py-20 text-center text-sm text-white/40">
+      <div className="px-6 py-20 text-center text-sm text-muted-foreground/70">
         Loading…
       </div>
     ),

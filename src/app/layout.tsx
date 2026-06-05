@@ -1,8 +1,9 @@
 import "~/styles/globals.css";
 
 import { type Metadata } from "next";
-import { Geist } from "next/font/google";
+import { Geist, Oxanium } from "next/font/google";
 
+import { ThemeProvider } from "~/app/_components/theme-provider";
 import { TRPCReactProvider } from "~/trpc/react";
 
 export const metadata: Metadata = {
@@ -16,13 +17,30 @@ const geist = Geist({
   variable: "--font-geist-sans",
 });
 
+const oxanium = Oxanium({
+  subsets: ["latin"],
+  variable: "--font-oxanium",
+});
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geist.variable}`}>
-      <body>
-        <TRPCReactProvider>{children}</TRPCReactProvider>
+    <html
+      lang="en"
+      className={`${geist.variable} ${oxanium.variable}`}
+      suppressHydrationWarning
+    >
+      <body className="bg-background text-foreground font-sans antialiased">
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          <TRPCReactProvider>{children}</TRPCReactProvider>
+        </ThemeProvider>
+        <div className="retro-overlay" aria-hidden />
       </body>
     </html>
   );

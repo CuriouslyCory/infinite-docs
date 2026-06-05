@@ -33,7 +33,7 @@ export function DialogPanel({
     <DialogPrimitive.Portal>
       <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
       <DialogPrimitive.Popup
-        className={`fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-white/10 bg-[#1f2138] text-white shadow-2xl transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 ${className}`}
+        className={`bg-card text-card-foreground border-border fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border-2 shadow-2xl transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 ${className}`}
         {...props}
       >
         {children}
@@ -48,7 +48,7 @@ export function DialogTitle({
 }: StringClassName<ComponentProps<typeof DialogPrimitive.Title>>) {
   return (
     <DialogPrimitive.Title
-      className={`text-base font-semibold text-white ${className}`}
+      className={`text-card-foreground font-display text-base font-semibold ${className}`}
       {...props}
     />
   );
@@ -60,7 +60,7 @@ export function DialogDescription({
 }: StringClassName<ComponentProps<typeof DialogPrimitive.Description>>) {
   return (
     <DialogPrimitive.Description
-      className={`text-sm text-white/60 ${className}`}
+      className={`text-muted-foreground text-sm ${className}`}
       {...props}
     />
   );

@@ -42,7 +42,7 @@ export function EmbedProject({
         aria-expanded={open}
         disabled={pending}
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5 text-sm font-semibold text-foreground backdrop-blur transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Boxes size={14} aria-hidden />
         {pending ? "Embedding…" : "Embed a project"}
@@ -50,12 +50,12 @@ export function EmbedProject({
       {open && (
         <div
           role="menu"
-          className="absolute top-full left-0 z-10 mt-1 max-h-72 w-64 overflow-auto rounded-lg border border-white/15 bg-[#1f2138] p-1 shadow-xl"
+          className="absolute top-full left-0 z-10 mt-1 max-h-72 w-64 overflow-auto rounded-lg border border-border bg-card p-1 shadow-xl"
         >
           {isLoading ? (
-            <p className="px-2 py-1.5 text-sm text-white/50">Loading…</p>
+            <p className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</p>
           ) : !projects || projects.length === 0 ? (
-            <p className="px-2 py-1.5 text-sm text-white/50">
+            <p className="px-2 py-1.5 text-sm text-muted-foreground">
               No other projects to embed.
             </p>
           ) : (
@@ -68,7 +68,7 @@ export function EmbedProject({
                   setOpen(false);
                   onEmbed({ id: p.id, title: p.title });
                 }}
-                className="block w-full truncate rounded px-2 py-1.5 text-left text-sm text-white transition hover:bg-white/10"
+                className="block w-full truncate rounded px-2 py-1.5 text-left text-sm text-foreground transition hover:bg-foreground/10"
               >
                 {p.title}
               </button>

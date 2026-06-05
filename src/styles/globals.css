@@ -1,8 +1,201 @@
 @import "tailwindcss";
 
+/*
+ * Doom 64 design-token system (ADR-0045). Every color in the app resolves to one
+ * of these semantic CSS variables, so re-theming is a one-file swap and the
+ * light/dark toggle works by flipping the `.dark` class on <html> (next-themes).
+ *
+ * `:root` holds the LIGHT palette; `.dark` overrides it. The `@theme inline` block
+ * below maps each var into Tailwind's `--color-*` namespace — it MUST be `inline`
+ * so utilities emit `var(--card)` (which re-cascades on a class swap) rather than
+ * baking the literal oklch value (which would freeze the theme). Values are the
+ * exact oklch triples from the v0 "Doom 64" design system.
+ */
+:root {
+  --background: oklch(0.8452 0 0);
+  --foreground: oklch(0.2393 0 0);
+  --card: oklch(0.7572 0 0);
+  --card-foreground: oklch(0.2393 0 0);
+  --popover: oklch(0.7572 0 0);
+  --popover-foreground: oklch(0.2393 0 0);
+  --primary: oklch(0.5016 0.1887 27.4816);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.4955 0.0896 126.186);
+  --secondary-foreground: oklch(1 0 0);
+  --accent: oklch(0.588 0.0993 245.739);
+  --accent-foreground: oklch(1 0 0);
+  --muted: oklch(0.7826 0 0);
+  --muted-foreground: oklch(0.4091 0 0);
+  --destructive: oklch(0.7076 0.1975 46.4558);
+  --destructive-foreground: oklch(0 0 0);
+  --border: oklch(0.4313 0 0);
+  --input: oklch(0.4313 0 0);
+  --ring: oklch(0.5016 0.1887 27.4816);
+  --chart-1: oklch(0.5016 0.1887 27.4816);
+  --chart-2: oklch(0.4955 0.0896 126.186);
+  --chart-3: oklch(0.588 0.0993 245.739);
+  --chart-4: oklch(0.7076 0.1975 46.4558);
+  --chart-5: oklch(0.5656 0.0431 40.4319);
+  --sidebar: oklch(0.7572 0 0);
+  --sidebar-foreground: oklch(0.2393 0 0);
+  --sidebar-primary: oklch(0.5016 0.1887 27.4816);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.588 0.0993 245.739);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-border: oklch(0.4313 0 0);
+  --sidebar-ring: oklch(0.5016 0.1887 27.4816);
+
+  /*
+   * App-specific semantic tokens (not in the shadcn set). They carry meanings the
+   * generic palette can't: `--edit` marks the embedded-project edit/read-only state
+   * (ADR-0042, formerly amber); `--portal` marks a Project Portal / embedded
+   * boundary (formerly sky). Named tokens keep `border-portal` self-documenting and
+   * let either move independently of the base palette later.
+   */
+  --edit: oklch(0.7076 0.1975 46.4558);
+  --edit-foreground: oklch(0.2393 0 0);
+  --portal: oklch(0.588 0.0993 245.739);
+  --portal-foreground: oklch(1 0 0);
+
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: oklch(0.2178 0 0);
+  --foreground: oklch(0.9067 0 0);
+  --card: oklch(0.285 0 0);
+  --card-foreground: oklch(0.9067 0 0);
+  --popover: oklch(0.285 0 0);
+  --popover-foreground: oklch(0.9067 0 0);
+  --primary: oklch(0.6083 0.209 27.0276);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.6423 0.1467 133.014);
+  --secondary-foreground: oklch(0 0 0);
+  --accent: oklch(0.7482 0.1235 244.749);
+  --accent-foreground: oklch(0 0 0);
+  --muted: oklch(0.2645 0 0);
+  --muted-foreground: oklch(0.7058 0 0);
+  --destructive: oklch(0.7839 0.1719 68.0943);
+  --destructive-foreground: oklch(0 0 0);
+  --border: oklch(0.4091 0 0);
+  --input: oklch(0.4091 0 0);
+  --ring: oklch(0.6083 0.209 27.0276);
+  --chart-1: oklch(0.6083 0.209 27.0276);
+  --chart-2: oklch(0.6423 0.1467 133.014);
+  --chart-3: oklch(0.7482 0.1235 244.749);
+  --chart-4: oklch(0.7839 0.1719 68.0943);
+  --chart-5: oklch(0.6471 0.0334 40.7963);
+  --sidebar: oklch(0.1913 0 0);
+  --sidebar-foreground: oklch(0.9067 0 0);
+  --sidebar-primary: oklch(0.6083 0.209 27.0276);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.7482 0.1235 244.749);
+  --sidebar-accent-foreground: oklch(0 0 0);
+  --sidebar-border: oklch(0.4091 0 0);
+  --sidebar-ring: oklch(0.6083 0.209 27.0276);
+
+  --edit: oklch(0.7839 0.1719 68.0943);
+  --edit-foreground: oklch(0 0 0);
+  --portal: oklch(0.7482 0.1235 244.749);
+  --portal-foreground: oklch(0 0 0);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-edit: var(--edit);
+  --color-edit-foreground: var(--edit-foreground);
+  --color-portal: var(--portal);
+  --color-portal-foreground: var(--portal-foreground);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-display: var(--font-oxanium), var(--font-sans);
+}
+
 @theme {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
+  --font-sans:
+    var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+/*
+ * Themed React Flow (ADR-0004 keeps `@xyflow/react/dist/style.css` in the canvas
+ * island chunk). The dist stylesheet loads after globals in that chunk, so these
+ * `--xy-*` overrides are scoped under `[data-canvas-scope]` to win on specificity
+ * without editing vendor CSS. All values resolve to theme tokens so the canvas
+ * re-themes with the rest of the app.
+ */
+[data-canvas-scope] .react-flow {
+  --xy-background-color: var(--background);
+  --xy-edge-stroke-default: var(--border);
+  --xy-edge-stroke-selected-default: var(--primary);
+  --xy-connectionline-stroke-default: var(--primary);
+  --xy-node-border-default: var(--border);
+  --xy-attribution-background-color-default: transparent;
+  --xy-controls-button-background-color-default: var(--card);
+  --xy-controls-button-background-color-hover-default: var(--muted);
+  --xy-controls-button-color-default: var(--foreground);
+  --xy-controls-button-border-color-default: var(--border);
+}
+
+/*
+ * Retro CRT scanline overlay (full Doom 64 treatment). A single fixed,
+ * non-interactive layer over the whole app; `pointer-events: none` is load-bearing
+ * so it never intercepts canvas drags or clicks. Lines are a few percent of
+ * foreground so text contrast is untouched. No animation by default (and any flicker
+ * stays gated behind prefers-reduced-motion).
+ */
+.retro-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    color-mix(in oklab, var(--foreground) 7%, transparent) 3px
+  );
+  opacity: 0.6;
+}
+@media (prefers-reduced-motion: reduce) {
+  .retro-overlay {
+    opacity: 0.4;
+  }
 }
 
 /*
@@ -16,16 +209,19 @@
   overflow-wrap: anywhere;
 }
 .plate-doc h1 {
+  font-family: var(--font-display);
   font-size: 1.25rem;
   font-weight: 700;
   margin: 0.6em 0 0.3em;
 }
 .plate-doc h2 {
+  font-family: var(--font-display);
   font-size: 1.1rem;
   font-weight: 700;
   margin: 0.6em 0 0.3em;
 }
 .plate-doc h3 {
+  font-family: var(--font-display);
   font-size: 1rem;
   font-weight: 600;
   margin: 0.6em 0 0.3em;
@@ -48,21 +244,21 @@
   margin: 0.15em 0;
 }
 .plate-doc a {
-  color: hsl(280, 100%, 78%);
+  color: var(--primary);
   text-decoration: underline;
 }
 .plate-doc code {
   border-radius: 0.25rem;
-  background: rgb(255 255 255 / 0.1);
+  background: var(--muted);
   padding: 0.1em 0.3em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85em;
 }
 .plate-doc blockquote {
-  border-left: 3px solid rgb(255 255 255 / 0.2);
+  border-left: 3px solid var(--border);
   margin: 0.5em 0;
   padding-left: 0.75em;
-  color: rgb(255 255 255 / 0.7);
+  color: var(--muted-foreground);
 }
 .plate-doc strong {
   font-weight: 700;

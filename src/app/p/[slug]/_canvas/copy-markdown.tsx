@@ -49,7 +49,7 @@ async function copyToClipboard(
 }
 
 const TOOLBAR_BUTTON_CLASSES =
-  "flex items-center gap-1 rounded-md bg-white/10 px-2 py-1.5 text-sm text-white transition hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40";
+  "flex items-center gap-1 rounded-md bg-muted px-2 py-1.5 text-sm text-foreground transition hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40";
 
 export function CopyMarkdownToolbar({ slug }: { slug: string }) {
   const utils = api.useUtils();
@@ -87,7 +87,7 @@ export function CopyMarkdownToolbar({ slug }: { slug: string }) {
 }
 
 const COMPACT_BUTTON_CLASSES =
-  "ml-2 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-white/60 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40";
+  "ml-2 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40";
 
 export function CopyCurrentScopeButton({
   slug,

@@ -5,6 +5,7 @@ import "@xyflow/react/dist/style.css";
 import {
   addEdge,
   Background,
+  BackgroundVariant,
   type Connection,
   ConnectionMode,
   Controls,
@@ -2560,7 +2561,11 @@ function CanvasInner({
                       zoomOnDoubleClick={false}
                       fitView
                     >
-                      <Background />
+                      <Background
+                        variant={BackgroundVariant.Lines}
+                        gap={32}
+                        color="var(--border)"
+                      />
                       <Controls />
                       <Panel position="top-left" className="flex gap-2">
                         {effectiveCanEdit && (
@@ -2646,7 +2651,7 @@ function CanvasInner({
                         ))}
                       {!nodes.some((n) => n.type === "component") && (
                         <Panel position="top-center">
-                          <p className="mt-2 text-sm text-white/50">
+                          <p className="mt-2 text-sm text-muted-foreground">
                             Empty canvas. Add a Component to start modeling.
                           </p>
                         </Panel>
@@ -2664,7 +2669,7 @@ function CanvasInner({
                         (effectiveCanEdit ? (
                           <Panel position="top-center">
                             <span
-                              className="mt-2 flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-xs font-medium text-amber-200/90"
+                              className="mt-2 flex items-center gap-1.5 rounded-full border border-edit/30 bg-edit/10 px-2.5 py-1 text-xs font-medium text-edit/90"
                               title="Changes here are saved to the embedded project, not this one."
                             >
                               <Pencil size={12} aria-hidden />
@@ -2674,7 +2679,7 @@ function CanvasInner({
                         ) : (
                           <Panel position="top-center">
                             <span
-                              className="mt-2 flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-xs font-medium text-white/70"
+                              className="mt-2 flex items-center gap-1.5 rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground"
                               title="You're viewing an embedded project. Only someone with edit access to it can make changes."
                             >
                               <Eye size={12} aria-hidden />
@@ -2725,7 +2730,7 @@ export default function Canvas({
     <ReactFlowProvider>
       <div data-canvas-scope={scope} className="h-full w-full">
         <Suspense
-          fallback={<div className="h-full w-full bg-[#1b1c33]" aria-hidden />}
+          fallback={<div className="h-full w-full bg-background" aria-hidden />}
         >
           <CanvasInner
             scope={scope}

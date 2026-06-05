@@ -1154,6 +1154,42 @@ The route that opens a **Trace** — reached from the always-enabled header **Tr
 
 A named, persisted **Trace** — a stored set of **trace points** over a Project, owned by the Project and addressed at `/p/[slug]/trace/[traceId]`. Distinct from the **working trace** (the unsaved, per-browser `localStorage` set): a saved Trace lives in the database (`Trace` + `TracePoint` rows), is shareable by the project **capability slug** (any slug-holder reads; only the owner saves/renames/deletes — ADR-0002), and is soft-deletable + undoable as one `deletionId` batch (ADR-0030). Only the POINT SET persists; the on-path subgraph is recomputed on read by `getTraceView` (derived, like **Canvas**; ADR-0034). Loading a saved Trace REPLACES the working trace with its points (with an undo toast if unsaved points are discarded). The word is **saved Trace** (or **named Trace**) — distinct from **working trace**; never "trace template" or "stored path". _(Realized now via #59; ADR-0035. The MCP trace resource that reads a saved Trace — member-gated `architecture://trace/{traceId}` (owner or member, #109), deterministic markdown — is realized now via #60.)_
 
+## Theming and design tokens
+
+The app has a **semantic design-token system** ([ADR-0045](docs/adr/0045-design-token-system-doom-64-theme.md))
+rendering the **Doom 64** palette. Every color resolves to a CSS variable defined in
+`src/styles/globals.css` — **never a hardcoded hex / `hsl(280 …)` / `text-white/N`
+literal**. Use the Tailwind utilities that map to the tokens:
+
+- **Surfaces:** `bg-background` (page/canvas), `bg-card` (nodes, dialogs, detail
+  panel), `bg-popover` (command palette, tooltips, menus), `bg-muted` (inert fills,
+  inputs, passive boundary-proxy).
+- **Text:** `text-foreground` (primary), `text-muted-foreground` (secondary —
+  map the _role_, not the old opacity number; `…/70` for tertiary).
+- **Accent:** `bg-primary` / `text-primary` / `border-primary` (the blood-red accent;
+  this is the **old purple accent's replacement**). `primary-foreground` for text on it.
+- **Borders:** `border-border`. Key surfaces use `border-2` for the chunky Doom panel.
+- **Destructive:** `text-destructive` / `bg-destructive` (orange) — **reserved for
+  destructive actions only**; never put `bg-primary` on a delete control. Primary
+  (red) and destructive (orange) are close in hue, so disambiguate with icon +
+  position, not color alone.
+- **App-specific:** `--edit` (`bg-edit`/`border-edit`/`text-edit`) is the
+  embedded-project edit / read-only indicator (formerly amber); `--portal`
+  (`border-portal`/`bg-portal`/`text-portal`) marks a Project Portal / embedded
+  boundary (formerly sky). Both are first-class tokens defined for light and dark.
+
+**Light + dark** ship from one token set: `:root` is light, `.dark` overrides it, and
+`@theme inline` (not `@theme`) is what makes a class swap re-cascade at runtime. The
+toggle is `next-themes` (class strategy, **dark default**, localStorage); `<html>`
+carries `suppressHydrationWarning` and next-themes' pre-paint script prevents a
+flash. The **Oxanium** display font (`font-display`) is for **headings only**; body
+stays Geist. React Flow is themed via `--xy-*` vars scoped under
+`[data-canvas-scope] .react-flow`.
+
+**Verifying a theme change:** `pnpm check` and `pnpm test` are **color-blind** — they
+catch nothing visual. Always verify in-browser in **both** modes; **light mode is the
+higher-contrast risk**.
+
 ## Standing notes
 
 ### Prompt-injection standing note

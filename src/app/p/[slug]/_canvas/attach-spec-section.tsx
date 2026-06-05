@@ -45,17 +45,17 @@ export function AttachSpecSection({
 
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wide text-white/60 uppercase">
-        <FileCode2 size={12} aria-hidden className="text-[hsl(280,100%,80%)]" />
+      <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        <FileCode2 size={12} aria-hidden className="text-primary" />
         Attach spec
       </h3>
-      <label className="flex flex-col gap-1 text-xs text-white/60">
+      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
         Kind
         <select
           value={kind}
           onChange={(event) => setKind(event.target.value as SpecKind)}
           disabled={pending}
-          className="nodrag rounded bg-white/10 px-2 py-1.5 text-sm text-white outline-none focus:bg-white/15 disabled:opacity-50"
+          className="nodrag rounded bg-muted px-2 py-1.5 text-sm text-foreground outline-none focus:bg-muted disabled:opacity-50"
         >
           {PARSEABLE_KINDS.map((option) => (
             <option key={option.value} value={option.value}>
@@ -64,7 +64,7 @@ export function AttachSpecSection({
           ))}
         </select>
       </label>
-      <label className="flex flex-col gap-1 text-xs text-white/60">
+      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
         Source
         <textarea
           value={source}
@@ -77,22 +77,22 @@ export function AttachSpecSection({
           rows={6}
           spellCheck={false}
           disabled={pending}
-          className="nodrag resize-y rounded bg-white/10 px-2 py-1.5 font-mono text-xs text-white outline-none focus:bg-white/15 disabled:opacity-50"
+          className="nodrag resize-y rounded bg-muted px-2 py-1.5 font-mono text-xs text-foreground outline-none focus:bg-muted disabled:opacity-50"
         />
       </label>
-      <div className="flex items-center justify-between text-[10px] text-white/40">
+      <div className="flex items-center justify-between text-[10px] text-muted-foreground/70">
         <span>
           {byteLength.toLocaleString()} /{" "}
           {MAX_SPEC_SOURCE_BYTES.toLocaleString()} bytes
         </span>
         {overCap && (
-          <span className="text-amber-300">
+          <span className="text-edit">
             Source exceeds the {MAX_SPEC_SOURCE_BYTES / 1_000_000} MB cap.
           </span>
         )}
       </div>
       {parseError !== null && (
-        <p className="rounded border border-rose-400/40 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-100">
+        <p className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
           {parseError}
         </p>
       )}
@@ -100,7 +100,7 @@ export function AttachSpecSection({
         type="button"
         onClick={() => onPreview({ kind, source })}
         disabled={disabled}
-        className="self-start rounded bg-[hsl(280,100%,70%)] px-3 py-1.5 text-xs font-medium text-white transition hover:bg-[hsl(280,100%,75%)] disabled:cursor-not-allowed disabled:opacity-50"
+        className="self-start rounded bg-primary px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-primary disabled:cursor-not-allowed disabled:opacity-50"
       >
         {pending ? "Parsing…" : "Preview"}
       </button>
