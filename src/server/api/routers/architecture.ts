@@ -18,6 +18,7 @@ import {
   createNode,
   deleteNode,
   getCanvas,
+  listForeignComponentsViaPortal,
   listProjectComponents,
   restoreNode,
   updateNode,
@@ -27,6 +28,7 @@ import {
   upsertBoundaryProxyPlacement,
 } from "~/server/architecture/node.service";
 import {
+  connectCrossProject,
   connectNodes,
   deleteEdge,
   listNodeConnections,
@@ -61,6 +63,7 @@ import {
 import {
   applySpecInput,
   claimInviteInput,
+  connectCrossProjectInput,
   connectNodesInput,
   createEmbeddedComponentInput,
   createInviteInput,
@@ -82,6 +85,7 @@ import {
   getProjectBySlugInput,
   getTraceInput,
   getTraceViewInput,
+  listForeignComponentsViaPortalInput,
   listNodeConnectionsInput,
   listProjectComponentsInput,
   listTracesInput,
@@ -452,6 +456,24 @@ export const architectureRouter = createTRPCRouter({
       }
     }),
 
+  // Public: the foreign-Component list feeding the "Connect to…" palette's
+  // cross-project group (#122). Slug is the HOST read capability (ADR-0002); the
+  // foreign Project is DERIVED from the portal `referenceNodeId` and re-gated
+  // per-actor (≥ view) in the service — the client never holds the foreign
+  // Project.id, and an unreadable portal target collapses to NotFound.
+  listForeignComponentsViaPortal: publicProcedure
+    .input(listForeignComponentsViaPortalInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor | null = ctx.session?.user
+        ? { userId: ctx.session.user.id, via: "session" }
+        : null;
+      try {
+        return await listForeignComponentsViaPortal(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
   // Public: a Component's complete incident Connections for the detail panel's
   // Connections section (#66 / ADR-0032). Slug-readable so a viewer sees the
   // read-only list (ADR-0002), same posture as `getCanvas`.
@@ -566,6 +588,24 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await connectNodes(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Write mutation: draw a CROSS-PROJECT Connection — a host Component to a
+  // Component inside an embedded Project (#122). The service enforces the gate
+  // IN ORDER — host `edit` (Forbidden on deny) BEFORE the foreign read (≥ view,
+  // NotFound on deny) — and DERIVES the foreign Project from the portal
+  // `referenceNodeId`, so no `foreignProjectId` ever crosses the wire. The
+  // host-first ordering is the non-disclosure property (a non-host-editor never
+  // probes the foreign endpoint). `protectedProcedure` is the transport gate.
+  connectCrossProject: protectedProcedure
+    .input(connectCrossProjectInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await connectCrossProject(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

@@ -282,6 +282,10 @@ function toProxyRFNode(
       kind: p.kind,
       realEndpointId: p.realEndpointId,
       lineal: breadcrumbIds.has(p.realEndpointId),
+      // Cross-project proxy marker (#122): carry the foreign Project title through
+      // so the node renders "From [Foreign Project]". Undefined for an ordinary
+      // same-project cross-scope proxy.
+      foreignProjectTitle: p.foreignProjectTitle,
     },
   };
 }
@@ -594,6 +598,23 @@ function CanvasInner({
     [breadcrumbs],
   );
 
+  // The on-scope Project Portals a cross-project connect can route through (#122):
+  // interior portal nodes the actor can read BEHIND (enterable or readOnly — a
+  // `locked` portal offers no readable foreign content). The "Connect to…" palette
+  // surfaces a "From [portal title]" group per portal, lazily fed by the portal
+  // `referenceNodeId` (the client never holds the foreign Project.id — #119).
+  const connectPortals = useMemo(
+    () =>
+      interiorNodes
+        .filter(
+          (n) =>
+            n.isPortal &&
+            (n.embedAccess === "enterable" || n.embedAccess === "readOnly"),
+        )
+        .map((n) => ({ referenceNodeId: n.id, title: n.title })),
+    [interiorNodes],
+  );
+
   // Seed React Flow's store ONCE from the hydrated query; thereafter the store
   // owns interaction state. The island is keyed by scope (./index), so a Descent
   // (a scope change) remounts and re-seeds rather than inheriting these.
@@ -646,6 +667,8 @@ function CanvasInner({
   const upsertProxyPlacement =
     api.architecture.upsertBoundaryProxyPlacement.useMutation();
   const connectNodes = api.architecture.connectNodes.useMutation();
+  const connectCrossProject =
+    api.architecture.connectCrossProject.useMutation();
   const { mutateAsync: editEdge } = api.architecture.updateEdge.useMutation();
   const { mutateAsync: setEdgeInteraction } =
     api.architecture.updateEdgeInteraction.useMutation();
@@ -1247,8 +1270,132 @@ function CanvasInner({
   //     list, never the Canvas.
   //   - else (a real on-scope node, possibly an ancestor for the altitude view)
   //     → a plain interior edge to that representative, no proxy.
+  // Draw a CROSS-PROJECT Connection (#122): the source host Component to a
+  // Component inside an embedded Project, routed through the portal
+  // `referenceNodeId` the palette item carried (the client never holds the foreign
+  // Project.id — #119). The foreign endpoint ALWAYS renders as an off-scope
+  // boundary proxy (`xproxy_<id>`, distinct from same-project `proxy_`), marked
+  // "From [Foreign Project]". Optimistic proxy + host→foreign edge, reconciled
+  // temp → real on success, rolled back + toast on failure — the same shape the
+  // off-scope same-project case uses, minus the rep resolution (a foreign endpoint
+  // has no on-scope rep by construction).
+  const commitCrossProjectConnect = useCallback(
+    async (
+      sourceNodeId: string,
+      target: ConnectTarget,
+      foreign: { referenceNodeId: string; foreignProjectTitle: string },
+    ) => {
+      const tempId = `temp_${crypto.randomUUID()}`;
+      const proxyNodeId = `xproxy_${tempId}`;
+
+      const optimisticEdge: CanvasEdge = {
+        id: tempId,
+        sourceId: sourceNodeId,
+        targetId: target.id,
+        sourceRepr: sourceNodeId,
+        targetRepr: proxyNodeId,
+        interaction: "ASSOCIATION",
+        label: null,
+      };
+      const optimisticProxy: CanvasBoundaryProxy = {
+        nodeId: proxyNodeId,
+        title: target.title,
+        kind: target.kind,
+        realEndpointId: target.id,
+        edgeId: tempId,
+        posX: null,
+        posY: null,
+        foreignProjectTitle: foreign.foreignProjectTitle,
+      };
+
+      setEdges((es) => addEdge(toRFEdge(optimisticEdge), es));
+      patchCanvas((c) => ({
+        interiorEdges: [...c.interiorEdges, optimisticEdge],
+        boundaryProxies: [...c.boundaryProxies, optimisticProxy],
+      }));
+      setNodes((ns) => [
+        ...ns,
+        ...placedProxyNodes([optimisticProxy], breadcrumbIds, railOccupants(ns)),
+      ]);
+
+      try {
+        const real = await connectCrossProject.mutateAsync({
+          hostProjectId: writeProjectId,
+          hostNodeId: sourceNodeId,
+          referenceNodeId: foreign.referenceNodeId,
+          foreignNodeId: target.id,
+        });
+
+        // Reconcile temp → real ids. The real proxy id is `xproxy_<realRowId>`,
+        // matching what getCanvas emits, so a later remount reconciles cleanly.
+        const realProxyNodeId = `xproxy_${real.id}`;
+        const reconciledEdge: CanvasEdge = {
+          ...optimisticEdge,
+          id: real.id,
+          targetRepr: realProxyNodeId,
+        };
+        const reconciledProxy: CanvasBoundaryProxy = {
+          ...optimisticProxy,
+          nodeId: realProxyNodeId,
+          edgeId: real.id,
+        };
+        setEdges((es) =>
+          es.map((e) => (e.id === tempId ? toRFEdge(reconciledEdge) : e)),
+        );
+        setNodes((ns) =>
+          ns.map((n) =>
+            n.id === proxyNodeId
+              ? toProxyRFNode(reconciledProxy, breadcrumbIds, n.position)
+              : n,
+          ),
+        );
+        patchCanvas((c) => ({
+          interiorEdges: c.interiorEdges.map((e) =>
+            e.id === tempId ? reconciledEdge : e,
+          ),
+          boundaryProxies: c.boundaryProxies.map((p) =>
+            p.nodeId === proxyNodeId ? reconciledProxy : p,
+          ),
+        }));
+        void utils.architecture.getCanvas.invalidate(canvasInput);
+      } catch (error) {
+        setEdges((es) => es.filter((e) => e.id !== tempId));
+        setNodes((ns) => ns.filter((n) => n.id !== proxyNodeId));
+        patchCanvas((c) => ({
+          interiorEdges: c.interiorEdges.filter((e) => e.id !== tempId),
+          boundaryProxies: c.boundaryProxies.filter(
+            (p) => p.nodeId !== proxyNodeId,
+          ),
+        }));
+        toast.error(messageForConnectFailure(error));
+      }
+    },
+    [
+      utils,
+      canvasInput,
+      breadcrumbIds,
+      setEdges,
+      setNodes,
+      patchCanvas,
+      writeProjectId,
+      connectCrossProject,
+    ],
+  );
+
   const commitConnect = useCallback(
     async (sourceNodeId: string, target: ConnectTarget) => {
+      // A cross-project pick routes through its own optimistic + mutation path
+      // (#122) — the foreign endpoint has no on-scope rep, so the same-project
+      // rep partition below does not apply.
+      if (target.foreign) {
+        await commitCrossProjectConnect(
+          sourceNodeId,
+          target,
+          target.foreign,
+        );
+        return;
+      }
+
       // Pre-check against the source's Connection list (self-link + duplicate),
       // mirroring `handleConnect`'s drag-time guard so the user gets instant
       // feedback instead of a server round trip + toast.
@@ -1493,6 +1640,7 @@ function CanvasInner({
       patchCanvas,
       writeProjectId,
       connectNodes,
+      commitCrossProjectConnect,
     ],
   );
 
@@ -2416,6 +2564,7 @@ function CanvasInner({
                               onClose={closeDetailPanel}
                               onChangeKind={commitNodeKind}
                               onConnect={commitConnect}
+                              connectPortals={connectPortals}
                               onDeleteConnection={commitDeleteConnection}
                               onCommitDocumentation={commitDocumentation}
                               onPreviewSpec={handlePreviewSpec}

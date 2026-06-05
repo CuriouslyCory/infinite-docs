@@ -94,6 +94,11 @@ model Project {
     // `onDelete: SetNull` on the FK side leaves those portals as harmless dangling
     // shells when this Project is hard-deleted, never cascading into the host graph.
     embeddedBy  Node[]      @relation("EmbeddedProjects")
+    // The cross-project Connections ANCHORED in this Project as host (#122). The
+    // host FK cascades on hard-delete; the FOREIGN endpoint is a loose String
+    // column on CrossProjectEdge (no relation here), so a foreign delete never
+    // cascades into the host graph.
+    crossProjectEdges CrossProjectEdge[] @relation("CrossEdgeHostProject")
 
     @@index([ownerId])
 }
@@ -348,6 +353,16 @@ model Node {
     containerPlacements BoundaryProxyPlacement[] @relation("ContainerPlacements")
     endpointPlacements  BoundaryProxyPlacement[] @relation("EndpointPlacements")
 
+    // Cross-project Connections (#122) incident to this Node as a HOST endpoint.
+    // `crossEdgesAsHost` is the Connections whose host Component IS this Node;
+    // `crossEdgesAsReference` is the Connections routed THROUGH this Node as the
+    // portal they cross (the `referenceNodeId`). Both cascade on hard-delete. The
+    // FOREIGN endpoint carries no relation here — it is a loose String column, so a
+    // foreign Node hard-delete never cascades into this host graph (render-time
+    // liveness filtering hides any dangling foreign ref; #123 owns the sweep/dedup).
+    crossEdgesAsHost      CrossProjectEdge[] @relation("CrossEdgeHostNode")
+    crossEdgesAsReference CrossProjectEdge[] @relation("CrossEdgeReferenceNode")
+
     @@index([projectId, parentId])
     @@index([parentId])
     @@index([sourceSpecId])
@@ -446,6 +461,56 @@ model Edge {
     @@index([targetId])
     @@index([deletionId])
     @@index([sourceSpecId])
+}
+
+// A cross-project Connection: a host Component talks to a specific Component
+// INSIDE an embedded Project (CONTEXT.md "Cross-project connection"; #122). It is
+// ANCHORED IN THE HOST — viewed standalone, the foreign Project never shows this
+// edge — and routes through a portal (`referenceNodeId`, the Project Portal Node
+// the host crossed). A SEPARATE table from `Edge` on purpose: `Edge` (its
+// `projectId`, the `idx_edge_dedup`/`idx_edge_assoc_dedup` partial indexes, and
+// the `getCanvas` ancestry CTE) assumes one Project; a cross-project edge cannot
+// live there without breaking all three. Render is a dedicated bounded pass in
+// `getCanvas`, never the recursive CTE.
+//
+// The host endpoints (`hostProjectId`, `hostNodeId`, `referenceNodeId`) carry FK
+// relations and cascade on hard-delete. The FOREIGN endpoint
+// (`foreignProjectId` / `foreignNodeId`) is a PLAIN String with NO FK/relation:
+// a foreign Project/Node hard-delete must NEVER cascade into the host graph, so
+// the columns stay loose and a dangling foreign ref is hidden at render time by a
+// liveness filter (the soft-delete sweep + dedup index are #123).
+//
+// NON-DISCLOSURE: `foreignProjectId` is the real internal Project.id of a project
+// the host owner may have no grant to. It is stored here but NEVER reaches the
+// client — `connectCrossProject` DERIVES it server-side from the portal's
+// `embeddedProjectId`, and `getCanvas` drops any row whose foreign project the
+// reading actor cannot re-resolve (ADR-0041 firewall, #119/#120 precedent).
+//
+// No dedup unique index this slice (#123). `label` is untrusted user content.
+model CrossProjectEdge {
+    id              String   @id @default(cuid())
+    hostProjectId   String
+    hostProject     Project  @relation("CrossEdgeHostProject", fields: [hostProjectId], references: [id], onDelete: Cascade)
+    hostNodeId      String
+    hostNode        Node     @relation("CrossEdgeHostNode", fields: [hostNodeId], references: [id], onDelete: Cascade)
+    referenceNodeId String
+    referenceNode   Node     @relation("CrossEdgeReferenceNode", fields: [referenceNodeId], references: [id], onDelete: Cascade)
+    // PLAIN columns — no FK/relation (see model note): a foreign delete must never
+    // cascade into the host graph.
+    foreignProjectId String
+    foreignNodeId    String
+    interaction     Interaction @default(ASSOCIATION)
+    label           String?
+    deletedAt       DateTime?
+    deletionId      String?
+    createdAt       DateTime @default(now())
+    updatedAt       DateTime @updatedAt
+
+    @@index([hostProjectId])
+    @@index([referenceNodeId])
+    @@index([hostNodeId])
+    @@index([foreignNodeId])
+    @@index([deletionId])
 }
 
 // The imported contract on a Component (CONTEXT.md "Spec"; ADR-0011, ADR-0025)

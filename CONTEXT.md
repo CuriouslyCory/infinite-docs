@@ -171,6 +171,31 @@ optimistically and reconciled on success. A Component's complete incident Connec
 scopes — are listed in the Component-detail panel's Connections section (`listNodeConnections`); the
 project-wide search is backed by `listProjectComponents`.**)_
 
+### Cross-project connection
+
+A Connection from a host Component to a **specific Component inside an embedded project** ("my
+component talks to their component"). Backed **not by an Edge** but by a separate **host-anchored
+`CrossProjectEdge`** table: host columns `hostProjectId`/`hostNodeId`/`referenceNodeId` (the portal
+it routes through) are real FKs with `onDelete: Cascade`; `foreignProjectId`/`foreignNodeId` are
+**plain reference columns, NOT FKs** — so a foreign delete never cascades into the host graph (the
+hazard ADR-0041's `SetNull` avoided) — plus its own `interaction`, an optional `label?`, and
+soft-delete columns. The **separate table is load-bearing**: it keeps the Edge dedup indexes
+(`idx_edge_dedup`/`idx_edge_assoc_dedup`, keyed on `projectId`, ADR-0010) and the single-project
+ancestry CTE (`endpoint_walk`, ADR-0031/0006) **byte-unchanged**, and keeps ADR-0028's "**no Edge
+spans a project**" literally true — because nothing cross-project ever enters the Edge table.
+**Host-anchored**: it is the host referencing foreign content, never written into the foreign
+graph, so the foreign project **viewed standalone never shows it** (a pointer, not a snapshot;
+ADR-0041 §2). Authorization mirrors portal creation (ADR-0041 §4): **host `edit` first**
+(non-disclosing `Forbidden`) **then foreign `≥ view`** (`resolveReadableProjectById`, `none →
+NotFound`), **re-resolved per-actor on every read** — a later-revoked foreign grant makes the
+foreign end simply vanish, with no write. A **same-project or self link** is rejected
+(`ValidationError`) — that is an ordinary Edge. Carries its own **Interaction** (ADR-0027); its
+`label` is untrusted-verbatim (the prompt-injection standing note). Renders its foreign end as a
+**foreign boundary proxy** (below). **Never an Edge, never written to the foreign graph, never a
+portal.** _(Create + render now; **delete/restore** (a `deletionId` column present but unwired),
+cross-project **dedup**, cross-boundary **"Go to"**, and **export markers** are the explicit seam
+to **#123**. #122, ADR-0043.)_
+
 ### Edge
 
 The data-model representation of a **Connection**: the stored graph edge with `sourceId` and
@@ -418,6 +443,27 @@ ADR-0017 amendment): ONE row per crossing Connection, far endpoint named with it
 anchor, no `direct/inherited` partition — derived independently from `getCanvas` (one walks
 descendants under a subtree root, the other walks whole-Project ancestry; ADR-0031 sanctions the
 two derivations stay separate).)*
+
+### Foreign boundary proxy
+
+A **boundary proxy** whose real endpoint lives in **another Project** — the on-scope, read-only
+stand-in for the foreign Component end of a **cross-project connection** (above). When **getCanvas**
+surfaces an incident `CrossProjectEdge` in the host scope (keyed on `referenceNodeId`, the portal
+it routes through), the foreign end renders through the **same ADR-0031 per-edge proxy machinery**,
+reused unchanged: a synthetic `nodeId` (an `xproxy_`-prefixed id, so it never collides with an
+intra-project `proxy_<edgeId>`), `realEndpointId = foreignNodeId`, and a **derived identity** —
+the foreign Node's **live title/kind read across the seam** — with its per-scope placement joined
+from the existing `BoundaryProxyPlacement` table keyed `(containerNodeId, realEndpointId)`
+(ADR-0036). It is **marked "From [Foreign Project]"** with the foreign project's display **title —
+never its slug** (ADR-0002 / ADR-0041 §5). It is derived by a **dedicated bounded pass** — a fifth
+concurrent read in **getCanvas**'s `Promise.all` — **never** the recursive ancestry CTE (`parentId`
+cannot cross a project boundary, ADR-0041 §7). The foreign capability is **re-gated per-actor on
+every read** (`≥ view`); a denial, a soft-deleted foreign Node, or a **dangling reference** (the
+foreign columns are plain, not FKs) renders **"endpoint not live → proxy absent"** — never a broken
+node, never a disclosure (ADR-0031's soft-deleted-endpoint posture, carried across the seam). The
+`CrossProjectEdge` row **survives** the dangle; a GC/sweep is #123. Like every boundary proxy it is
+a **passive node** (read-only); this slice has **no** cross-boundary "Go to" affordance on it.
+_(#122, ADR-0043; reuses ADR-0031/0036.)_
 
 ### Boundary endpoint
 

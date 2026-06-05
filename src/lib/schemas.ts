@@ -696,6 +696,55 @@ export const connectNodesInput = z.object({
 export type ConnectNodesInput = z.input<typeof connectNodesInput>;
 
 /**
+ * Input for drawing a CROSS-PROJECT Connection (`connectCrossProject`, #122) —
+ * a host Component to a specific Component inside an EMBEDDED Project. Addressed
+ * by the HOST `hostProjectId` (an internal handle — writes are never slug-granted,
+ * ADR-0002) plus `hostNodeId` (the host endpoint), `referenceNodeId` (the Project
+ * Portal Node the host crossed), and `foreignNodeId` (the target inside the
+ * embedded Project).
+ *
+ * NON-DISCLOSURE (the headline property): there is NO `foreignProjectId` here. The
+ * client never holds the foreign Project.id (stripped since #119), so the service
+ * DERIVES it server-side from the portal's `embeddedProjectId` — routing the
+ * connect through the portal Node the client DOES have. `foreignProjectId` never
+ * appears on any client-facing input.
+ *
+ * `interaction` is the Connection's type (default `ASSOCIATION`; ADR-0027).
+ * `label` is UNTRUSTED user content, stored verbatim (prompt-injection standing
+ * note). Identity comes from the actor, never `input` (ADR-0001).
+ */
+export const connectCrossProjectInput = z.object({
+  hostProjectId: z.string().min(1),
+  hostNodeId: z.string().min(1),
+  referenceNodeId: z.string().min(1),
+  foreignNodeId: z.string().min(1),
+  interaction: interaction.default("ASSOCIATION"),
+  label: z.string().max(200).optional(),
+});
+// `z.input` (not `z.infer`) so callers may omit the defaulted `interaction`; the
+// service re-parses with the schema to materialize it.
+export type ConnectCrossProjectInput = z.input<typeof connectCrossProjectInput>;
+
+/**
+ * Input for the foreign-Component picker that feeds the "Connect to…" palette's
+ * cross-project group (`listForeignComponentsViaPortal`, #122). Addressed by the
+ * HOST `slug` (the read grant, ADR-0002) plus `referenceNodeId` — the Project
+ * Portal Node the client already holds.
+ *
+ * NON-DISCLOSURE: the client never holds the foreign Project.id, so it routes the
+ * list through the portal Node id; the service derives the embedded Project from
+ * the portal's `embeddedProjectId` and re-gates the actor against it (≥ view).
+ * `foreignProjectId` never appears on this input.
+ */
+export const listForeignComponentsViaPortalInput = z.object({
+  slug: z.string().min(1),
+  referenceNodeId: z.string().min(1),
+});
+export type ListForeignComponentsViaPortalInput = z.infer<
+  typeof listForeignComponentsViaPortalInput
+>;
+
+/**
  * Input for editing a Connection's `label`. Addressed by the Edge `id` — the
  * natural key for an existing row, and how a future MCP tool arrives. The
  * service loads the Edge, resolves its Project, and enforces owner-only access
