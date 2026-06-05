@@ -472,9 +472,12 @@ proxy** / **Trace**). Creating one requires **edit** on the host **and** **≥ v
 (you may embed only what you can read); self-embed is rejected (`ValidationError`); the embed stack
 is depth-capped at `ANCESTRY_DEPTH_CAP` (256). Deleting the **target** nulls the FK and the portal
 **neutralizes** to a plain Component — degrade, never cascade into the host, never block the
-target's deletion. Never a "link" (that is a **Connection**) and never a "PORTAL kind". _(Realized
-now read-only via the per-actor re-gate; shared-target embedding — the picker beyond owned-only —
-is the next slice. #119, ADR-0041.)_
+target's deletion. Never a "link" (that is a **Connection**) and never a "PORTAL kind". The
+"Embed a project" picker offers **any project the actor holds ≥ view on** (`listProjectsForActor`,
+excluding the current project) — owned **and** shared — since the create gate (host **edit**, then
+target **≥ view**) already permits embedding anything you can read; on the host read a portal
+resolves a **Portal access state** (enterable / read-only / locked) per-actor. _(Realized now: the
+per-actor re-gate and shared-target embedding both ship. #120, #119, ADR-0041.)_
 
 ### Embedded project
 
@@ -484,9 +487,32 @@ in the path, the `?via=` query, any response, breadcrumb, or log. Its read is **
 per-actor** through `resolveReadableProjectById` (the id-keyed read corner, sharing the one
 `resolveCapability` spine; ADR-0040), honoring the target's own **guest access** and mapping a
 sub-`view` capability to **not-found**. The **host's capability never governs the target** — a host
-owner with no grant on the target sees a **locked portal**, identical by the `none → not-found`
-mapping to a missing scope (the headline non-disclosure case). Never a "linked" or "child" Project.
-_(ADR-0041, ADR-0040.)_
+owner with no grant on the target sees a **locked portal**. On **descent** that denial is
+indistinguishable from a missing scope (`none → not-found`); on the **host Canvas read** the same
+denial instead surfaces a **non-disclosing locked sentinel** — the host **Node** exists and is
+acknowledged, but the embedded project's **title and id are withheld** ("two seams, one denial",
+see **Portal access state**). Never a "linked" or "child" Project. _(#120, ADR-0041, ADR-0040.)_
+
+### Portal access state
+
+The per-actor state a **portal** resolves to on the **host Canvas read** — three tiers off the
+capability ladder (ADR-0040), resolved against the **embedded project** for the **descending actor**
+via `resolveReadableProjectById`. The **host's** capability **never** governs which tier; only the
+descending actor's capability **on the target** does.
+
+- **enterable** (target capability ≥ **edit**) — descends; the view-vs-edit write split is **#121**.
+- **read-only** (target capability = **view**) — descends into a **read-only foreign scope**; the
+  existing **viewer** affordance-suppression applies (`canEdit = false`), no new write code.
+- **locked** (target capability **none**) — non-descending, greyed "No access" **LOCKED SENTINEL**.
+  The host **Node** legitimately exists and is **host-owned**, so this is **not** **NotFound** — the
+  host read **acknowledges the node** while **withholding the embedded project's identity** (its
+  title **and** its `Project.id`; the stored title captured at embed time is replaced server-side
+  with a neutral "Locked project" label). Existence of the host node is the **discloseable** thing;
+  the foreign identity is **withheld** — non-disclosure at the right granularity (ADR-0002 /
+  ADR-0040 / ADR-0041).
+
+Resolved **per-actor on every host read**, **never stored** — a **live pointer**, so a grant or
+revoke flips the state on the next read. _(#120, ADR-0041, ADR-0040.)_
 
 ### Capability URL / slug
 

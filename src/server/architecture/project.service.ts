@@ -109,14 +109,17 @@ export interface ReferenceableProject {
 }
 
 /**
- * Lists the Projects the actor may embed as a Project Portal (#119), minus the
- * current host (`excludeProjectId`). OWNED projects only THIS slice — `ownerId ===
- * actor.userId` — so the picker offers exactly what the actor unambiguously
- * controls; widening to shared (member-readable) targets is the NEXT slice. The
- * service-side embed gate (`createEmbeddedComponent` → target ≥ view) is the real
- * authority, so a future widening only relaxes the picker, never the write. Returns
- * a narrow `{ id, title, slug }` (the slug is the actor's OWN — they already hold
- * it; this is not a foreign-slug leak).
+ * Lists the Projects the actor may embed as a Project Portal (#119, widened in
+ * #120), minus the current host (`excludeProjectId`). Offers everything the actor
+ * holds ≥ `view` on — OWNED *or* MEMBER — mirroring the owner-OR-member where of
+ * {@link listProjectsForActor} (one query, no waterfall); the prior owned-only
+ * restriction is dropped now that the per-actor portal re-gate (#120) renders a
+ * shared target read-only and a revoked one as a locked sentinel. The service-side
+ * embed gate (`createEmbeddedComponent` → target ≥ view) remains the real authority;
+ * this only relaxes the picker to match it. Returns a narrow `{ id, title, slug }`
+ * (the slug belongs to a project the actor can already read — never a foreign-slug
+ * leak). `guestAccess` is NOT consulted — like `listProjectsForActor` this is the
+ * member-aware grant, never the public guest enumeration.
  */
 export async function listReferenceableProjects(
   db: Db,
@@ -126,9 +129,12 @@ export async function listReferenceableProjects(
   const { excludeProjectId } = listReferenceableProjectsInput.parse(input);
   return db.project.findMany({
     where: {
-      ownerId: actor.userId,
       deletedAt: null,
       id: { not: excludeProjectId },
+      OR: [
+        { ownerId: actor.userId },
+        { memberships: { some: { userId: actor.userId } } },
+      ],
     },
     select: { id: true, title: true, slug: true },
     orderBy: { createdAt: "desc" },
