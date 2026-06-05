@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted (M5 / #18 — Authenticated MCP route + read resources + llms.txt). Builds on
+Accepted (M5 / #18 — Authenticated MCP route + read resources + llms.txt). **The "owner-gated"
+read posture below is superseded in part by [ADR-0040](0040-role-based-project-sharing.md) (#109):
+MCP reads now resolve through the capability ladder, so a token actor reads its owner-OR-member
+projects (gated on `view`, `guestAccess` forced `NONE`), not only its own. The transport,
+`projectId`-not-slug addressing, and non-disclosure posture are unchanged.** Builds on
 [ADR-0001](0001-service-layer-db-actor-input.md) (the `(db, actor, input)` service contract;
 authz lives in the service layer, not the transport guard, _because the MCP path will not pass
 through that guard_), [ADR-0002](0002-capability-url-sharing.md) (the slug is a bearer read grant;
@@ -173,3 +177,23 @@ Two things differ from the project-scoped three, and both are deliberate:
   `enumerateProjects: false` (like `subtree`) — no `resources/list` enumeration
   of traces; agents learn the `traceId` from the saved route. `llms.txt` picks
   the new resource up via the dynamic catalog render — no route edit.
+
+## Amendment — #109 (MCP membership parity: reads become member-aware)
+
+- **The owner-only read gate is lifted.** `exportMarkdownForActor` and
+  `getTraceMarkdownForActor` no longer call the owner-only `assertCanRead`
+  (deleted); they resolve through `resolveCapability` and gate on `view`, so a
+  token actor reads every project it **owns or is a member of**. `guestAccess`
+  is forced to `NONE` on the token path — a token is never the anonymous
+  slug-holder the guest grant was defined for, so it never reads a
+  `guestAccess=VIEW` project it is not a member of. A deny maps directly to
+  `NotFoundError`; non-disclosure is unchanged.
+- **`resources/list` enumerates owner-or-member projects** via the new
+  `listProjectsForActor` (§3 above referred to the owner-only `listProjects`;
+  the web dashboard keeps that owner-only function, MCP enumeration uses the
+  member-aware one). Enumeration === read grant: a token lists exactly the
+  projects it can read.
+- **Writes were already member-gated** (every MCP write tool routes through an
+  `authorizeProjectWrite(…, "edit")`-gated service since #104); #109 is
+  read-only. See [ADR-0040](0040-role-based-project-sharing.md) for the full
+  rationale and the four pins.

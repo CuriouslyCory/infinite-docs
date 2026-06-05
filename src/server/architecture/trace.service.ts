@@ -19,7 +19,7 @@ import {
   type RenameTraceInput,
 } from "~/lib/schemas";
 import type { Actor, Db } from "./actor";
-import { assertCanRead } from "./access";
+import { capabilityAtLeast, resolveCapability } from "./access";
 import {
   resolveReadableProject,
   resolveWritableProjectBySlug,
@@ -883,23 +883,27 @@ export async function deleteTrace(
   return { id: traceId, deletionId };
 }
 
-// --- Owner-gated MCP read of a saved Trace (#60 / ADR-0017 + ADR-0022) -------
+// --- Member-aware MCP read of a saved Trace (#60 / ADR-0017 + ADR-0022, #109) -
 
 /**
- * getTraceMarkdownForActor — the owner-gated MCP front door for one saved Trace,
- * addressed by **internal `traceId`** (never a slug). The owner-only peer of the
- * slug-bound `getTrace`/`getTraceView`: it resolves the Trace → its Project's
- * `ownerId` → `assertCanRead` WITHOUT a capability slug, so possession of the
- * slug can never reach this path. This mirrors `exportMarkdownForActor` exactly
- * (the deliberate slug-readable-in-app vs owner-gated-MCP asymmetry, ADR-0022).
+ * getTraceMarkdownForActor — the member-aware MCP front door for one saved Trace,
+ * addressed by **internal `traceId`** (never a slug). The token-path peer of the
+ * slug-bound `getTrace`/`getTraceView`: it resolves the Trace → its Project →
+ * the capability ladder (ADR-0040), gating on `view`, so a bearer-token Actor
+ * reads a Trace under a project it OWNS or is a MEMBER of (member parity #109).
+ *
+ * `guestAccess` is forced to `NONE` on the token path (a token is never the
+ * anonymous slug-holder the guest grant was defined for), so possession of a
+ * slug — or a project's public guest grant — can never reach this path. This
+ * mirrors `exportMarkdownForActor` exactly.
  *
  * A soft-deleted Trace, a Trace under a soft-deleted Project, an unknown id, or
- * a Trace owned by another user all surface as `NotFoundError`/`ForbiddenError`,
- * which the MCP adapter collapses to one non-disclosing "not found" — existence
- * never leaks across owners. A real, owned, but degenerate Trace (< 2 live trace
- * points, its Components soft-deleted out from under it) is NOT an error: it
- * returns valid markdown with an insufficient-points note (the markdown analogue
- * of the web empty state).
+ * a Trace the actor cannot read all surface as `NotFoundError`, which the MCP
+ * adapter also collapses to one non-disclosing "not found" — existence never
+ * leaks. A real, readable, but degenerate Trace (< 2 live trace points, its
+ * Components soft-deleted out from under it) is NOT an error: it returns valid
+ * markdown with an insufficient-points note (the markdown analogue of the web
+ * empty state).
  *
  * The on-path subgraph is recomputed on every read (never stored, ADR-0034),
  * reusing the same pure primitives (`buildUnifiedGraph`/`onPathUnion`/
@@ -919,7 +923,17 @@ export async function getTraceMarkdownForActor(
       id: true,
       name: true,
       project: {
-        select: { id: true, title: true, ownerId: true, deletedAt: true },
+        select: {
+          id: true,
+          title: true,
+          ownerId: true,
+          deletedAt: true,
+          memberships: {
+            where: { userId: actor.userId },
+            select: { role: true },
+            take: 1,
+          },
+        },
       },
       points: {
         select: { nodeId: true, node: { select: { deletedAt: true } } },
@@ -934,7 +948,14 @@ export async function getTraceMarkdownForActor(
   if (trace.project.deletedAt !== null) {
     throw new NotFoundError();
   }
-  assertCanRead(actor, { ownerId: trace.project.ownerId });
+  const cap = resolveCapability(
+    actor,
+    { ownerId: trace.project.ownerId, guestAccess: "NONE" },
+    trace.project.memberships[0] ?? null,
+  );
+  if (!capabilityAtLeast(cap, "view")) {
+    throw new NotFoundError();
+  }
 
   const { nodes, edges } = await fetchProjectGraph(db, trace.project.id);
   const byId = new Map(nodes.map((n) => [n.id, n]));

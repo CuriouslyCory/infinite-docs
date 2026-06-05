@@ -1,5 +1,5 @@
 import type { Actor, Db } from "./actor";
-import { assertCanRead } from "./access";
+import { capabilityAtLeast, resolveCapability } from "./access";
 import { authorizeProjectRead } from "./access-db";
 import { NotFoundError } from "./errors";
 import {
@@ -331,17 +331,24 @@ export async function exportMarkdown(
 
 /**
  * Renders a Project — or one of its subtrees — to deterministic markdown for the
- * owner-gated MCP read path (#18). Unlike {@link exportMarkdown}, the project is
- * addressed by internal `projectId` (never the slug) and the read is authorized
- * by ownership: the bearer-token Actor may read ONLY its own projects.
+ * member-aware MCP read path (#18, member parity #109). Unlike
+ * {@link exportMarkdown}, the project is addressed by internal `projectId` (never
+ * the slug) and the read resolves through the capability ladder (ADR-0040): the
+ * bearer-token Actor reads a project it OWNS or is a MEMBER of, gated on `view`.
+ *
+ * `guestAccess` is deliberately forced to `NONE` on the token path: a token is a
+ * userId-identified credential, never the anonymous slug-holder the guest grant
+ * was defined for, so it must never read a `guestAccess=VIEW` project it is not a
+ * member of. Read grant therefore equals the `listProjectsForActor` enumeration
+ * (owner + member), and a leaked token's blast radius stays bounded to the
+ * minting user's own and member projects (ADR-0040 #109).
  *
  * Fetch-then-authorize over already-loaded data (ADR-0001): the `findFirst`
- * filters `deletedAt: null` so a soft-deleted project is not-found, and only a
- * live project's `ownerId` reaches `assertCanRead`. A project owned by another
- * user throws `ForbiddenError`; the MCP adapter collapses both not-found and
- * forbidden to one indistinguishable "not found" so existence never leaks
- * (ADR-0002). `assertCanRead` is called WITHOUT `viaCapabilitySlug`, so it is
- * owner-only — the slug grant can never be reached from this path.
+ * filters `deletedAt: null` (soft-deleted → not-found) and pulls the actor's
+ * membership row in the SAME query (no extra round trip). A deny resolves to
+ * `NotFoundError` directly, mirroring the slug read seams so the service contract
+ * is "not authorized == not found"; existence never leaks across the
+ * non-disclosure boundary (ADR-0002/0040).
  */
 export async function exportMarkdownForActor(
   db: Db,
@@ -352,12 +359,28 @@ export async function exportMarkdownForActor(
 
   const project = await db.project.findFirst({
     where: { id: projectId, deletedAt: null },
-    select: { id: true, title: true, ownerId: true },
+    select: {
+      id: true,
+      title: true,
+      ownerId: true,
+      memberships: {
+        where: { userId: actor.userId },
+        select: { role: true },
+        take: 1,
+      },
+    },
   });
   if (!project) {
     throw new NotFoundError();
   }
-  assertCanRead(actor, { ownerId: project.ownerId });
+  const cap = resolveCapability(
+    actor,
+    { ownerId: project.ownerId, guestAccess: "NONE" },
+    project.memberships[0] ?? null,
+  );
+  if (!capabilityAtLeast(cap, "view")) {
+    throw new NotFoundError();
+  }
 
   return serializeProjectScope(
     db,

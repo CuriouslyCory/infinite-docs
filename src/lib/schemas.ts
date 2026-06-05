@@ -763,13 +763,14 @@ export const exportMarkdownInput = z.object({
 export type ExportMarkdownInput = z.input<typeof exportMarkdownInput>;
 
 /**
- * Input for the owner-gated MCP read path (#18). The same three serializer
- * modes as {@link exportMarkdownInput}, but addressed by the internal
- * `projectId` rather than the capability `slug`: the MCP path resolves an Actor
- * from a bearer token and authorizes by ownership (`assertCanRead`), so the slug
- * — a parallel bearer grant — must never be the key here (ADR-0002, ADR-0021).
- * `projectId` is required and narrow: the agent dereferences a resource URI the
- * server minted, never a user id (no resource accepts one).
+ * Input for the member-aware MCP read path (#18, member parity #109). The same
+ * three serializer modes as {@link exportMarkdownInput}, but addressed by the
+ * internal `projectId` rather than the capability `slug`: the MCP path resolves
+ * an Actor from a bearer token and authorizes through the capability ladder
+ * (owner or member, `guestAccess` forced NONE), so the slug — a parallel bearer
+ * grant — must never be the key here (ADR-0002, ADR-0021, ADR-0040). `projectId`
+ * is required and narrow: the agent dereferences a resource URI the server
+ * minted, never a user id (no resource accepts one).
  */
 export const mcpReadInput = z.object({
   projectId: z.string().min(1),
@@ -779,12 +780,12 @@ export const mcpReadInput = z.object({
 export type McpReadInput = z.input<typeof mcpReadInput>;
 
 /**
- * Input for the owner-gated MCP **trace** read resource (#60). Addressed by the
- * internal `traceId` only — no slug (a parallel bearer grant, ADR-0002) and no
- * user id (the Actor carries identity; ADR-0022 §3 — no resource accepts a user
- * id). The service resolves the Trace → its Project's `ownerId` →
- * `assertCanRead` (owner-only), so the key here must be the internal id. Narrow
- * and required.
+ * Input for the member-aware MCP **trace** read resource (#60, member parity
+ * #109). Addressed by the internal `traceId` only — no slug (a parallel bearer
+ * grant, ADR-0002) and no user id (the Actor carries identity; ADR-0022 §3 — no
+ * resource accepts a user id). The service resolves the Trace → its Project →
+ * the capability ladder (owner or member, `guestAccess` forced NONE), so the key
+ * here must be the internal id. Narrow and required.
  */
 export const mcpTraceReadInput = z.object({ traceId: z.string().min(1) });
 export type McpTraceReadInput = z.input<typeof mcpTraceReadInput>;
