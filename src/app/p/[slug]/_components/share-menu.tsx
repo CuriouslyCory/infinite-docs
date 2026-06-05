@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { CopyButton } from "~/app/_components/copy-button";
 import { InviteCreate } from "~/app/p/[slug]/_components/invite-create";
+import { ManageAccessDialog } from "~/app/p/[slug]/_components/manage-access-dialog";
 import { MemberAdd } from "~/app/p/[slug]/_components/member-add";
 import { Popover, PopoverPanel, PopoverTrigger } from "~/components/ui/popover";
 import { guestAccessLevel, type GuestAccessLevel } from "~/lib/schemas";
@@ -79,6 +80,7 @@ export function ShareMenu({
         {canManage && (
           <>
             <GuestAccessToggle slug={slug} projectId={projectId} />
+            <ManageAccessDialog slug={slug} projectId={projectId} />
             <InviteCreate projectId={projectId} />
             <MemberAdd projectId={projectId} />
           </>

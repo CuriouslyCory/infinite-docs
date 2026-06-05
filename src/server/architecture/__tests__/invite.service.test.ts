@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { type ProjectRole } from "../../../../generated/prisma/client";
 import { ForbiddenError, NotFoundError } from "../errors";
-import { claimInvite, createInvite } from "../invite.service";
+import { claimInvite, createInvite, revokeInvite } from "../invite.service";
 import { createProject } from "../project.service";
 import { hashToken } from "../token-hash";
 import { resetDb, testDb } from "./helpers/test-db";
@@ -476,5 +476,144 @@ describe("claimInvite — concurrency", () => {
     });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.role).toBe("EDITOR");
+  });
+});
+
+describe("revokeInvite — admin-gated, non-disclosing, idempotent (#108)", () => {
+  async function mintInvite(ownerId: string, projectId: string) {
+    const minted = await createInvite(
+      testDb,
+      { userId: ownerId },
+      { projectId, role: "EDITOR" },
+    );
+    return testDb.projectInvite.findUniqueOrThrow({
+      where: { tokenHash: hashToken(minted.token) },
+    });
+  }
+
+  it("an ADMIN (owner) sets revokedAt and blocks a future claim", async () => {
+    const owner = await makeUser("Owner");
+    const claimer = await makeUser("Claimer");
+    const project = await makeProject(owner.id);
+    const minted = await createInvite(
+      testDb,
+      { userId: owner.id },
+      { projectId: project.id, role: "EDITOR" },
+    );
+    const invite = await testDb.projectInvite.findUniqueOrThrow({
+      where: { tokenHash: hashToken(minted.token) },
+    });
+
+    const result = await revokeInvite(
+      testDb,
+      { userId: owner.id },
+      { inviteId: invite.id },
+    );
+
+    expect(result).toEqual({ id: invite.id });
+    const row = await testDb.projectInvite.findUniqueOrThrow({
+      where: { id: invite.id },
+      select: { revokedAt: true },
+    });
+    expect(row.revokedAt).not.toBeNull();
+
+    // A future claim of the now-revoked token is blocked.
+    await expect(
+      claimInvite(testDb, { userId: claimer.id }, { token: minted.token }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("revoking KEEPS a membership already granted via the link", async () => {
+    const owner = await makeUser("Owner");
+    const claimer = await makeUser("Claimer");
+    const project = await makeProject(owner.id);
+    const minted = await createInvite(
+      testDb,
+      { userId: owner.id },
+      { projectId: project.id, role: "EDITOR" },
+    );
+    const invite = await testDb.projectInvite.findUniqueOrThrow({
+      where: { tokenHash: hashToken(minted.token) },
+    });
+
+    await claimInvite(testDb, { userId: claimer.id }, { token: minted.token });
+    await revokeInvite(testDb, { userId: owner.id }, { inviteId: invite.id });
+
+    expect(await membershipRole(project.id, claimer.id)).toBe("EDITOR");
+  });
+
+  it("is idempotent — a second revoke succeeds with revokedAt unchanged", async () => {
+    const owner = await makeUser("Owner");
+    const project = await makeProject(owner.id);
+    const invite = await mintInvite(owner.id, project.id);
+
+    await revokeInvite(testDb, { userId: owner.id }, { inviteId: invite.id });
+    const first = await testDb.projectInvite.findUniqueOrThrow({
+      where: { id: invite.id },
+      select: { revokedAt: true },
+    });
+
+    const result = await revokeInvite(
+      testDb,
+      { userId: owner.id },
+      { inviteId: invite.id },
+    );
+    expect(result).toEqual({ id: invite.id });
+
+    const second = await testDb.projectInvite.findUniqueOrThrow({
+      where: { id: invite.id },
+      select: { revokedAt: true },
+    });
+    expect(second.revokedAt?.getTime()).toBe(first.revokedAt?.getTime());
+  });
+
+  it("an ADMIN member (not the owner) can revoke", async () => {
+    const owner = await makeUser("Owner");
+    const admin = await makeUser("Admin");
+    const project = await makeProject(owner.id);
+    await addMember(project.id, admin.id, "ADMIN");
+    const invite = await mintInvite(owner.id, project.id);
+
+    await revokeInvite(testDb, { userId: admin.id }, { inviteId: invite.id });
+
+    const row = await testDb.projectInvite.findUniqueOrThrow({
+      where: { id: invite.id },
+      select: { revokedAt: true },
+    });
+    expect(row.revokedAt).not.toBeNull();
+  });
+
+  it("a non-admin's inviteId maps to NotFound (NOT Forbidden) — non-disclosure", async () => {
+    const owner = await makeUser("Owner");
+    const editor = await makeUser("Editor");
+    const stranger = await makeUser("Stranger");
+    const project = await makeProject(owner.id);
+    await addMember(project.id, editor.id, "EDITOR");
+    const invite = await mintInvite(owner.id, project.id);
+
+    // An EDITOR member and a complete non-member both get NotFound — the inviteId
+    // never oracles the invite's (or project's) existence to a non-admin.
+    for (const userId of [editor.id, stranger.id]) {
+      await expect(
+        revokeInvite(testDb, { userId }, { inviteId: invite.id }),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    }
+    // The invite was NOT revoked by the denied attempts.
+    const row = await testDb.projectInvite.findUniqueOrThrow({
+      where: { id: invite.id },
+      select: { revokedAt: true },
+    });
+    expect(row.revokedAt).toBeNull();
+  });
+
+  it("an unknown inviteId throws NotFoundError", async () => {
+    const owner = await makeUser("Owner");
+    await expect(
+      revokeInvite(
+        testDb,
+        { userId: owner.id },
+        { inviteId: "does-not-exist" },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 });

@@ -35,8 +35,13 @@ import {
 import {
   claimInvite,
   createInvite,
+  revokeInvite,
 } from "~/server/architecture/invite.service";
-import { grantMemberByEmail } from "~/server/architecture/membership.service";
+import {
+  grantMemberByEmail,
+  removeMember,
+  updateMemberRole,
+} from "~/server/architecture/membership.service";
 import { exportMarkdown } from "~/server/architecture/export.service";
 import {
   createTrace,
@@ -60,6 +65,9 @@ import {
   createProjectInput,
   createTraceInput,
   grantMemberByEmailInput,
+  removeMemberInput,
+  revokeInviteInput,
+  updateMemberRoleInput,
   deleteEdgeInput,
   deleteNodeInput,
   deleteProjectInput,
@@ -203,6 +211,55 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await grantMemberByEmail(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // ADMIN+ mutation: change an existing member's Role (#108). The service gates on
+  // `admin` via the id-keyed write seam (owner or ADMIN member; ADR-0040), rejects
+  // targeting the owner with a CONFLICT, and DIRECT-SETS the role (an explicit
+  // admin downgrade is intended — not the MAX-grant rule). `protectedProcedure` is
+  // the transport gate; real authz is in the service (ADR-0001/0040).
+  updateMemberRole: protectedProcedure
+    .input(updateMemberRoleInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await updateMemberRole(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // ADMIN+ mutation: remove a member (#108). The service gates on `admin` via the
+  // id-keyed write seam (owner or ADMIN member; ADR-0040) and rejects targeting the
+  // owner with a CONFLICT. An admin MAY remove another admin and MAY remove
+  // themselves — only the owner is untouchable. `protectedProcedure` is the
+  // transport gate; real authz is in the service (ADR-0001/0040).
+  removeMember: protectedProcedure
+    .input(removeMemberInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await removeMember(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // ADMIN+ mutation: revoke an invite link (#108). Addressed by `inviteId`. The
+  // service deliberately INVERTS the usual id-keyed Forbidden posture: BOTH a
+  // missing invite AND a non-admin caller collapse to one `NotFoundError`, so an
+  // inviteId never oracles project/invite existence to a non-admin (ADR-0040
+  // non-disclosure). Idempotent — a re-revoke is a no-op success. `protectedProcedure`
+  // is the transport gate; real authz is in the service (ADR-0001/0040).
+  revokeInvite: protectedProcedure
+    .input(revokeInviteInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await revokeInvite(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }
