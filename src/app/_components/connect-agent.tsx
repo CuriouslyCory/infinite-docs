@@ -114,7 +114,7 @@ export function ConnectAgent() {
       <Toaster theme="dark" position="bottom-right" richColors />
       <form
         onSubmit={handleGenerate}
-        className="flex flex-col gap-3 rounded-xl border border-border bg-muted p-4 sm:flex-row sm:items-end"
+        className="border-border bg-muted flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-end"
       >
         <label className="flex flex-1 flex-col gap-1 text-sm">
           <span className="text-muted-foreground">Name (optional)</span>
@@ -124,7 +124,7 @@ export function ConnectAgent() {
             onChange={(e) => setLabel(e.target.value)}
             placeholder="e.g. Claude on laptop"
             maxLength={100}
-            className="rounded-lg bg-muted px-3 py-2 text-foreground placeholder:text-muted-foreground/70 focus:bg-muted focus:outline-none"
+            className="bg-muted text-foreground placeholder:text-muted-foreground/70 focus:bg-muted rounded-lg px-3 py-2 focus:outline-none"
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
@@ -132,7 +132,7 @@ export function ConnectAgent() {
           <select
             value={expiry}
             onChange={(e) => setExpiry(e.target.value)}
-            className="rounded-lg bg-muted px-3 py-2 text-foreground focus:bg-muted focus:outline-none"
+            className="bg-muted text-foreground focus:bg-muted rounded-lg px-3 py-2 focus:outline-none"
           >
             {EXPIRY_OPTIONS.map((o) => (
               <option key={o.value} value={o.value} className="text-black">
@@ -144,7 +144,7 @@ export function ConnectAgent() {
         <button
           type="submit"
           disabled={createToken.isPending}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-2 font-semibold text-primary-foreground transition hover:bg-primary disabled:cursor-not-allowed disabled:opacity-50"
+          className="bg-primary text-primary-foreground hover:bg-primary inline-flex items-center justify-center gap-2 rounded-lg px-6 py-2 font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
         >
           <KeyRound className="h-4 w-4" />
           {createToken.isPending ? "Generating…" : "Generate token"}
@@ -152,22 +152,22 @@ export function ConnectAgent() {
       </form>
 
       {expiry === "never" && (
-        <p className="-mt-6 text-xs text-edit/80">
+        <p className="text-edit/80 -mt-6 text-xs">
           This token never expires — revoke it promptly if it’s ever leaked.
         </p>
       )}
 
       {revealedToken && (
-        <div className="flex flex-col gap-3 rounded-xl border border-primary/40 bg-primary/10 p-4">
+        <div className="border-primary/40 bg-primary/10 flex flex-col gap-3 rounded-xl border p-4">
           <div>
             <h2 className="font-semibold">Copy your token now</h2>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-muted-foreground text-sm">
               This is the only time you’ll see this token. If you lose it,
               revoke it and generate a new one.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <code className="flex-1 overflow-x-auto rounded-lg bg-black/40 px-3 py-2 font-mono text-sm text-foreground">
+            <code className="bg-muted text-foreground flex-1 overflow-x-auto rounded-lg px-3 py-2 font-mono text-sm">
               {revealedToken}
             </code>
             <CopyButton value={revealedToken} />
@@ -175,7 +175,7 @@ export function ConnectAgent() {
           <button
             type="button"
             onClick={() => setRevealedToken(null)}
-            className="self-start text-sm text-muted-foreground underline-offset-2 transition hover:text-foreground hover:underline"
+            className="text-muted-foreground hover:text-foreground self-start text-sm underline-offset-2 transition hover:underline"
           >
             I’ve saved it — dismiss
           </button>
@@ -198,16 +198,16 @@ export function ConnectAgent() {
               return (
                 <li
                   key={token.id}
-                  className="flex flex-col gap-2 rounded-xl border border-border bg-muted p-4 sm:flex-row sm:items-center sm:justify-between"
+                  className="border-border bg-muted flex flex-col gap-2 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="flex flex-col gap-1">
                     <span className="font-medium">
                       {token.label ?? "Untitled token"}
                     </span>
-                    <span className="font-mono text-xs text-muted-foreground">
+                    <span className="text-muted-foreground font-mono text-xs">
                       {token.prefix}…
                     </span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-muted-foreground text-xs">
                       Created {formatDate(token.createdAt)} · Expires{" "}
                       {formatDate(token.expiresAt)}
                     </span>
@@ -218,7 +218,7 @@ export function ConnectAgent() {
                       <button
                         type="button"
                         onClick={() => revokeToken.mutate({ id: token.id })}
-                        className="rounded-lg bg-muted px-3 py-1.5 text-sm font-semibold text-destructive transition hover:bg-destructive/10"
+                        className="bg-muted text-destructive hover:bg-destructive/10 rounded-lg px-3 py-1.5 text-sm font-semibold transition"
                       >
                         Revoke
                       </button>

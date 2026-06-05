@@ -63,8 +63,6 @@
   --edit-foreground: oklch(0.2393 0 0);
   --portal: oklch(0.588 0.0993 245.739);
   --portal-foreground: oklch(1 0 0);
-
-  --radius: 0.5rem;
 }
 
 :root,
@@ -107,6 +105,10 @@
   --edit-foreground: oklch(0 0 0);
   --portal: oklch(0.7482 0.1235 244.749);
   --portal-foreground: oklch(0 0 0);
+
+  /* Theme-independent; defined on the :root/default path so it's set in dark (the
+     default) and inherited by :root.light — not only in light mode. */
+  --radius: 0.5rem;
 }
 
 @theme inline {

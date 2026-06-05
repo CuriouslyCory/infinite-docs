@@ -38,8 +38,9 @@ default.
      the utility and freeze the theme — runtime switching would silently break. (The
      font-family block stays a plain `@theme`; fonts don't switch at runtime.)
    - Opacity modifiers (`bg-card/85`, `text-muted-foreground/70`) work because
-     Tailwind v4 wraps any color in `color-mix`. oklch + `color-mix` need Safari
-     16.2+/Chrome 111+ — a modern-browser baseline we accept.
+     Tailwind v4 wraps any color in `color-mix`. This sits within Tailwind v4's own
+     documented baseline (Safari 16.4+ / Chrome 111+ / Firefox 128+) — a
+     modern-browser floor we accept.
 
 2. **Two app-specific tokens beyond the shadcn set: `--edit` and `--portal`.** They
    carry meanings the generic palette can't — `--edit` is the embedded-project

@@ -99,7 +99,7 @@ export function InviteCreate({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center justify-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-medium transition hover:bg-muted"
+        className="bg-muted hover:bg-muted inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition"
       >
         <Link2 size={14} aria-hidden />
         Create invite link
@@ -115,7 +115,7 @@ export function InviteCreate({
           <select
             value={role}
             onChange={(e) => setRole(e.target.value as ProjectRoleInput)}
-            className="rounded-lg bg-muted px-3 py-2 text-foreground focus:bg-muted focus:outline-none"
+            className="bg-muted text-foreground focus:bg-muted rounded-lg px-3 py-2 focus:outline-none"
           >
             {projectRole.options.map((opt) => (
               <option key={opt} value={opt} className="text-black">
@@ -129,7 +129,7 @@ export function InviteCreate({
           <select
             value={expiry}
             onChange={(e) => setExpiry(e.target.value)}
-            className="rounded-lg bg-muted px-3 py-2 text-foreground focus:bg-muted focus:outline-none"
+            className="bg-muted text-foreground focus:bg-muted rounded-lg px-3 py-2 focus:outline-none"
           >
             {EXPIRY_OPTIONS.map((o) => (
               <option key={o.value} value={o.value} className="text-black">
@@ -146,48 +146,48 @@ export function InviteCreate({
             value={maxUses}
             onChange={(e) => setMaxUses(e.target.value)}
             placeholder="Unlimited"
-            className="rounded-lg bg-muted px-3 py-2 text-foreground placeholder:text-muted-foreground/70 focus:bg-muted focus:outline-none"
+            className="bg-muted text-foreground placeholder:text-muted-foreground/70 focus:bg-muted rounded-lg px-3 py-2 focus:outline-none"
           />
         </label>
         <button
           type="submit"
           disabled={createInvite.isPending}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary disabled:cursor-not-allowed disabled:opacity-50"
+          className="bg-primary text-primary-foreground hover:bg-primary inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
         >
           {createInvite.isPending ? "Generating…" : "Generate invite link"}
         </button>
       </form>
 
       {expiry === "never" && (
-        <p className="text-xs text-edit/80">
+        <p className="text-edit/80 text-xs">
           This link never expires — revoke it promptly if it’s ever leaked.
         </p>
       )}
 
       {inviteUrl && (
-        <div className="flex flex-col gap-2 rounded-lg border border-primary/40 bg-primary/10 p-3">
-          <p className="text-xs font-semibold text-foreground">
+        <div className="border-primary/40 bg-primary/10 flex flex-col gap-2 rounded-lg border p-3">
+          <p className="text-foreground text-xs font-semibold">
             Copy this invite link now
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-muted-foreground text-xs">
             This is the only time you’ll see it. If you lose it, create a new
             one.
           </p>
           <div className="flex items-center gap-2">
-            <code className="flex-1 overflow-x-auto rounded bg-black/40 px-2 py-1.5 font-mono text-xs text-foreground">
+            <code className="bg-muted text-foreground flex-1 overflow-x-auto rounded px-2 py-1.5 font-mono text-xs">
               {inviteUrl}
             </code>
             <CopyButton
               value={inviteUrl}
               label="Copy"
               copiedLabel="Copied"
-              className="inline-flex items-center gap-1.5 rounded bg-muted px-2.5 py-1.5 text-xs font-medium transition hover:bg-muted"
+              className="bg-muted hover:bg-muted inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition"
             />
           </div>
           <button
             type="button"
             onClick={() => setRevealedToken(null)}
-            className="self-start text-xs text-muted-foreground underline-offset-2 transition hover:text-foreground hover:underline"
+            className="text-muted-foreground hover:text-foreground self-start text-xs underline-offset-2 transition hover:underline"
           >
             Done
           </button>

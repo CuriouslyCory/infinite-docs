@@ -56,7 +56,7 @@ export function ShareMenu({
         render={
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none"
+            className="border-border bg-muted text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition focus-visible:ring-2 focus-visible:outline-none"
           >
             <Share2 size={12} aria-hidden />
             Share
@@ -66,7 +66,7 @@ export function ShareMenu({
       <PopoverPanel
         side="bottom"
         align="end"
-        className="flex w-72 flex-col gap-3 rounded-xl border border-border bg-popover p-4 text-sm text-foreground shadow-xl"
+        className="border-border bg-popover text-foreground flex w-72 flex-col gap-3 rounded-xl border p-4 text-sm shadow-xl"
       >
         <div className="flex flex-col gap-1.5">
           <span className="text-muted-foreground">Share this project</span>
@@ -74,7 +74,7 @@ export function ShareMenu({
             value={url}
             label="Copy link"
             copiedLabel="Link copied"
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-medium transition hover:bg-muted"
+            className="bg-muted hover:bg-muted inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition"
           />
         </div>
         {canManage && (
@@ -136,13 +136,13 @@ function GuestAccessToggle({
         handling. Selection-follows-focus is native radio behaviour; each change
         fires the optimistic mutation, which is reversible and idempotent.
       */}
-      <div className="flex gap-1 rounded-lg bg-muted p-1">
+      <div className="bg-muted flex gap-1 rounded-lg p-1">
         {guestAccessLevel.options.map((opt) => {
           const disabled = setAccess.isPending || !access.isSuccess;
           return (
             <label
               key={opt}
-              className={`flex-1 rounded-md px-2 py-1 text-center text-xs transition focus-within:ring-2 focus-within:ring-white/40 ${
+              className={`focus-within:ring-ring flex-1 rounded-md px-2 py-1 text-center text-xs transition focus-within:ring-2 ${
                 disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
               } ${
                 level === opt
@@ -164,7 +164,7 @@ function GuestAccessToggle({
           );
         })}
       </div>
-      <span className="text-xs text-muted-foreground/70">
+      <span className="text-muted-foreground/70 text-xs">
         {level === "VIEW"
           ? "Anyone with the link can view."
           : "Only you and invited members."}
