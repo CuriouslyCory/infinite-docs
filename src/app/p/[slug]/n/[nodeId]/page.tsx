@@ -23,10 +23,18 @@ import { HydrateClient, api } from "~/trpc/server";
  */
 export default async function InteriorCanvasPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string; nodeId: string }>;
+  searchParams: Promise<{ via?: string }>;
 }) {
   const { slug, nodeId } = await params;
+  // Project Portal crossing stack (#119): the ordered portal Node ids carried in
+  // `?via=` (comma-separated). `[]` is an ordinary same-project Canvas. UNTRUSTED —
+  // the server re-gates every crossing, so a forged chain collapses to NotFound at
+  // the getCanvas re-gate; here it only shapes the prefetch + read-only flag.
+  const { via } = await searchParams;
+  const embedPath = via ? via.split(",").filter(Boolean) : [];
 
   let project;
   try {
@@ -41,14 +49,23 @@ export default async function InteriorCanvasPage({
     throw error;
   }
 
-  const canEdit = capabilityAtLeast(project.viewerCapability, "edit");
+  // Read-only inside an embed this slice (#119): exploration of a foreign project
+  // through a portal is view-only regardless of the actor's capability on the HOST
+  // project. Force `canEdit` false whenever a crossing stack is present.
+  const canEdit =
+    embedPath.length === 0 &&
+    capabilityAtLeast(project.viewerCapability, "edit");
   const canManage = capabilityAtLeast(project.viewerCapability, "admin");
 
   // Seed the scoped Canvas so the island and the breadcrumb bar both read it
   // from the hydration cache — one fetch, no waterfall. The input MUST match the
-  // island's derived key exactly ({ slug, canvasNodeId: nodeId }) or hydration
-  // misses and the client silently refetches (ADR-0004/0007).
-  void api.architecture.getCanvas.prefetch({ slug, canvasNodeId: nodeId });
+  // island's derived key exactly ({ slug, canvasNodeId: nodeId, embedPath }) or
+  // hydration misses and the client silently refetches (ADR-0004/0007).
+  void api.architecture.getCanvas.prefetch({
+    slug,
+    canvasNodeId: nodeId,
+    embedPath,
+  });
 
   return (
     <HydrateClient>
@@ -60,6 +77,7 @@ export default async function InteriorCanvasPage({
           canEdit={canEdit}
           canManage={canManage}
           projectId={project.id}
+          embedPath={embedPath}
         />
         <div className="min-h-0 flex-1">
           <CanvasIsland
@@ -67,6 +85,7 @@ export default async function InteriorCanvasPage({
             slug={slug}
             projectId={project.id}
             canEdit={canEdit}
+            embedPath={embedPath}
           />
         </div>
       </main>

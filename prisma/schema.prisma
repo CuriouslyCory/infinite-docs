@@ -90,6 +90,10 @@ model Project {
     traces      Trace[]
     memberships ProjectMembership[]
     invites     ProjectInvite[]
+    // The portal Components (in OTHER Projects) that embed this Project (#119).
+    // `onDelete: SetNull` on the FK side leaves those portals as harmless dangling
+    // shells when this Project is hard-deleted, never cascading into the host graph.
+    embeddedBy  Node[]      @relation("EmbeddedProjects")
 
     @@index([ownerId])
 }
@@ -304,6 +308,16 @@ model Node {
     spec          Spec?     @relation("SpecDerivedComponents", fields: [sourceSpecId], references: [id], onDelete: SetNull)
     specKey       String?
 
+    // Project Portal (#119): when set, this Component is a live POINTER into
+    // another Project — descending into it crosses a project boundary and renders
+    // the embedded Project's content, re-gated per-actor at crossing time. A
+    // nullable FK (not a NodeKind value — ADR-0018 keeps kind cosmetic; presence
+    // of this FK is the behavioral discriminator). `onDelete: SetNull` so deleting
+    // the embedded Project leaves the portal Component a harmless dangling shell
+    // (it resolves no interior) rather than cascading into the host's graph.
+    embeddedProjectId String?
+    embeddedProject   Project? @relation("EmbeddedProjects", fields: [embeddedProjectId], references: [id], onDelete: SetNull)
+
     // An Edge references its endpoints by `sourceId`/`targetId`; two relations
     // to one model force Prisma's named-relation disambiguation (ADR-0005). An
     // Edge no longer stores a Canvas scope — scope is derived from endpoint
@@ -338,6 +352,7 @@ model Node {
     @@index([parentId])
     @@index([sourceSpecId])
     @@index([deletionId])
+    @@index([embeddedProjectId])
 }
 
 // A persisted VIEW coordinate for a boundary proxy — where, on one scope's Canvas,

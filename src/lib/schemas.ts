@@ -397,8 +397,57 @@ export type CreateNodeInput = z.input<typeof createNodeInput>;
 export const getCanvasInput = z.object({
   slug: z.string().min(1),
   canvasNodeId: z.string().nullable().default(null),
+  // The ordered stack of portal Node ids crossed to reach this scope (#119). `[]`
+  // (the default) is the ordinary same-project read; a non-empty path walks one
+  // Project Portal per id, re-gating the descending actor against each embedded
+  // Project, so the read STAYS on the host's URL while rendering foreign content.
+  // The chain is UNTRUSTED client state (it rides the route's `?via=`), so the
+  // service re-resolves every crossing — a forged/stale id collapses to NotFound at
+  // the re-gate. `max(256)` mirrors the breadcrumb depth cap (a portal can never
+  // out-nest the ancestry walk it shares); the `slug`/`canvasNodeId` pair addresses
+  // the ACTIVE (innermost) project once the path is walked.
+  embedPath: z.array(z.string().min(1)).max(256).default([]),
 });
 export type GetCanvasInput = z.input<typeof getCanvasInput>;
+
+/**
+ * Input for creating a Project Portal Component (`createEmbeddedComponent`, #119).
+ * Addressed by `projectId` (the HOST, an internal handle — writes are never
+ * slug-granted, ADR-0002) plus `embeddedProjectId` (the TARGET to embed). The
+ * service gates host `edit` FIRST (a non-disclosing write the caller already holds
+ * the handle for), THEN target ≥ `view`, and rejects a self-embed
+ * (`embeddedProjectId === projectId`). `parentId` is the Canvas scope the portal is
+ * dropped on (null = the host's root Canvas); `posX`/`posY` are the drop point;
+ * `title` is the UNTRUSTED label, stored verbatim. Identity comes from the actor,
+ * never `input` (ADR-0001). A portal carries an ordinary cosmetic `kind` — its
+ * behavior comes from the FK, not the kind (ADR-0018).
+ */
+export const createEmbeddedComponentInput = z.object({
+  projectId: z.string().min(1),
+  embeddedProjectId: z.string().min(1),
+  parentId: z.string().nullable().default(null),
+  kind: nodeKind.default("GENERIC"),
+  title: z.string().min(1).max(200).default("Untitled"),
+  posX: z.number().finite().default(0),
+  posY: z.number().finite().default(0),
+});
+// `z.input` so callers may omit the defaulted fields; the service re-parses.
+export type CreateEmbeddedComponentInput = z.input<
+  typeof createEmbeddedComponentInput
+>;
+
+/**
+ * Input for the embed-target picker (`listReferenceableProjects`, #119). Carries
+ * the current `excludeProjectId` so the host never lists itself as an embed target
+ * (self-embed is rejected server-side too, but excluding it keeps the picker
+ * honest). Narrow + required (memory: prefer narrow required inputs).
+ */
+export const listReferenceableProjectsInput = z.object({
+  excludeProjectId: z.string().min(1),
+});
+export type ListReferenceableProjectsInput = z.infer<
+  typeof listReferenceableProjectsInput
+>;
 
 /**
  * Input for the cross-layer **Trace view** read (#58). Addressed by the

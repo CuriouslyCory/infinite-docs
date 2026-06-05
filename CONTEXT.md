@@ -323,6 +323,21 @@ and do not call it a "level", "context", or "view". _(The root scope and reading
 at non-root scopes are realized now via **getCanvas**; user-facing navigation into
 non-root scopes is realized now via **Descent**.)_
 
+### Scope path / `via`
+
+The **crossing stack** identifying a **Canvas scope** reached through one or more **portals** — an
+ordered list of portal **Node** ids crossed, **host-first**. **getCanvas** takes it as `embedPath`;
+the **Project route** carries it as a typed `?via=` query param, so an embedded scope stays under
+the **host** Project's slug and the **embedded project**'s slug never appears. It is an
+**inter-project routing fact**, **not** ancestry — intra-project ancestors stay server-derived
+(ADR-0007 is not regressed). The chain is **wholly untrusted**: each entry is **re-gated per-actor**
+(`resolveReadableProjectById`, `none → not-found`), and a forged or stale `via` collapses to
+not-found. Authorization **gates once per project segment crossed** (not once per request). Distinct
+from the reserved **`Actor.via`** (`"session" | "token"`, ADR-0021/0040), which records _how_ an
+actor authenticated and **never decides authz**: `?via=` is an untrusted routing input that is
+verified at every step, `Actor.via` is an inert provenance label. _(Realized now read-only via
+**Descent** across a portal. #119, ADR-0041, ADR-0007.)_
+
 ### Breadcrumbs
 
 The ordered ancestor chain of a **Canvas scope**: the **Components** from the
@@ -340,14 +355,22 @@ ADR-0004). Computed in a **single recursive query**, never a per-level walk
 **breadcrumb bar** (the UI that renders it): the bar prepends the **Project** as a
 presentational root crumb — so the empty-at-root trail still shows the Project —
 and marks the last entry as the current scope (ADR-0007). _(Realized now
-end-to-end: computed in the data layer and rendered by the Descent breadcrumb bar.)_
+end-to-end: computed in the data layer and rendered by the Descent breadcrumb bar.)_ Across a
+**portal** the trail is a **per-segment concatenation** — each project segment computes its own
+ADR-0006 CTE, spliced at the portal marker — never a cross-project CTE (a `parentId` walk cannot
+cross a project boundary; #119, ADR-0041).
 
 ### Descent
 
 The act of opening a Component to enter its interior **Canvas**, moving one level deeper into
 the graph. Recurses to any depth. _(Realized now: double-clicking a Component descends into its
 interior **Canvas** at the **Project route** `/p/[slug]/n/[nodeId]`, with hover prefetch so the
-descent feels instant. See ADR-0007.)_
+descent feels instant. See ADR-0007.)_ Descent may **cross a project boundary**: opening a
+**portal** descends into its **embedded project** rather than a `parentId` child — the one Descent
+that **leaves the host graph**. The crossing is recorded in the **scope path** (`?via=`) and
+**re-gated per-actor** (`resolveReadableProjectById`, not-found on denial); the URL stays under the
+host slug, exploration is **read-only in this slice**, and the breadcrumb spine spans the boundary
+(host trail → portal marker → foreign trail). _(#119, ADR-0041.)_
 
 ### Boundary proxy
 
@@ -436,6 +459,34 @@ concrete model in the system. The owner deletes one from the dashboard via a
 cascade — children keep their rows and simply stop resolving once the Project is hidden), mirroring
 `deleteEdge`. A non-owner ADMIN cannot delete. The typed-title match is a client-side friction gate
 only; the real authorization is the `owner`-rank gate (ADR-0001, ADR-0040).
+
+### Portal
+
+A **Component** that embeds another whole **Project** as a **live pointer**. Backed by a nullable
+`Node.embeddedProjectId` FK to `Project.id` (`onDelete: SetNull`, indexed); the **presence of the
+FK is the sole discriminator** — a portal keeps an ordinary cosmetic **kind** and is **never** a
+`NodeKind` value (a portal is _behavioral_, kind is cosmetic; ADR-0018 / ADR-0041), mirroring the
+`sourceSpecId` provenance FK (ADR-0033). A live pointer, **not a snapshot** — the target is read
+live at descent, no copied subtree (the derived-not-stored posture of **Canvas** / **boundary
+proxy** / **Trace**). Creating one requires **edit** on the host **and** **≥ view** on the target
+(you may embed only what you can read); self-embed is rejected (`ValidationError`); the embed stack
+is depth-capped at `ANCESTRY_DEPTH_CAP` (256). Deleting the **target** nulls the FK and the portal
+**neutralizes** to a plain Component — degrade, never cascade into the host, never block the
+target's deletion. Never a "link" (that is a **Connection**) and never a "PORTAL kind". _(Realized
+now read-only via the per-actor re-gate; shared-target embedding — the picker beyond owned-only —
+is the next slice. #119, ADR-0041.)_
+
+### Embedded project
+
+The target **Project** a **portal** points at. Addressed **only** by internal `Project.id` via
+`embeddedProjectId`; its **capability-URL slug is NEVER exposed** (a bearer secret, ADR-0002) — not
+in the path, the `?via=` query, any response, breadcrumb, or log. Its read is **re-gated
+per-actor** through `resolveReadableProjectById` (the id-keyed read corner, sharing the one
+`resolveCapability` spine; ADR-0040), honoring the target's own **guest access** and mapping a
+sub-`view` capability to **not-found**. The **host's capability never governs the target** — a host
+owner with no grant on the target sees a **locked portal**, identical by the `none → not-found`
+mapping to a missing scope (the headline non-disclosure case). Never a "linked" or "child" Project.
+_(ADR-0041, ADR-0040.)_
 
 ### Capability URL / slug
 

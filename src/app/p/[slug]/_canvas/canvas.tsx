@@ -33,6 +33,7 @@ import {
 import { api, type RouterOutputs } from "~/trpc/react";
 
 import { AddComponent } from "./add-component";
+import { EmbedProject } from "./embed-project";
 import {
   BoundaryProxyNodeView,
   type BoundaryProxyNode,
@@ -132,6 +133,14 @@ function toRFNode(n: CanvasNode): ComponentNode {
       title: n.title,
       kind: n.kind,
       optimistic: n.id.startsWith("temp_"),
+      // Project Portal (#119): carry the per-actor portal discriminator + access
+      // getCanvas annotated, so the node renders distinctly and the descend handler
+      // branches across the project boundary. The foreign Project.id is NEVER on the
+      // wire — `isPortal` is a non-identifying boolean (non-disclosure firewall).
+      // `false` for an ordinary node; descent keys off the portal NODE id, not a
+      // foreign project id.
+      isPortal: n.isPortal,
+      embedAccess: n.embedAccess,
     },
   };
 }
@@ -361,7 +370,25 @@ function optimisticCanvasNode(
     // Generated-component provenance is null for a hand-added Component (#64).
     sourceSpecId: null,
     specKey: null,
+    // A hand-added Component is never a Project Portal (#119) — portals are placed
+    // through their own create path (`createEmbeddedComponent`).
+    isPortal: false,
   };
+}
+
+// A create mutation returns the raw data-layer Node (carrying `embeddedProjectId`),
+// but the Canvas store speaks the redacted `getCanvas` wire shape — `isPortal` only,
+// the foreign id stripped (non-disclosure firewall, #119). Normalize the mutation
+// result before it lands in `interiorNodes`. The actor just created the portal, so
+// they can read its target by construction: a non-null FK reconciles to an OPEN
+// portal (the next getCanvas re-derives access per-actor anyway).
+function toCanvasNode(node: {
+  embeddedProjectId: string | null;
+} & Omit<CanvasNode, "isPortal" | "embedAccess">): CanvasNode {
+  const { embeddedProjectId, ...rest } = node;
+  return embeddedProjectId === null
+    ? { ...rest, isPortal: false }
+    : { ...rest, isPortal: true, embedAccess: "open" };
 }
 
 // A freshly drawn Connection is same-Canvas — both endpoints render here, so each
@@ -509,11 +536,13 @@ function CanvasInner({
   slug,
   projectId,
   canEdit,
+  embedPath,
 }: {
   scope: string;
   slug: string;
   projectId: string;
   canEdit: boolean;
+  embedPath: string[];
 }) {
   const utils = api.useUtils();
   const router = useRouter();
@@ -522,12 +551,21 @@ function CanvasInner({
   // Components. (An Edge no longer stores a scope; ADR-0028.)
   const canvasNodeId = scope === "root" ? null : scope;
   // Stable across renders so it stays a single query key and a stable callback dep.
+  // `embedPath` joins the key (#119): the same `canvasNodeId` under a different
+  // crossing stack is a DIFFERENT read, so it must be in the cache key (and must
+  // match the route prefetch + breadcrumb bar exactly). The island is keyed by the
+  // path too (./index), so `embedPath` is stable for the island's lifetime.
+  const embedKey = useMemo(() => embedPath.join(" "), [embedPath]);
   const canvasInput = useMemo(
-    () => ({ slug, canvasNodeId }),
-    [slug, canvasNodeId],
+    () => ({ slug, canvasNodeId, embedPath }),
+    // `embedKey` (a stable string) stands in for the array identity so the memo
+    // does not churn on a fresh-but-equal array each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [slug, canvasNodeId, embedKey],
   );
-  const [{ interiorNodes, interiorEdges, boundaryProxies, breadcrumbs }] =
-    api.architecture.getCanvas.useSuspenseQuery(canvasInput);
+  const [
+    { interiorNodes, interiorEdges, boundaryProxies, breadcrumbs, activeProject },
+  ] = api.architecture.getCanvas.useSuspenseQuery(canvasInput);
 
   // The kind palette ranks its suggestions by the scope's own Component kind —
   // the parent of any Component added here (CONTEXT.md "Kind affinity"). The
@@ -583,6 +621,8 @@ function CanvasInner({
     ConnectionEdge
   >();
   const createNode = api.architecture.createNode.useMutation();
+  const createEmbeddedComponent =
+    api.architecture.createEmbeddedComponent.useMutation();
   // Destructured so the stable `mutateAsync` can be a dep of the context values
   // below without dragging the whole (per-render) mutation object into them.
   const { mutateAsync: renameNode } = api.architecture.updateNode.useMutation();
@@ -621,11 +661,13 @@ function CanvasInner({
           interiorEdges: [],
           boundaryProxies: [],
           breadcrumbs: [],
+          embedTrail: [],
+          activeProject: { id: projectId, title: "" },
         };
         return { ...base, ...patch(base) };
       });
     },
-    [utils, canvasInput],
+    [utils, canvasInput, projectId],
   );
 
   const addComponent = useCallback(
@@ -667,10 +709,13 @@ function CanvasInner({
           posY: position.y,
         });
         // Reconcile temp → real id in both stores, atomically by id.
-        setNodes((ns) => ns.map((n) => (n.id === tempId ? toRFNode(real) : n)));
+        const canvasNode = toCanvasNode(real);
+        setNodes((ns) =>
+          ns.map((n) => (n.id === tempId ? toRFNode(canvasNode) : n)),
+        );
         patchCanvas((c) => ({
           interiorNodes: c.interiorNodes.map((n) =>
-            n.id === tempId ? real : n,
+            n.id === tempId ? canvasNode : n,
           ),
         }));
       } catch {
@@ -689,6 +734,89 @@ function CanvasInner({
       setNodes,
       patchCanvas,
       createNode,
+    ],
+  );
+
+  // Embed a Project Portal (#119): place a portal Component pointing at another
+  // Project. Optimistic like `addComponent` (temp node + cache mirror, reconcile
+  // on success, roll back + toast on failure), but commits `createEmbeddedComponent`
+  // (host edit + target read gated server-side). Edit-gated: the picker only
+  // renders when `canEdit`.
+  const addEmbed = useCallback(
+    async (target: { id: string; title: string }) => {
+      const tempId = `temp_${crypto.randomUUID()}`;
+      const position = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+
+      setNodes((ns) => [
+        ...ns,
+        {
+          id: tempId,
+          type: "component",
+          position,
+          deletable: false,
+          data: {
+            title: target.title,
+            kind: "GENERIC",
+            optimistic: true,
+            isPortal: true,
+            embedAccess: "open",
+          },
+        },
+      ]);
+      patchCanvas((c) => ({
+        interiorNodes: [
+          ...c.interiorNodes,
+          {
+            ...optimisticCanvasNode(
+              tempId,
+              projectId,
+              canvasNodeId,
+              "GENERIC",
+              position,
+            ),
+            title: target.title,
+            isPortal: true,
+            embedAccess: "open",
+          },
+        ],
+      }));
+
+      try {
+        const real = await createEmbeddedComponent.mutateAsync({
+          projectId,
+          embeddedProjectId: target.id,
+          parentId: canvasNodeId,
+          title: target.title,
+          posX: position.x,
+          posY: position.y,
+        });
+        const canvasNode = toCanvasNode(real);
+        setNodes((ns) =>
+          ns.map((n) => (n.id === tempId ? toRFNode(canvasNode) : n)),
+        );
+        patchCanvas((c) => ({
+          interiorNodes: c.interiorNodes.map((n) =>
+            n.id === tempId ? canvasNode : n,
+          ),
+        }));
+      } catch {
+        setNodes((ns) => ns.filter((n) => n.id !== tempId));
+        patchCanvas((c) => ({
+          interiorNodes: c.interiorNodes.filter((n) => n.id !== tempId),
+        }));
+        toast.error("Couldn’t embed the project. Please try again.");
+      }
+    },
+    [
+      screenToFlowPosition,
+      projectId,
+      canvasNodeId,
+      setNodes,
+      patchCanvas,
+      createEmbeddedComponent,
     ],
   );
 
@@ -2022,21 +2150,65 @@ function CanvasInner({
     [utils, canvasInput, setEdges, patchCanvas, setEdgeInteraction],
   );
 
+  // Portal lookup (#119): the set of portal NODE ids, for the descend branch.
+  // Descent crosses a project boundary by pushing the portal node id onto `?via=`
+  // (never a foreign project id — that id is redacted from the wire entirely, the
+  // non-disclosure firewall). Only interior Components can be portals; boundary
+  // proxies never are.
+  const portalNodeIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const n of interiorNodes) {
+      if (n.isPortal) s.add(n.id);
+    }
+    return s;
+  }, [interiorNodes]);
+
   // Descent: open a Component's interior Canvas. One callback shared by the
   // node's "Open" button (via DescendComponentContext) and the flow's
   // double-click handler, so the route + prefetch logic lives in one place.
+  //
+  // Project Portal branch (#119): descending a portal STAYS on the host's URL —
+  // the portal id is appended to `?via=` (the crossing stack) and the path resets
+  // to the foreign project's ROOT (no `/n/` segment), so the foreign slug is never
+  // exposed. The crossed actor is re-gated server-side; a locked portal is not
+  // descendable (the node hides its Open affordance), but even a forged navigation
+  // collapses to NotFound at the re-gate.
   const descend = useCallback(
     (nodeId: string) => {
       if (nodeId.startsWith("temp_")) return; // no real interior yet
+
+      if (portalNodeIds.has(nodeId)) {
+        // Cross a project boundary: push the portal onto `via`, land on the
+        // foreign root. The query string carries the whole crossing stack.
+        const nextVia = [...embedPath, nodeId];
+        const href = `/p/${slug}?via=${nextVia.join(",")}`;
+        void utils.architecture.getCanvas.prefetch({
+          slug,
+          canvasNodeId: null,
+          embedPath: nextVia,
+        });
+        router.prefetch(href);
+        router.push(href);
+        return;
+      }
+
+      // Ordinary same-project descent. Preserve the current crossing stack as
+      // `?via=` so a Component inside an embedded project descends WITHIN that
+      // project (the URL stays the host's; the `/n/` segment is the active
+      // project's scope).
+      const viaSuffix =
+        embedPath.length > 0 ? `?via=${embedPath.join(",")}` : "";
+      const href = `/p/${slug}/n/${nodeId}${viaSuffix}`;
       // Pre-warm in case this wasn't preceded by a hover (keyboard activation).
       void utils.architecture.getCanvas.prefetch({
         slug,
         canvasNodeId: nodeId,
+        embedPath,
       });
-      router.prefetch(`/p/${slug}/n/${nodeId}`);
-      router.push(`/p/${slug}/n/${nodeId}`);
+      router.prefetch(href);
+      router.push(href);
     },
-    [utils, router, slug],
+    [utils, router, slug, embedPath, portalNodeIds],
   );
 
   // Resolve the selected Component once for the detail panel (owner-edit or
@@ -2112,11 +2284,34 @@ function CanvasInner({
                         // Passive nodes have no interior to warm (ADR-0016).
                         if (isPassiveNode(node)) return;
                         if (node.id.startsWith("temp_")) return;
-                        void utils.architecture.getCanvas.prefetch({
-                          slug,
-                          canvasNodeId: node.id,
-                        });
-                        router.prefetch(`/p/${slug}/n/${node.id}`);
+                        // Warm the descend target. A portal warms the FOREIGN root
+                        // under the next crossing stack; an ordinary node warms its
+                        // own interior under the current stack (#119) — both match
+                        // the key the descended island will read.
+                        if (portalNodeIds.has(node.id)) {
+                          const nextVia = [...embedPath, node.id];
+                          void utils.architecture.getCanvas.prefetch({
+                            slug,
+                            canvasNodeId: null,
+                            embedPath: nextVia,
+                          });
+                          router.prefetch(
+                            `/p/${slug}?via=${nextVia.join(",")}`,
+                          );
+                        } else {
+                          void utils.architecture.getCanvas.prefetch({
+                            slug,
+                            canvasNodeId: node.id,
+                            embedPath,
+                          });
+                          const viaSuffix =
+                            embedPath.length > 0
+                              ? `?via=${embedPath.join(",")}`
+                              : "";
+                          router.prefetch(
+                            `/p/${slug}/n/${node.id}${viaSuffix}`,
+                          );
+                        }
                         // Viewers open the read-only docs panel too, so warm the
                         // Plate chunk for everyone — no first-open flash (perf #1).
                         prefetchDocsEditor();
@@ -2159,6 +2354,16 @@ function CanvasInner({
                             onAdd={addComponent}
                             parentKind={parentKind}
                             pending={createNode.isPending}
+                          />
+                        )}
+                        {/* Embed a Project Portal (#119). Edit-gated; the picker
+                            lists the actor's other projects and the island commits
+                            the host-edit + target-read gated create. */}
+                        {canEdit && (
+                          <EmbedProject
+                            excludeProjectId={activeProject.id}
+                            onEmbed={addEmbed}
+                            pending={createEmbeddedComponent.isPending}
                           />
                         )}
                         {/* Slug-readable: visible to any viewer, not gated on
@@ -2260,11 +2465,13 @@ export default function Canvas({
   slug,
   projectId,
   canEdit,
+  embedPath = [],
 }: {
   scope: string;
   slug: string;
   projectId: string;
   canEdit: boolean;
+  embedPath?: string[];
 }) {
   return (
     <ReactFlowProvider>
@@ -2277,6 +2484,7 @@ export default function Canvas({
             slug={slug}
             projectId={projectId}
             canEdit={canEdit}
+            embedPath={embedPath}
           />
         </Suspense>
       </div>

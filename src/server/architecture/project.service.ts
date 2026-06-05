@@ -16,12 +16,14 @@ import {
   deleteProjectInput,
   getProjectAccessInput,
   getProjectBySlugInput,
+  listReferenceableProjectsInput,
   setGuestAccessInput,
   type CreateProjectInput,
   type DeleteProjectInput,
   type GetProjectAccessInput,
   type GuestAccessLevel,
   type GetProjectBySlugInput,
+  type ListReferenceableProjectsInput,
   type ProjectRoleInput,
   type SetGuestAccessInput,
 } from "~/lib/schemas";
@@ -95,6 +97,40 @@ export async function listProjectsForActor(
         { memberships: { some: { userId: actor.userId } } },
       ],
     },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+/** One embeddable target as the Project Portal picker lists it (#119). */
+export interface ReferenceableProject {
+  id: string;
+  title: string;
+  slug: string;
+}
+
+/**
+ * Lists the Projects the actor may embed as a Project Portal (#119), minus the
+ * current host (`excludeProjectId`). OWNED projects only THIS slice — `ownerId ===
+ * actor.userId` — so the picker offers exactly what the actor unambiguously
+ * controls; widening to shared (member-readable) targets is the NEXT slice. The
+ * service-side embed gate (`createEmbeddedComponent` → target ≥ view) is the real
+ * authority, so a future widening only relaxes the picker, never the write. Returns
+ * a narrow `{ id, title, slug }` (the slug is the actor's OWN — they already hold
+ * it; this is not a foreign-slug leak).
+ */
+export async function listReferenceableProjects(
+  db: Db,
+  actor: Actor,
+  input: ListReferenceableProjectsInput,
+): Promise<ReferenceableProject[]> {
+  const { excludeProjectId } = listReferenceableProjectsInput.parse(input);
+  return db.project.findMany({
+    where: {
+      ownerId: actor.userId,
+      deletedAt: null,
+      id: { not: excludeProjectId },
+    },
+    select: { id: true, title: true, slug: true },
     orderBy: { createdAt: "desc" },
   });
 }
