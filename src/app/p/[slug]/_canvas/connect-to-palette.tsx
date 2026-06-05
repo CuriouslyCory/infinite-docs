@@ -16,11 +16,17 @@ import { type ProjectComponent } from "~/lib/types";
 import { api } from "~/trpc/react";
 
 /** The chosen far endpoint a connect gesture commits — the fields the optimistic
- *  far-end boundary proxy needs to render before the server confirms (#66). */
+ *  far-end boundary proxy needs to render before the server confirms (#66).
+ *
+ *  `foreign` is present ONLY for a CROSS-PROJECT target (#122): it carries the
+ *  portal `referenceNodeId` the client routes the connect through (the client
+ *  never holds the foreign Project.id — #119), plus the foreign Project's title
+ *  for the optimistic proxy's "From […]" marker. Absent for a same-project pick. */
 export type ConnectTarget = {
   id: string;
   title: string;
   kind: ProjectComponent["kind"];
+  foreign?: { referenceNodeId: string; foreignProjectTitle: string };
 };
 
 /**
@@ -36,12 +42,22 @@ export type ConnectTarget = {
  * ancestor titles, so typing a parent's name surfaces its descendants too. Pure:
  * it owns no mutation, only `onSelect`.
  */
+/** An on-scope Project Portal a cross-project connect can route through (#122) —
+ *  its Node id (the `referenceNodeId`) and title for the "From [portal title]"
+ *  group heading. The host island passes only ENTERABLE/readOnly portals; a
+ *  `locked` portal carries no readable foreign content to offer. */
+export type ConnectPortal = { referenceNodeId: string; title: string };
+
 export function ConnectToPalette({
+  slug,
   components,
+  portals,
   excludeIds,
   onSelect,
 }: {
+  slug: string;
   components: readonly ProjectComponent[];
+  portals: readonly ConnectPortal[];
   excludeIds: ReadonlySet<string>;
   onSelect: (target: ConnectTarget) => void;
 }) {
@@ -75,8 +91,63 @@ export function ConnectToPalette({
             />
           ))}
         </CommandGroup>
+        {/* One group per on-scope portal: the foreign Components reachable through
+            it (#122). Lazily fetched — the query inside fires only while the
+            popover is open. cmdk filters these rows by the same `keywords`. */}
+        {portals.map((portal) => (
+          <ForeignPortalGroup
+            key={portal.referenceNodeId}
+            slug={slug}
+            portal={portal}
+            onSelect={onSelect}
+          />
+        ))}
       </CommandList>
     </Command>
+  );
+}
+
+/**
+ * The "From [portal title]" group of foreign Components reachable through one
+ * on-scope Project Portal (#122). The foreign list is fetched lazily via the
+ * portal `referenceNodeId` (the client never holds the foreign Project.id — #119);
+ * the server derives the embedded Project and re-gates the actor ≥ view. Each row
+ * carries `foreign: { referenceNodeId, foreignProjectTitle }` so `commitConnect`
+ * routes the cross-project write and the optimistic proxy is marked.
+ */
+function ForeignPortalGroup({
+  slug,
+  portal,
+  onSelect,
+}: {
+  slug: string;
+  portal: ConnectPortal;
+  onSelect: (target: ConnectTarget) => void;
+}) {
+  const { data: foreignComponents } =
+    api.architecture.listForeignComponentsViaPortal.useQuery({
+      slug,
+      referenceNodeId: portal.referenceNodeId,
+    });
+
+  if (!foreignComponents || foreignComponents.length === 0) return null;
+
+  const byId = new Map(foreignComponents.map((c) => [c.id, c]));
+  return (
+    <CommandGroup heading={`From ${portal.title}`}>
+      {foreignComponents.map((component) => (
+        <ConnectItem
+          key={`${portal.referenceNodeId}:${component.id}`}
+          component={component}
+          path={ancestorPath(component, byId)}
+          onSelect={onSelect}
+          foreign={{
+            referenceNodeId: portal.referenceNodeId,
+            foreignProjectTitle: portal.title,
+          }}
+        />
+      ))}
+    </CommandGroup>
   );
 }
 
@@ -84,22 +155,30 @@ function ConnectItem({
   component,
   path,
   onSelect,
+  foreign,
 }: {
   component: ProjectComponent;
   path: string[];
   onSelect: (target: ConnectTarget) => void;
+  foreign?: { referenceNodeId: string; foreignProjectTitle: string };
 }) {
   const Icon = KIND_ICON[component.kind];
   const kindLabel = KIND_LABEL[component.kind];
+  // A foreign Component id can collide with a host one across groups, so prefix
+  // the cmdk `value` with the portal id to keep each item uniquely addressable.
+  const value = foreign
+    ? `${foreign.referenceNodeId}:${component.id}`
+    : component.id;
   return (
     <CommandItem
-      value={component.id}
+      value={value}
       keywords={[component.title, kindLabel, ...path]}
       onSelect={() =>
         onSelect({
           id: component.id,
           title: component.title,
           kind: component.kind,
+          ...(foreign ? { foreign } : {}),
         })
       }
     >
@@ -149,12 +228,17 @@ function ancestorPath(
  */
 export function ConnectToPopover({
   slug,
+  portals = [],
   excludeIds,
   onSelect,
   trigger,
   align = "end",
 }: {
   slug: string;
+  /** On-scope Project Portals the cross-project connect can route through (#122).
+   *  Empty (the default) at scopes with no readable portal — the palette then
+   *  offers only same-project Components, exactly as before. */
+  portals?: readonly ConnectPortal[];
   excludeIds: ReadonlySet<string>;
   onSelect: (target: ConnectTarget) => void;
   trigger: ReactElement<Record<string, unknown>>;
@@ -189,7 +273,9 @@ export function ConnectToPopover({
           </div>
         ) : (
           <ConnectToPalette
+            slug={slug}
             components={components}
+            portals={portals}
             excludeIds={excludeIds}
             onSelect={(target) => {
               setOpen(false);

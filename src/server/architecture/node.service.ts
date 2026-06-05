@@ -20,6 +20,7 @@ import {
   createNodeInput,
   deleteNodeInput,
   getCanvasInput,
+  listForeignComponentsViaPortalInput,
   listProjectComponentsInput,
   moveNodeInput,
   restoreNodeInput,
@@ -33,6 +34,7 @@ import {
   type DeleteNodeInput,
   type GetCanvasInput,
   type Interaction,
+  type ListForeignComponentsViaPortalInput,
   type ListProjectComponentsInput,
   type MoveNodeInput,
   type NodeKind,
@@ -347,6 +349,12 @@ export interface CanvasBoundaryProxy {
   edgeId: string;
   posX: number | null;
   posY: number | null;
+  // Present ONLY for a CROSS-PROJECT boundary proxy (#122): the readable title of
+  // the FOREIGN Project the real endpoint lives in, so the client marks the proxy
+  // "From [Foreign Project]". Absent for an ordinary same-project cross-scope proxy.
+  // The foreign Project.id is NEVER on the wire — only its title, and only after the
+  // reading actor re-resolved ≥ view on it (ADR-0041 firewall).
+  foreignProjectTitle?: string;
 }
 
 // One row per active Connection whose endpoint ancestry makes it relevant to the
@@ -520,8 +528,13 @@ export async function getCanvas(
   // trail are each ONE recursive CTE over endpoint / scope ancestry; the boundary-
   // proxy placements are a flat read of this scope's persisted view coordinates
   // (#91 / ADR-0036), joined onto the derived proxies below by `realEndpointId`.
-  const [interiorNodes, crossScopeRows, breadcrumbs, proxyPlacements] =
-    await Promise.all([
+  const [
+    interiorNodes,
+    crossScopeRows,
+    breadcrumbs,
+    proxyPlacements,
+    crossProjectRows,
+  ] = await Promise.all([
       db.node.findMany({
         where: {
           projectId: project.id,
@@ -663,6 +676,35 @@ export async function getCanvas(
       db.boundaryProxyPlacement.findMany({
         where: { containerNodeId: canvasNodeId },
         select: { realEndpointId: true, posX: true, posY: true },
+      }),
+      // Cross-project Connections incident to THIS scope (#122). A row surfaces on
+      // the scope whose Canvas holds the portal it routes through: the
+      // `referenceNode` (the Project Portal Node) must be a live child of the
+      // current scope (`parentId: canvasNodeId`) in THIS host Project. This is a
+      // flat read joined into the same `Promise.all` — no waterfall, no recursive
+      // CTE (cross-project edges deliberately stay out of the single-project
+      // ancestry walk; ADR). The foreign endpoint's display fields and per-actor
+      // readability are resolved in a bounded parallel fan-out AFTER the join,
+      // mirroring the locked-portal proxy pass below.
+      db.crossProjectEdge.findMany({
+        where: {
+          deletedAt: null,
+          hostProjectId: project.id,
+          referenceNode: {
+            parentId: canvasNodeId,
+            deletedAt: null,
+            projectId: project.id,
+          },
+        },
+        select: {
+          id: true,
+          hostNodeId: true,
+          referenceNodeId: true,
+          foreignProjectId: true,
+          foreignNodeId: true,
+          interaction: true,
+          label: true,
+        },
       }),
     ]);
 
@@ -867,6 +909,95 @@ export async function getCanvas(
     ),
   );
 
+  // Cross-project render pass (#122): each surviving CrossProjectEdge whose
+  // portal is on this scope surfaces the FOREIGN endpoint as a marked boundary
+  // proxy (`xproxy_<rowId>`, a DISTINCT prefix from the same-project `proxy_`),
+  // paired with an interior edge from the host Component to that proxy.
+  //
+  // NON-DISCLOSURE firewall (ADR-0041): a row's `foreignProjectId` is the real
+  // internal Project.id of a project this actor may have NO grant to. We re-resolve
+  // EACH distinct foreign project per-actor and DROP every row whose project the
+  // actor cannot read — its `foreignProjectId`/`foreignNodeId`/title then never
+  // reach the wire. To stay a single round trip (philosophy #1) this is a BOUNDED
+  // PARALLEL fan-out, not a per-row awaited waterfall: resolve all distinct foreign
+  // projects in parallel, then ONE batch read of the surviving foreign node titles.
+  if (crossProjectRows.length > 0) {
+    const distinctForeignProjectIds = [
+      ...new Set(crossProjectRows.map((r) => r.foreignProjectId)),
+    ];
+    const readableForeignProjectTitles = new Map<string, string>();
+    await Promise.all(
+      distinctForeignProjectIds.map(async (foreignProjectId) => {
+        try {
+          await resolveReadableProjectById(db, actor, foreignProjectId);
+        } catch {
+          return; // Unreadable → drop every row for it; nothing on the wire.
+        }
+        const row = await db.project.findUnique({
+          where: { id: foreignProjectId },
+          select: { title: true },
+        });
+        if (row) readableForeignProjectTitles.set(foreignProjectId, row.title);
+      }),
+    );
+
+    const surviving = crossProjectRows.filter((r) =>
+      readableForeignProjectTitles.has(r.foreignProjectId),
+    );
+    // ONE batch read of the foreign endpoints' display fields across every
+    // readable foreign project — never a per-row follow-up. A foreign Node that is
+    // soft-deleted or no longer exists (the loose foreign FK lets it dangle; #123
+    // owns the sweep) simply finds no title here and its row emits no proxy.
+    const foreignNodeById = new Map<
+      string,
+      { title: string; kind: NodeKind }
+    >();
+    if (surviving.length > 0) {
+      const foreignNodes = await db.node.findMany({
+        where: {
+          id: { in: surviving.map((r) => r.foreignNodeId) },
+          projectId: { in: [...readableForeignProjectTitles.keys()] },
+          deletedAt: null,
+        },
+        select: { id: true, title: true, kind: true },
+      });
+      for (const n of foreignNodes) {
+        foreignNodeById.set(n.id, { title: n.title, kind: n.kind });
+      }
+    }
+
+    for (const row of surviving) {
+      const foreign = foreignNodeById.get(row.foreignNodeId);
+      if (!foreign) continue; // Dangling/soft-deleted foreign endpoint — hide it.
+      const proxyNodeId = `xproxy_${row.id}`;
+      const placement = placementByEndpoint.get(row.foreignNodeId);
+      boundaryProxies.push({
+        nodeId: proxyNodeId,
+        title: foreign.title,
+        kind: foreign.kind,
+        realEndpointId: row.foreignNodeId,
+        edgeId: row.id,
+        posX: placement?.posX ?? null,
+        posY: placement?.posY ?? null,
+        foreignProjectTitle: readableForeignProjectTitles.get(
+          row.foreignProjectId,
+        ),
+      });
+      // The host Component is assumed co-scope with the portal this slice (the
+      // connect gesture anchors the host endpoint on the same Canvas the portal
+      // lives on). Cross-scope host endpoints are a follow-on concern.
+      interiorEdges.push({
+        id: row.id,
+        sourceId: row.hostNodeId,
+        targetId: row.foreignNodeId,
+        sourceRepr: row.hostNodeId,
+        targetRepr: proxyNodeId,
+        interaction: row.interaction,
+        label: row.label,
+      });
+    }
+  }
+
   return {
     interiorNodes: annotatedInteriorNodes,
     interiorEdges,
@@ -915,6 +1046,53 @@ export async function listProjectComponents(
 
   return db.node.findMany({
     where: { projectId: project.id, deletedAt: null },
+    select: { id: true, title: true, kind: true, parentId: true },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+/**
+ * Lists every live Component inside the Project an on-scope PORTAL embeds (#122) —
+ * the foreign side of the "Connect to…" palette's cross-project group. Returns the
+ * same {@link ProjectComponent} shape as {@link listProjectComponents}.
+ *
+ * NON-DISCLOSURE: the client never holds the foreign Project.id (stripped since
+ * #119), so it routes this read through `referenceNodeId` — the Project Portal
+ * Node it DOES have. The gate order matters: resolve the HOST by `slug` first (the
+ * read grant); load the portal scoped to the host and require it BE a portal
+ * (`embeddedProjectId != null`, else NotFound — a non-portal/forged/foreign id
+ * never resolves); then re-gate the actor against the embedded Project ≥ `view`
+ * (NotFound on deny — re-resolved per-actor, the host's grant never governs the
+ * foreign). The foreign SLUG is never exposed; only the Components' display fields.
+ */
+export async function listForeignComponentsViaPortal(
+  db: Db,
+  actor: Actor | null,
+  input: ListForeignComponentsViaPortalInput,
+): Promise<ProjectComponent[]> {
+  const { slug, referenceNodeId } =
+    listForeignComponentsViaPortalInput.parse(input);
+
+  const host = await resolveReadableProject(db, actor, slug);
+
+  const portal = await db.node.findFirst({
+    where: { id: referenceNodeId, projectId: host.id, deletedAt: null },
+    select: { embeddedProjectId: true },
+  });
+  if (portal?.embeddedProjectId == null) {
+    throw new NotFoundError();
+  }
+
+  // Re-gate per-actor against the embedded Project — NotFound on deny, so a portal
+  // the actor cannot read behind is indistinguishable from a missing one.
+  const foreign = await resolveReadableProjectById(
+    db,
+    actor,
+    portal.embeddedProjectId,
+  );
+
+  return db.node.findMany({
+    where: { projectId: foreign.id, deletedAt: null },
     select: { id: true, title: true, kind: true, parentId: true },
     orderBy: { createdAt: "asc" },
   });

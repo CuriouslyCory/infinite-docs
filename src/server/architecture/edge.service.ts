@@ -3,17 +3,23 @@ import {
   type Interaction,
   type Prisma,
 } from "../../../generated/prisma/client";
-import { authorizeProjectWrite, resolveReadableProject } from "./access-db";
+import {
+  authorizeProjectWrite,
+  resolveReadableProject,
+  resolveReadableProjectById,
+} from "./access-db";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { isEdgeDedupCollision } from "./prisma-errors";
 import {
+  connectCrossProjectInput,
   connectNodesInput,
   deleteEdgeInput,
   listNodeConnectionsInput,
   restoreEdgeInput,
   updateEdgeInput,
   updateEdgeInteractionInput,
+  type ConnectCrossProjectInput,
   type ConnectNodesInput,
   type DeleteEdgeInput,
   type ListNodeConnectionsInput,
@@ -147,6 +153,150 @@ export async function connectNodes(
       conflictingEdgeIds: racer ? [racer.id] : [],
     });
   }
+}
+
+/**
+ * The non-disclosing shape `connectCrossProject` returns: the persisted
+ * `CrossProjectEdge` row WITHOUT `foreignProjectId` (the internal foreign
+ * `Project.id`) or the unwired `deletionId`. `foreignProjectId` is the one column
+ * that must never cross the wire (the slice's headline invariant); `foreignNodeId`
+ * stays — it is an opaque cuid the client uses only as the proxy `realEndpointId`.
+ */
+export interface CrossProjectEdgeRepr {
+  id: string;
+  hostProjectId: string;
+  hostNodeId: string;
+  referenceNodeId: string;
+  foreignNodeId: string;
+  interaction: Interaction;
+  label: string | null;
+  deletedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Draws a CROSS-PROJECT Connection (#122): a host Component to a specific
+ * Component inside an EMBEDDED Project, anchored in the host. It is NOT an `Edge`
+ * — it persists a `CrossProjectEdge` row, leaving `Edge`'s dedup indexes and
+ * the single-project ancestry CTE pristine — and it does NOT write into the
+ * foreign Project's graph (viewed standalone, the foreign Project never shows it).
+ *
+ * The gate order IS the non-disclosure property — load-bearing, do not reorder:
+ *
+ *   1. HOST `edit` FIRST (`authorizeProjectWrite(hostProjectId, "edit")` →
+ *      Forbidden on deny). The host id is a handle the caller already holds, so a
+ *      Forbidden leaks nothing — and gating it first means a caller who cannot edit
+ *      the host NEVER probes the foreign endpoint, so this path can never oracle a
+ *      foreign Component's existence.
+ *   2. Load the host endpoints (`hostNodeId`, `referenceNodeId`) scoped to the
+ *      host, selecting `embeddedProjectId`. Both must be present, and the
+ *      `referenceNode` must be a PORTAL (`embeddedProjectId != null`) — else
+ *      NotFound. The foreign project id is DERIVED from that portal, never taken
+ *      from the client (the client never holds it; #119).
+ *   3. SELF / same-project reject (`foreignProjectId === host.id` →
+ *      ValidationError): a cross-project edge into the host itself is degenerate.
+ *   4. FOREIGN ≥ `view` (`resolveReadableProjectById(foreignProjectId)` → NotFound
+ *      on deny). "You may only link to what you can read." A foreign project the
+ *      actor cannot read is indistinguishable from a missing one (non-disclosure).
+ *   5. Validate `foreignNodeId` is a live Node in that foreign Project (NotFound on
+ *      miss) — set-membership, never disclosing existence elsewhere.
+ *   6. Create the row.
+ *
+ * No dedup pre-check this slice — the dedup unique index + collision handling are
+ * #123. `label` is UNTRUSTED user content, stored verbatim. Identity comes from the
+ * actor, never `input` (ADR-0001).
+ *
+ * The return is the NON-DISCLOSING {@link CrossProjectEdgeRepr} — it deliberately
+ * OMITS `foreignProjectId` (the internal foreign `Project.id`), upholding the
+ * slice's headline invariant that the foreign project id never reaches any
+ * client-facing output (`getCanvas` strips it everywhere too). The client only
+ * consumes `id` (for the `xproxy_<id>` optimistic reconcile).
+ */
+export async function connectCrossProject(
+  db: Db,
+  actor: Actor,
+  input: ConnectCrossProjectInput,
+): Promise<CrossProjectEdgeRepr> {
+  const { hostProjectId, hostNodeId, referenceNodeId, foreignNodeId, interaction, label } =
+    connectCrossProjectInput.parse(input);
+
+  // (1) Host edit gate FIRST — Forbidden on deny (the handle is already held).
+  // A caller who cannot edit the host never reaches the foreign probe below.
+  const host = await authorizeProjectWrite(db, actor, hostProjectId, "edit");
+
+  // (2) Both host endpoints must be live Nodes in the host Project. Scoping to
+  // `host.id` closes cross-project smuggling (a foreign node id can never be the
+  // host endpoint) and never reveals existence elsewhere. The `referenceNode` must
+  // be a PORTAL — its `embeddedProjectId` is the foreign Project, DERIVED here,
+  // never taken from the client.
+  const hostEndpoints = await db.node.findMany({
+    where: {
+      id: { in: [hostNodeId, referenceNodeId] },
+      projectId: host.id,
+      deletedAt: null,
+    },
+    select: { id: true, embeddedProjectId: true },
+  });
+  if (hostEndpoints.length !== 2) {
+    throw new NotFoundError();
+  }
+  const referenceNode = hostEndpoints.find((n) => n.id === referenceNodeId);
+  if (referenceNode?.embeddedProjectId == null) {
+    throw new NotFoundError();
+  }
+  const foreignProjectId = referenceNode.embeddedProjectId;
+
+  // (3) Same-project / self reject — a cross-project edge into the host itself is
+  // degenerate (e.g. a portal that embeds its own host).
+  if (foreignProjectId === host.id) {
+    throw new ValidationError(
+      "A cross-project Connection cannot link back into the host Project.",
+    );
+  }
+
+  // (4) Foreign read gate — NotFound on deny (non-disclosure; "link to what you
+  // can read"). Re-resolved per-actor: the host's grant never governs the foreign.
+  await resolveReadableProjectById(db, actor, foreignProjectId);
+
+  // (5) The foreign endpoint must be a live Node in that foreign Project —
+  // set-membership, never disclosing whether the id exists elsewhere.
+  const foreignNode = await db.node.findFirst({
+    where: { id: foreignNodeId, projectId: foreignProjectId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!foreignNode) {
+    throw new NotFoundError();
+  }
+
+  // (6) Create the row. No dedup pre-check / unique index this slice — that
+  // (and a TOCTOU backstop) is #123. The `select` OMITS `foreignProjectId` (the
+  // internal foreign Project.id) and the unwired `deletionId` so the foreign
+  // project id never reaches a client-facing return (the slice's headline
+  // non-disclosure invariant) — the persisted row still carries both.
+  return db.crossProjectEdge.create({
+    data: {
+      hostProjectId: host.id,
+      hostNodeId,
+      referenceNodeId,
+      foreignProjectId,
+      foreignNodeId,
+      interaction,
+      label,
+    },
+    select: {
+      id: true,
+      hostProjectId: true,
+      hostNodeId: true,
+      referenceNodeId: true,
+      foreignNodeId: true,
+      interaction: true,
+      label: true,
+      deletedAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
 }
 
 /**

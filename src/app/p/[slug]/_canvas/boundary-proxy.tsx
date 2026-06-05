@@ -22,6 +22,13 @@ export type BoundaryProxyNodeData = {
    * so it reads as an inbound boundary, not "the host inside itself" (ADR-0031).
    */
   lineal: boolean;
+  /**
+   * The FOREIGN Project's title when this proxy stands in for a CROSS-PROJECT
+   * endpoint (#122) — the real Component lives inside an embedded Project. Present
+   * only for a cross-project proxy; the marker reads "From [Foreign Project]". The
+   * foreign Project.id is never on the wire (ADR-0041) — only its title. Untrusted.
+   */
+  foreignProjectTitle?: string;
 };
 
 export type BoundaryProxyNode = Node<BoundaryProxyNodeData, "boundary-proxy">;
@@ -96,6 +103,14 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
         {data.lineal && (
           <span className="text-[10px] tracking-wide text-white/40 uppercase">
             Inbound from
+          </span>
+        )}
+        {/* Cross-project marker (#122): the real Component lives in another
+            Project, so lead with "From [Foreign Project]" so the proxy reads as a
+            cross-project boundary, not a local off-scope one. Untrusted title. */}
+        {data.foreignProjectTitle && !data.lineal && (
+          <span className="truncate text-[10px] tracking-wide text-[hsl(280,100%,80%)]/70 uppercase">
+            From {data.foreignProjectTitle}
           </span>
         )}
         <span className="truncate">{data.title}</span>

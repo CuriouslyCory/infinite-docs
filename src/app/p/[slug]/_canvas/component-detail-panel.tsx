@@ -93,6 +93,10 @@ type ComponentDetailPanelProps = {
        *  mutation (and its far-end-proxy insert + reconcile) lives on the
        *  canvas (#66). */
       onConnect: (ownerNodeId: string, target: ConnectTarget) => void;
+      /** On-scope Project Portals the cross-project connect can route through
+       *  (#122) — the palette surfaces a "From [portal]" group per entry. Empty at
+       *  scopes with no readable portal. */
+      connectPortals: readonly { referenceNodeId: string; title: string }[];
       /** Optimistic Connection delete from a row's trash control; the mutation
        *  (and its on-canvas edge + per-edge boundary-proxy removal) lives on the
        *  canvas, mirroring the keyboard-Delete path (ADR-0030 / ADR-0031). */
@@ -171,6 +175,7 @@ export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
       <ConnectionsSection
         slug={slug}
         ownerNodeId={ownerNodeId}
+        connectPortals={props.readOnly ? [] : props.connectPortals}
         onConnect={
           props.readOnly
             ? undefined
@@ -340,11 +345,13 @@ function KindSection({
 function ConnectionsSection({
   slug,
   ownerNodeId,
+  connectPortals,
   onConnect,
   onDeleteConnection,
 }: {
   slug: string;
   ownerNodeId: string;
+  connectPortals: readonly { referenceNodeId: string; title: string }[];
   onConnect?: (target: ConnectTarget) => void;
   onDeleteConnection?: (connectionId: string) => void;
 }) {
@@ -379,6 +386,7 @@ function ConnectionsSection({
         {onConnect && (
           <ConnectToPopover
             slug={slug}
+            portals={connectPortals}
             excludeIds={excludeIds}
             onSelect={onConnect}
             trigger={
