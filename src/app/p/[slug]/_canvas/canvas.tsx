@@ -2141,6 +2141,14 @@ function CanvasInner({
                       nodesDraggable={canEdit}
                       nodesConnectable={canEdit}
                       deleteKeyCode={canEdit ? undefined : null}
+                      // Double-click means "descend into a Component", never
+                      // "zoom the pane". React Flow only tags DRAGGABLE nodes
+                      // with `nopan`, so for a viewer (nodesDraggable=false) the
+                      // pane's zoom-on-double-click hijacks the gesture and
+                      // descent silently fails — the node's onDoubleClick never
+                      // fires. Disabling it lets double-click reach the node for
+                      // viewers AND editors alike.
+                      zoomOnDoubleClick={false}
                       fitView
                     >
                       <Background />
