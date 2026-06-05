@@ -37,6 +37,10 @@ export default function RootLayout({
           defaultTheme="dark"
           enableSystem={false}
           disableTransitionOnChange
+          // Map each theme to an explicit class so next-themes ADDS `.light`
+          // (not just removes `.dark`). Required because `:root` carries the dark
+          // palette as the no-flash default, so light mode must apply its own class.
+          value={{ light: "light", dark: "dark" }}
         >
           <TRPCReactProvider>{children}</TRPCReactProvider>
         </ThemeProvider>

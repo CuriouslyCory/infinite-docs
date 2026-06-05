@@ -2564,7 +2564,7 @@ function CanvasInner({
                       <Background
                         variant={BackgroundVariant.Lines}
                         gap={32}
-                        color="var(--border)"
+                        color="color-mix(in oklab, var(--border) 28%, transparent)"
                       />
                       <Controls />
                       <Panel position="top-left" className="flex gap-2">

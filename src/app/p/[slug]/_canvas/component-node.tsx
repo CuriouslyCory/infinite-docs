@@ -212,7 +212,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
         position={Position.Left}
         aria-label="Connection point (left)"
         title="Drag to connect (left)"
-        className="border-foreground/40! bg-foreground/60! h-2! w-2!"
+        className="border-primary! bg-foreground! h-2.5! w-2.5! border-2!"
       />
       <Icon size={16} aria-hidden className="text-primary shrink-0" />
       {editing ? (
@@ -343,7 +343,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
         position={Position.Right}
         aria-label="Connection point (right)"
         title="Drag to connect (right)"
-        className="border-foreground/40! bg-foreground/60! h-2! w-2!"
+        className="border-primary! bg-foreground! h-2.5! w-2.5! border-2!"
       />
     </div>
   );

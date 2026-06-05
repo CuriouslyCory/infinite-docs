@@ -3,15 +3,22 @@
 /*
  * Doom 64 design-token system (ADR-0045). Every color in the app resolves to one
  * of these semantic CSS variables, so re-theming is a one-file swap and the
- * light/dark toggle works by flipping the `.dark` class on <html> (next-themes).
+ * light/dark toggle works by flipping the theme class on <html> (next-themes).
  *
- * `:root` holds the LIGHT palette; `.dark` overrides it. The `@theme inline` block
- * below maps each var into Tailwind's `--color-*` namespace — it MUST be `inline`
- * so utilities emit `var(--card)` (which re-cascades on a class swap) rather than
- * baking the literal oklch value (which would freeze the theme). Values are the
- * exact oklch triples from the v0 "Doom 64" design system.
+ * The app is DARK by default, so the bare `:root` (the classless state the server
+ * renders and the browser paints first) carries the DARK palette — `.light`
+ * overrides it. This is deliberately inverted from the usual shadcn `:root`=light
+ * convention: it means the first paint can never flash a light/wrong palette before
+ * next-themes resolves (no FOUC), because the default IS the default theme. The
+ * `@theme inline` block below maps each var into Tailwind's `--color-*` namespace —
+ * it MUST be `inline` so utilities emit `var(--card)` (which re-cascades on a class
+ * swap) rather than baking the literal oklch value (which would freeze the theme).
+ * Values are the exact oklch triples from the v0 "Doom 64" design system.
  */
-:root {
+/* `:root.light` (specificity 0,2,0) so the light override always beats the bare
+   `:root` dark default below (0,1,0), regardless of source order. */
+:root.light {
+  color-scheme: light;
   --background: oklch(0.8452 0 0);
   --foreground: oklch(0.2393 0 0);
   --card: oklch(0.7572 0 0);
@@ -60,7 +67,9 @@
   --radius: 0.5rem;
 }
 
+:root,
 .dark {
+  color-scheme: dark;
   --background: oklch(0.2178 0 0);
   --foreground: oklch(0.9067 0 0);
   --card: oklch(0.285 0 0);
@@ -161,8 +170,11 @@
  */
 [data-canvas-scope] .react-flow {
   --xy-background-color: var(--background);
-  --xy-edge-stroke-default: var(--border);
-  --xy-edge-stroke-selected-default: var(--primary);
+  /* Connections render in the Doom red (matching the v0 chart's red lines/dots) so
+     they read loud against the low-contrast grid; a selected edge brightens to the
+     foreground for an unmistakable active state. */
+  --xy-edge-stroke-default: var(--primary);
+  --xy-edge-stroke-selected-default: var(--foreground);
   --xy-connectionline-stroke-default: var(--primary);
   --xy-node-border-default: var(--border);
   --xy-attribution-background-color-default: transparent;
