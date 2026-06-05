@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { type Actor } from "../actor";
 import { ForbiddenError, NotFoundError, ValidationError } from "../errors";
+import { connectNodes } from "../edge.service";
 import {
   createEmbeddedComponent,
   createNode,
@@ -175,6 +176,10 @@ describe("getCanvas through a Project Portal", () => {
     });
     const portalNode = hostCanvas.interiorNodes.find((n) => n.id === portal.id);
     expect(portalNode?.embedAccess).toBe("locked");
+    // The host owner held no foreign grant from the start — they never knew the
+    // target's title, so a locked portal must carry the neutral sentinel, not the
+    // captured foreign title.
+    expect(portalNode?.title).toBe("Locked project");
     // Non-disclosure firewall (the headline property): the locked portal Node MUST
     // carry only the non-identifying `isPortal` boolean — the foreign Project.id is
     // redacted from the wire entirely, so a host owner with no grant never learns
@@ -249,7 +254,7 @@ describe("getCanvas through a Project Portal", () => {
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 
-  it("annotates an open portal on the host Canvas as embedAccess open", async () => {
+  it("annotates an owner-on-target portal on the host Canvas as embedAccess enterable", async () => {
     const user = await makeUser();
     const actor: Actor = { userId: user.id, via: "session" };
     const host = await makeProject(user.id, "Host");
@@ -262,11 +267,214 @@ describe("getCanvas through a Project Portal", () => {
 
     const canvas = await getCanvas(testDb, actor, { slug: host.slug });
     const portalNode = canvas.interiorNodes.find((n) => n.id === portal.id);
-    expect(portalNode?.embedAccess).toBe("open");
+    // The actor OWNS the target (≥ edit) → enterable.
+    expect(portalNode?.embedAccess).toBe("enterable");
     expect(portalNode?.isPortal).toBe(true);
-    // Even an OPEN portal redacts the foreign id — the firewall is uniform.
+    // Even an enterable portal redacts the foreign id — the firewall is uniform.
     expect(
       (portalNode as Record<string, unknown> | undefined)?.embeddedProjectId,
     ).toBeUndefined();
+  });
+
+  it("annotates a VIEWER-shared target as embedAccess readOnly (foreign id withheld)", async () => {
+    const hostOwner = await makeUser("Host Owner");
+    const targetOwner = await makeUser("Target Owner");
+    const hostActor: Actor = { userId: hostOwner.id, via: "session" };
+    const targetActor: Actor = { userId: targetOwner.id, via: "session" };
+    const host = await makeProject(hostOwner.id, "Host");
+    const target = await makeProject(targetOwner.id, "Shared Target");
+    await closeProject(target.id);
+
+    // The target owner places the portal (host EDITOR), then shares the target with
+    // the host owner as a VIEWER — exactly `view`, not enough to enter.
+    await testDb.projectMembership.create({
+      data: { projectId: host.id, userId: targetOwner.id, role: "EDITOR" },
+    });
+    const portal = await createEmbeddedComponent(testDb, targetActor, {
+      projectId: host.id,
+      embeddedProjectId: target.id,
+      title: "Portal",
+    });
+    await testDb.projectMembership.create({
+      data: { projectId: target.id, userId: hostOwner.id, role: "VIEWER" },
+    });
+
+    const canvas = await getCanvas(testDb, hostActor, { slug: host.slug });
+    const portalNode = canvas.interiorNodes.find((n) => n.id === portal.id);
+    expect(portalNode?.embedAccess).toBe("readOnly");
+    expect(portalNode?.isPortal).toBe(true);
+    expect(
+      (portalNode as Record<string, unknown> | undefined)?.embeddedProjectId,
+    ).toBeUndefined();
+  });
+
+  it("lets a VIEWER-shared actor descend into the foreign scope (read-only)", async () => {
+    const hostOwner = await makeUser("Host Owner");
+    const targetOwner = await makeUser("Target Owner");
+    const hostActor: Actor = { userId: hostOwner.id, via: "session" };
+    const targetActor: Actor = { userId: targetOwner.id, via: "session" };
+    const host = await makeProject(hostOwner.id, "Host");
+    const target = await makeProject(targetOwner.id, "Shared Target");
+    await closeProject(target.id);
+    await createNode(testDb, targetActor, {
+      projectId: target.id,
+      title: "Inside Target",
+    });
+
+    await testDb.projectMembership.create({
+      data: { projectId: host.id, userId: targetOwner.id, role: "EDITOR" },
+    });
+    const portal = await createEmbeddedComponent(testDb, targetActor, {
+      projectId: host.id,
+      embeddedProjectId: target.id,
+      title: "Portal",
+    });
+    await testDb.projectMembership.create({
+      data: { projectId: target.id, userId: hostOwner.id, role: "VIEWER" },
+    });
+
+    // The host owner holds only `view` on the target, but `view` is enough to
+    // descend — the crossing re-gate resolves (no throw) and lands in the foreign
+    // scope; the route shell forces read-only above the service.
+    const canvas = await getCanvas(testDb, hostActor, {
+      slug: host.slug,
+      canvasNodeId: null,
+      embedPath: [portal.id],
+    });
+    expect(canvas.activeProject.id).toBe(target.id);
+    expect(canvas.interiorNodes.map((n) => n.title)).toEqual(["Inside Target"]);
+  });
+
+  it("renders a revoked portal as locked WITHOUT disclosing the foreign title", async () => {
+    const hostOwner = await makeUser("Host Owner");
+    const targetOwner = await makeUser("Target Owner");
+    const hostActor: Actor = { userId: hostOwner.id, via: "session" };
+    const targetActor: Actor = { userId: targetOwner.id, via: "session" };
+    const host = await makeProject(hostOwner.id, "Host");
+    // A distinctive title we assert is ABSENT from the locked sentinel.
+    const target = await makeProject(targetOwner.id, "Secret Service Name");
+    await closeProject(target.id);
+
+    await testDb.projectMembership.create({
+      data: { projectId: host.id, userId: targetOwner.id, role: "EDITOR" },
+    });
+    const portal = await createEmbeddedComponent(testDb, targetActor, {
+      projectId: host.id,
+      embeddedProjectId: target.id,
+      title: "Secret Service Name",
+    });
+    // Grant the host owner VIEW, then REVOKE it — access is now `none` on a closed
+    // target. The portal node still legitimately exists on the host, so the host
+    // read returns a locked sentinel (not NotFound).
+    const membership = await testDb.projectMembership.create({
+      data: { projectId: target.id, userId: hostOwner.id, role: "VIEWER" },
+    });
+    await testDb.projectMembership.delete({ where: { id: membership.id } });
+
+    const canvas = await getCanvas(testDb, hostActor, { slug: host.slug });
+    const portalNode = canvas.interiorNodes.find((n) => n.id === portal.id);
+    expect(portalNode?.embedAccess).toBe("locked");
+    expect(portalNode?.isPortal).toBe(true);
+    // The captured foreign title MUST NOT reach the wire — the sentinel replaces it.
+    expect(portalNode?.title).toBe("Locked project");
+    expect(portalNode?.title).not.toBe("Secret Service Name");
+    expect(
+      (portalNode as Record<string, unknown> | undefined)?.embeddedProjectId,
+    ).toBeUndefined();
+  });
+
+  it("renders a revoked portal's BOUNDARY PROXY as locked WITHOUT disclosing the foreign title", async () => {
+    const hostOwner = await makeUser("Host Owner");
+    const targetOwner = await makeUser("Target Owner");
+    const hostActor: Actor = { userId: hostOwner.id, via: "session" };
+    const targetActor: Actor = { userId: targetOwner.id, via: "session" };
+    const host = await makeProject(hostOwner.id, "Host");
+    // The distinctive foreign title we assert is ABSENT from the locked proxy.
+    const target = await makeProject(targetOwner.id, "Secret Service Name");
+    await closeProject(target.id);
+
+    // The target owner (host EDITOR) embeds their own project as a portal at the
+    // host ROOT — the portal's stored title is the foreign project's title.
+    await testDb.projectMembership.create({
+      data: { projectId: host.id, userId: targetOwner.id, role: "EDITOR" },
+    });
+    const portal = await createEmbeddedComponent(testDb, targetActor, {
+      projectId: host.id,
+      embeddedProjectId: target.id,
+      title: "Secret Service Name",
+    });
+
+    // A nested host node (`inside`, child of `parent`) connected to the portal at
+    // root. Viewing `parent`'s Canvas leaves the portal OFF-SCOPE, so it surfaces as
+    // a BOUNDARY PROXY — the exact path the interior-node locking never touched.
+    const parent = await createNode(testDb, hostActor, {
+      projectId: host.id,
+      title: "Parent",
+    });
+    const inside = await createNode(testDb, hostActor, {
+      projectId: host.id,
+      parentId: parent.id,
+      title: "Inside",
+    });
+    const edge = await connectNodes(testDb, hostActor, {
+      projectId: host.id,
+      sourceId: inside.id,
+      targetId: portal.id,
+    });
+
+    // Grant the host owner VIEW on the target, then REVOKE it — access is now `none`.
+    const membership = await testDb.projectMembership.create({
+      data: { projectId: target.id, userId: hostOwner.id, role: "VIEWER" },
+    });
+    await testDb.projectMembership.delete({ where: { id: membership.id } });
+
+    const canvas = await getCanvas(testDb, hostActor, {
+      slug: host.slug,
+      canvasNodeId: parent.id,
+    });
+
+    const proxy = canvas.boundaryProxies.find(
+      (p) => p.realEndpointId === portal.id,
+    );
+    expect(proxy).toBeDefined();
+    // The captured foreign title MUST NOT reach the wire via the proxy path either.
+    expect(proxy?.title).toBe("Locked project");
+    expect(proxy?.title).not.toBe("Secret Service Name");
+    // The proxy never carries the foreign embedded project id.
+    expect(
+      (proxy as Record<string, unknown> | undefined)?.embeddedProjectId,
+    ).toBeUndefined();
+    void edge;
+  });
+
+  it("lets an EDITOR-on-host / VIEWER-on-target actor create the embed", async () => {
+    const hostOwner = await makeUser("Host Owner");
+    const actorUser = await makeUser("Editor+Viewer");
+    const targetOwner = await makeUser("Target Owner");
+    const actor: Actor = { userId: actorUser.id, via: "session" };
+    const host = await makeProject(hostOwner.id, "Host");
+    const target = await makeProject(targetOwner.id, "Shared Target");
+    await closeProject(target.id);
+
+    // EDITOR on the host (≥ edit → may write the portal), VIEWER on the target
+    // (≥ view → may embed it). The widened gate must permit this.
+    await testDb.projectMembership.create({
+      data: { projectId: host.id, userId: actorUser.id, role: "EDITOR" },
+    });
+    await testDb.projectMembership.create({
+      data: { projectId: target.id, userId: actorUser.id, role: "VIEWER" },
+    });
+
+    const portal = await createEmbeddedComponent(testDb, actor, {
+      projectId: host.id,
+      embeddedProjectId: target.id,
+      title: "Embedded Shared",
+    });
+
+    expect(portal.embeddedProjectId).toBe(target.id);
+    const persisted = await testDb.node.findUnique({
+      where: { id: portal.id },
+    });
+    expect(persisted?.embeddedProjectId).toBe(target.id);
   });
 });

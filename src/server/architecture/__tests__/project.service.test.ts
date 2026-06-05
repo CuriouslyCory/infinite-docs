@@ -9,6 +9,7 @@ import {
   getProjectAccess,
   getProjectBySlug,
   listProjects,
+  listReferenceableProjects,
   setGuestAccess,
 } from "../project.service";
 import { resetDb, testDb } from "./helpers/test-db";
@@ -89,6 +90,45 @@ describe("listProjects", () => {
 
     expect(projects).toHaveLength(2);
     expect(projects.map((p) => p.title).sort()).toEqual(["A", "B"]);
+  });
+});
+
+describe("listReferenceableProjects (#119, widened #120)", () => {
+  it("returns owned + member(≥view) projects, excluding non-member and the current", async () => {
+    const actorUser = await makeUser("Actor");
+    const other = await makeUser("Other");
+    const actor: Actor = { userId: actorUser.id, via: "session" };
+
+    const owned = await createProject(testDb, actor, { title: "Owned" });
+    const host = await createProject(testDb, actor, { title: "Host" });
+    // A foreign project the actor is a VIEWER member of → offered (≥ view).
+    const shared = await createProject(
+      testDb,
+      { userId: other.id },
+      { title: "Shared" },
+    );
+    await testDb.project.update({
+      where: { id: shared.id },
+      data: { guestAccess: "NONE" },
+    });
+    await testDb.projectMembership.create({
+      data: { projectId: shared.id, userId: actorUser.id, role: "VIEWER" },
+    });
+    // A foreign project the actor has NO membership on → excluded.
+    await createProject(testDb, { userId: other.id }, { title: "Stranger" });
+
+    const result = await listReferenceableProjects(testDb, actor, {
+      excludeProjectId: host.id,
+    });
+
+    const titles = result.map((p) => p.title).sort();
+    expect(titles).toEqual(["Owned", "Shared"]);
+    // The excluded current project is absent; the non-member project never appears.
+    expect(result.map((p) => p.id)).not.toContain(host.id);
+    expect(titles).not.toContain("Stranger");
+    // Narrow shape: { id, title, slug } only.
+    const sample = result.find((p) => p.id === owned.id);
+    expect(Object.keys(sample ?? {}).sort()).toEqual(["id", "slug", "title"]);
   });
 });
 

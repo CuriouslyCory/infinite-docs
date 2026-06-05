@@ -3,6 +3,7 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import {
   ChevronRight,
+  Eye,
   ExternalLink,
   Lock,
   Pencil,
@@ -29,11 +30,13 @@ export type ComponentNodeData = {
    */
   isPortal?: boolean;
   /**
-   * The DESCENDING ACTOR's access to the embedded Project, set by `getCanvas` per
-   * portal: "open" (≥ view) or "locked" (no access — the No-access pill). Undefined
-   * for a non-portal Component.
+   * The DESCENDING ACTOR's per-portal access tier, set by `getCanvas` (#120):
+   * "enterable" (≥ edit — descends, full affordances inside), "readOnly" (= view —
+   * descends into a read-only foreign scope; the "View only" pill), or "locked" (no
+   * access — the No-access pill; cannot descend, and the title is server-neutralized
+   * so no foreign identity leaks). Undefined for a non-portal Component.
    */
-  embedAccess?: "open" | "locked";
+  embedAccess?: "enterable" | "readOnly" | "locked";
 };
 
 export type ComponentNode = Node<ComponentNodeData, "component">;
@@ -109,13 +112,17 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
   // commit; this latch makes commit/cancel idempotent for one edit session.
   const settled = useRef(false);
 
-  // Project Portal (#119): `isPortal` is the per-actor boolean discriminator
-  // getCanvas sets (the foreign Project.id is redacted from the wire — non-disclosure
-  // firewall). A locked portal (the descending actor cannot read the target) renders
-  // a distinct No-access pill and cannot be descended; an open one descends across
-  // the project boundary (the island's descend handler keys off the portal NODE id).
+  // Project Portal (#119, per-actor tiers #120): `isPortal` is the non-identifying
+  // discriminator getCanvas sets (the foreign Project.id is redacted from the wire —
+  // non-disclosure firewall). A `locked` portal (no read access) renders a distinct
+  // No-access pill, cannot be descended, and carries a server-neutralized title;
+  // `readOnly` (= view) descends into a read-only foreign scope (the "View only"
+  // pill); `enterable` (≥ edit) descends with full affordances. Both non-locked tiers
+  // descend across the project boundary (the island's descend handler keys off the
+  // portal NODE id).
   const isPortal = data.isPortal === true;
   const isLockedPortal = isPortal && data.embedAccess === "locked";
+  const isReadOnlyPortal = isPortal && data.embedAccess === "readOnly";
 
   // Renaming is disabled while optimistic: a `temp_…` Component has no real id to
   // address yet, and the create-reconcile would overwrite a local title anyway.
@@ -222,10 +229,11 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
       ) : (
         <span className="max-w-[12rem] truncate">{data.title}</span>
       )}
-      {/* Project Portal access pill (#119): a per-actor mark distinguishing an
-          open portal (descendable into the foreign project) from a locked one (no
-          read access — the descending actor cannot cross). Purely a mark; the real
-          gate is the server-side crossing re-gate. */}
+      {/* Project Portal access pill (#119, per-actor tiers #120): a mark
+          distinguishing the three tiers — `locked` (no read access — the descending
+          actor cannot cross), `readOnly` (= view — descends, but the foreign scope
+          suppresses edit affordances), and `enterable` (≥ edit — full access).
+          Purely a mark; the real gate is the server-side crossing re-gate. */}
       {isPortal &&
         (isLockedPortal ? (
           <span
@@ -235,6 +243,15 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           >
             <Lock size={9} aria-hidden />
             No access
+          </span>
+        ) : isReadOnlyPortal ? (
+          <span
+            aria-label="Embedded project (view only)"
+            title="View only"
+            className="flex shrink-0 items-center gap-1 rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
+          >
+            <Eye size={9} aria-hidden />
+            View only
           </span>
         ) : (
           <span

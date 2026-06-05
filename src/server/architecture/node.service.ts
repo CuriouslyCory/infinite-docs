@@ -5,6 +5,7 @@ import {
   type NodeKind as PrismaNodeKind,
   type Prisma,
 } from "../../../generated/prisma/client";
+import { capabilityAtLeast } from "./access";
 import {
   authorizeProjectWrite,
   resolveReadableProject,
@@ -108,6 +109,15 @@ const _prismaKindIsZodKind: Record<PrismaNodeKind, NodeKind> = {
 };
 void _zodKindIsPrismaKind;
 void _prismaKindIsZodKind;
+
+// The neutral title a `locked` Project Portal carries on the wire (#120). A
+// portal's stored `title` is the FOREIGN project's title, captured at embed time;
+// once the descending actor loses read access to the target, surfacing that title
+// would disclose foreign identity. So a locked portal's title is REPLACED with
+// this non-identifying sentinel server-side (the foreign `embeddedProjectId` is
+// already redacted from every interior node) — the host node is acknowledged, its
+// foreign identity withheld (ADR-0041 non-disclosure).
+const LOCKED_PORTAL_TITLE = "Locked project";
 
 /**
  * Creates a Component (a Node) on a Canvas scope within a Project. The scope is
@@ -340,8 +350,10 @@ interface CrossScopeEdgeRow {
   label: string | null;
   source_title: string;
   source_kind: NodeKind;
+  source_embedded_project_id: string | null;
   target_title: string;
   target_kind: NodeKind;
+  target_embedded_project_id: string | null;
   source_rep: string | null;
   target_rep: string | null;
   truncated: boolean;
@@ -409,10 +421,12 @@ interface CrossScopeEdgeRow {
  * interior/edge/breadcrumb/placement reads below run against the resolved ACTIVE
  * project.id (they are already project-id-parameterized), and `embedTrail` carries
  * the crossed portals so the client stitches the host→portal→foreign spine. Each
- * interior portal Node is annotated `isPortal: true` + `embedAccess: "open"|"locked"`
- * per-actor so the client renders a No-access pill without leaking the target's
- * existence — and the foreign `embeddedProjectId` is stripped from every interior
- * node (non-disclosure firewall: it never reaches the wire).
+ * interior portal Node is annotated `isPortal: true` + a per-actor `embedAccess`
+ * tier (#120) — `enterable` (≥ edit), `readOnly` (= view), or `locked` (no grant) —
+ * so the client renders the right affordance without leaking the target's existence;
+ * the foreign `embeddedProjectId` is stripped from every interior node, and a
+ * `locked` portal's title is replaced with a neutral sentinel (non-disclosure
+ * firewall: neither id nor foreign title reaches the wire).
  */
 export async function getCanvas(
   db: Db,
@@ -421,7 +435,7 @@ export async function getCanvas(
 ): Promise<{
   interiorNodes: (Omit<Node, "embeddedProjectId"> & {
     isPortal: boolean;
-    embedAccess?: "open" | "locked";
+    embedAccess?: "enterable" | "readOnly" | "locked";
   })[];
   interiorEdges: CanvasInteriorEdge[];
   boundaryProxies: CanvasBoundaryProxy[];
@@ -515,9 +529,11 @@ export async function getCanvas(
           e."createdAt"       AS created_at,
           sn.title            AS source_title,
           sn.kind::text       AS source_kind,
+          sn."embeddedProjectId" AS source_embedded_project_id,
           sn."parentId"       AS source_parent,
           tn.title            AS target_title,
           tn.kind::text       AS target_kind,
+          tn."embeddedProjectId" AS target_embedded_project_id,
           tn."parentId"       AS target_parent
         FROM "Edge" e
         JOIN "Node" sn ON sn.id = e."sourceId" AND sn."deletedAt" IS NULL
@@ -568,8 +584,10 @@ export async function getCanvas(
         le.label        AS label,
         le.source_title AS source_title,
         le.source_kind  AS source_kind,
+        le.source_embedded_project_id AS source_embedded_project_id,
         le.target_title AS target_title,
         le.target_kind  AS target_kind,
+        le.target_embedded_project_id AS target_embedded_project_id,
         ws_s.rep_id     AS source_rep,
         ws_t.rep_id     AS target_rep,
         (COALESCE(ws_s.truncated, false) OR COALESCE(ws_t.truncated, false))
@@ -663,6 +681,49 @@ export async function getCanvas(
     );
   }
 
+  // Non-disclosure firewall for the BOUNDARY-PROXY path (#120, ADR-0041): an
+  // off-scope endpoint that is itself a PORTAL (`embeddedProjectId != null`) carries
+  // the foreign project's title in its stored `*_title`. If the descending actor's
+  // grant on that target was revoked (capability `none`) the proxy must render
+  // LOCKED without leaking the foreign title — the same guarantee the interior-node
+  // path enforces below. We re-gate the actor against each off-scope portal endpoint's
+  // `embeddedProjectId` and neutralize the proxy title when locked. The proxy never
+  // carries `embeddedProjectId`, so only the TITLE can leak — that is all we redact.
+  //
+  // Collect the unique off-scope portal endpoints (keyed by the embedded project id,
+  // de-duped) and resolve them ALL IN PARALLEL into a Map before the proxy loop, so a
+  // Canvas with many cross-scope portal edges stays a single parallel fan-out rather
+  // than a per-proxy awaited waterfall (philosophy #1).
+  const lockedEmbeddedProjectIds = new Set<string>();
+  {
+    const candidateEmbeddedIds = new Set<string>();
+    for (const row of crossScopeRows) {
+      if (
+        row.source_rep !== null &&
+        row.target_rep === null &&
+        row.target_embedded_project_id !== null
+      ) {
+        candidateEmbeddedIds.add(row.target_embedded_project_id);
+      }
+      if (
+        row.target_rep !== null &&
+        row.source_rep === null &&
+        row.source_embedded_project_id !== null
+      ) {
+        candidateEmbeddedIds.add(row.source_embedded_project_id);
+      }
+    }
+    await Promise.all(
+      [...candidateEmbeddedIds].map(async (embeddedProjectId) => {
+        try {
+          await resolveReadableProjectById(db, actor, embeddedProjectId);
+        } catch {
+          lockedEmbeddedProjectIds.add(embeddedProjectId);
+        }
+      }),
+    );
+  }
+
   // Partition each surviving row into an interior edge (both ends on-scope) or an
   // interior edge plus a boundary proxy for the one off-scope end. The SQL filter
   // already dropped the collapse and not-rendered cases, so every row here has at
@@ -688,9 +749,12 @@ export async function getCanvas(
       // Target is off-scope → its boundary proxy stands in on this Canvas.
       const proxyNodeId = `proxy_${row.id}`;
       const placement = placementByEndpoint.get(row.target_id);
+      const locked =
+        row.target_embedded_project_id !== null &&
+        lockedEmbeddedProjectIds.has(row.target_embedded_project_id);
       boundaryProxies.push({
         nodeId: proxyNodeId,
-        title: row.target_title,
+        title: locked ? LOCKED_PORTAL_TITLE : row.target_title,
         kind: row.target_kind,
         realEndpointId: row.target_id,
         edgeId: row.id,
@@ -706,9 +770,12 @@ export async function getCanvas(
       // Source is off-scope → its boundary proxy stands in on this Canvas.
       const proxyNodeId = `proxy_${row.id}`;
       const placement = placementByEndpoint.get(row.source_id);
+      const locked =
+        row.source_embedded_project_id !== null &&
+        lockedEmbeddedProjectIds.has(row.source_embedded_project_id);
       boundaryProxies.push({
         nodeId: proxyNodeId,
-        title: row.source_title,
+        title: locked ? LOCKED_PORTAL_TITLE : row.source_title,
         kind: row.source_kind,
         realEndpointId: row.source_id,
         edgeId: row.id,
@@ -724,19 +791,23 @@ export async function getCanvas(
   }
 
   // Annotate each interior portal Node (one carrying `embeddedProjectId`) with the
-  // DESCENDING ACTOR's access to its target: "open" if `resolveReadableProjectById`
-  // resolves ≥ view, "locked" if it throws NotFound (the target is missing, deleted,
-  // or unreadable — all indistinguishable, non-disclosure). The per-portal re-resolves
-  // run in parallel (no waterfall); a typical Canvas has few portals, so this stays a
-  // handful of point lookups.
+  // DESCENDING ACTOR's access tier to its target, resolved per-actor (#120):
+  //   - `resolveReadableProjectById` throws (capability `none`, or missing/deleted) →
+  //     `locked` — all indistinguishable, non-disclosure;
+  //   - `viewerCapability === "view"`                       → `readOnly`;
+  //   - `capabilityAtLeast(cap, "edit")` (edit/admin/owner) → `enterable`.
+  // The per-portal re-resolves run in parallel (no waterfall); a typical Canvas has
+  // few portals, so this stays a handful of point lookups.
   //
   // CRITICAL non-disclosure firewall: the foreign `embeddedProjectId` is the real
   // internal Project.id of a project the host owner may have NO grant to — it must
   // NEVER reach the wire. We strip it from EVERY interior node and emit only a
   // non-identifying `isPortal` boolean discriminator (the client keys descent off the
-  // portal NODE id, never the embedded project id). Redacting uniformly — open and
-  // locked alike — keeps the firewall total and removes any need to reason about
-  // which case is safe to expose.
+  // portal NODE id, never the embedded project id). Redacting uniformly — every tier
+  // alike — keeps the firewall total. A `locked` portal goes further: its stored
+  // `title` is the foreign project's title (captured at embed time), so we REPLACE it
+  // with `LOCKED_PORTAL_TITLE` — a locked portal carries neither foreign id nor
+  // foreign title, only the host node's acknowledged existence.
   const annotatedInteriorNodes = await Promise.all(
     interiorNodes.map(
       async (
@@ -744,16 +815,31 @@ export async function getCanvas(
       ): Promise<
         Omit<Node, "embeddedProjectId"> & {
           isPortal: boolean;
-          embedAccess?: "open" | "locked";
+          embedAccess?: "enterable" | "readOnly" | "locked";
         }
       > => {
         const { embeddedProjectId, ...rest } = node;
         if (embeddedProjectId === null) return { ...rest, isPortal: false };
         try {
-          await resolveReadableProjectById(db, actor, embeddedProjectId);
-          return { ...rest, isPortal: true, embedAccess: "open" };
+          const { viewerCapability } = await resolveReadableProjectById(
+            db,
+            actor,
+            embeddedProjectId,
+          );
+          return {
+            ...rest,
+            isPortal: true,
+            embedAccess: capabilityAtLeast(viewerCapability, "edit")
+              ? "enterable"
+              : "readOnly",
+          };
         } catch {
-          return { ...rest, isPortal: true, embedAccess: "locked" };
+          return {
+            ...rest,
+            title: LOCKED_PORTAL_TITLE,
+            isPortal: true,
+            embedAccess: "locked",
+          };
         }
       },
     ),

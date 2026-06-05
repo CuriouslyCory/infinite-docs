@@ -6,15 +6,16 @@ import { useState } from "react";
 import { api } from "~/trpc/react";
 
 /**
- * The "Embed a project" control (#119): a button that opens a small popover
- * listing the actor's other Projects (`listReferenceableProjects`), each one
- * committing a Project Portal via the island's `onEmbed`. Owner-gated at the call
- * site (only rendered when `canEdit`); the real authority is the server-side embed
- * gate (host `edit` + target ≥ view).
+ * The "Embed a project" control (#119, widened #120): a button that opens a small
+ * popover listing the other Projects the actor can reach — OWNED *or* SHARED
+ * (member ≥ view) — via `listReferenceableProjects`, each one committing a Project
+ * Portal through the island's `onEmbed`. Gated at the call site (only rendered when
+ * `canEdit`); the real authority is the server-side embed gate (host `edit` + target
+ * ≥ view).
  *
- * The list is restricted to OWNED projects this slice, so the slug it carries is
- * the actor's own — never a foreign-slug leak. `title` is untrusted user content
- * rendered as plain text.
+ * Every listed project is one the actor can already read, so the slug it carries is
+ * never a foreign-slug leak. `title` is untrusted user content rendered as plain
+ * text.
  */
 export function EmbedProject({
   excludeProjectId,

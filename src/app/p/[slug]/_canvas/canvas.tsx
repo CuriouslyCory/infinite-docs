@@ -380,15 +380,17 @@ function optimisticCanvasNode(
 // but the Canvas store speaks the redacted `getCanvas` wire shape — `isPortal` only,
 // the foreign id stripped (non-disclosure firewall, #119). Normalize the mutation
 // result before it lands in `interiorNodes`. The actor just created the portal, so
-// they can read its target by construction: a non-null FK reconciles to an OPEN
-// portal (the next getCanvas re-derives access per-actor anyway).
+// they can read its target by construction → optimistically `enterable`. If the
+// actor only holds `view` on the target (an EDITOR-on-host / VIEWER-on-target), the
+// next authoritative getCanvas re-derives the tier per-actor and settles it to
+// `readOnly` (#120) — a brief, benign optimistic flash.
 function toCanvasNode(node: {
   embeddedProjectId: string | null;
 } & Omit<CanvasNode, "isPortal" | "embedAccess">): CanvasNode {
   const { embeddedProjectId, ...rest } = node;
   return embeddedProjectId === null
     ? { ...rest, isPortal: false }
-    : { ...rest, isPortal: true, embedAccess: "open" };
+    : { ...rest, isPortal: true, embedAccess: "enterable" };
 }
 
 // A freshly drawn Connection is same-Canvas — both endpoints render here, so each
@@ -762,7 +764,9 @@ function CanvasInner({
             kind: "GENERIC",
             optimistic: true,
             isPortal: true,
-            embedAccess: "open",
+            // Optimistically `enterable`; a viewer-on-target creator settles to
+            // `readOnly` on the next authoritative getCanvas read (#120).
+            embedAccess: "enterable",
           },
         },
       ]);
@@ -779,7 +783,9 @@ function CanvasInner({
             ),
             title: target.title,
             isPortal: true,
-            embedAccess: "open",
+            // Optimistically `enterable`; a viewer-on-target creator settles to
+            // `readOnly` on the next authoritative getCanvas read (#120).
+            embedAccess: "enterable",
           },
         ],
       }));

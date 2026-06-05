@@ -217,6 +217,12 @@ one.
   lacking `view` → NotFound; host `edit` missing → Forbidden; descent through a
   readable embed returns the foreign interior; and the headline **host owner with
   no foreign grant → NotFound locked portal**.
+- **Reviewable invariant — `none → NotFound` governs descent; the host read locks, it does not 404.** The `none → NotFound` mapping (§3) governs the **descent / by-id read** — descending into a
+  foreign interior you may not read still 404s, indistinguishable from a missing scope. The **host
+  Canvas read** surfaces an **additive non-disclosing locked sentinel** instead: the host node is
+  **acknowledged** (host-owned, discloseable), but the embedded project's **title and id are
+  withheld**. Returning NotFound for the host node, or surfacing the foreign title/id in the locked
+  state, both regress this ADR. (#120)
 - **Forward flag (not designed here):** deeper **markdown export through portals**
   is deferred to **#123**, which will touch the markdown serializer and
   `llms.txt` (ADR-0017). This slice leaves ADR-0017 **untouched** — the export
