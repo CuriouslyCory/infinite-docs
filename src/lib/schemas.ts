@@ -726,6 +726,35 @@ export const connectCrossProjectInput = z.object({
 export type ConnectCrossProjectInput = z.input<typeof connectCrossProjectInput>;
 
 /**
+ * Input for removing a CROSS-PROJECT Connection (`deleteCrossProjectEdge`, #123).
+ * Addressed by the row `id`; the service loads it, resolves the HOST Project, and
+ * authorizes via `authorizeProjectWrite(hostProjectId, "edit")` — host edit ONLY,
+ * never re-gating the foreign (deleting a host-anchored row must not depend on a
+ * foreign grant). Removal is a soft-delete (sets `deletedAt`) so it stays
+ * recoverable via {@link restoreCrossProjectEdgeInput}.
+ */
+export const deleteCrossProjectEdgeInput = z.object({
+  id: z.string().min(1),
+});
+export type DeleteCrossProjectEdgeInput = z.infer<
+  typeof deleteCrossProjectEdgeInput
+>;
+
+/**
+ * Input for restoring a soft-deleted CROSS-PROJECT Connection
+ * (`restoreCrossProjectEdge`, #123). Addressed by the row `id`; the service loads
+ * it (an unknown or already-live row is not-found), authorizes via host edit, and
+ * pre-checks the cross-project de-dupe slot so a fresh active row occupying it
+ * surfaces a readable `ConflictError` rather than a P2002. Host edit ONLY.
+ */
+export const restoreCrossProjectEdgeInput = z.object({
+  id: z.string().min(1),
+});
+export type RestoreCrossProjectEdgeInput = z.infer<
+  typeof restoreCrossProjectEdgeInput
+>;
+
+/**
  * Input for the foreign-Component picker that feeds the "Connect to…" palette's
  * cross-project group (`listForeignComponentsViaPortal`, #122). Addressed by the
  * HOST `slug` (the read grant, ADR-0002) plus `referenceNodeId` — the Project
@@ -798,6 +827,10 @@ export const deleteComponentOutput = z.object({
   nodeIds: z.array(z.string()),
   edgeIds: z.array(z.string()),
   specIds: z.array(z.string()),
+  // The cross-project Connections swept by the same cascade (#123) — incident on
+  // the deleted host Component / portal, stamped under the same deletionId, so
+  // `restore_component` revives them too. Mirrors `edgeIds`/`specIds`.
+  crossProjectEdgeIds: z.array(z.string()),
 });
 export type DeleteComponentOutput = z.infer<typeof deleteComponentOutput>;
 

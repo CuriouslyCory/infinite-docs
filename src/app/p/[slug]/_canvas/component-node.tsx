@@ -65,6 +65,22 @@ export const DescendComponentContext = createContext<(id: string) => void>(
 );
 
 /**
+ * The Canvas island supplies the CROSS-BOUNDARY "Go to" action (#123) through this
+ * context — used by a cross-project boundary proxy whose real endpoint lives inside
+ * an embedded Project. Unlike {@link DescendComponentContext} (a same-project
+ * scope id), this pushes the host portal `referenceNodeId` onto the `?via=` crossing
+ * stack and lands on the foreign endpoint's parent scope (`null` = foreign root), so
+ * the URL stays the host's and the foreign slug is never exposed (non-disclosure
+ * firewall). The default is inert.
+ */
+export const CrossDescendComponentContext = createContext<
+  (target: {
+    referenceNodeId: string;
+    foreignParentScopeId: string | null;
+  }) => void
+>(() => undefined);
+
+/**
  * The Canvas island supplies the delete action (a cascading soft-delete of a
  * Component) through this context, like rename/descent — keeping the node a pure
  * presentational component so React Flow doesn't re-render every node when the

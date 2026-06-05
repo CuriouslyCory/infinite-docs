@@ -10,20 +10,27 @@ import {
 } from "./access-db";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
-import { isEdgeDedupCollision } from "./prisma-errors";
+import {
+  isCrossProjectEdgeDedupCollision,
+  isEdgeDedupCollision,
+} from "./prisma-errors";
 import {
   connectCrossProjectInput,
   connectNodesInput,
+  deleteCrossProjectEdgeInput,
   deleteEdgeInput,
   listNodeConnectionsInput,
+  restoreCrossProjectEdgeInput,
   restoreEdgeInput,
   updateEdgeInput,
   updateEdgeInteractionInput,
   type ConnectCrossProjectInput,
   type ConnectNodesInput,
+  type DeleteCrossProjectEdgeInput,
   type DeleteEdgeInput,
   type ListNodeConnectionsInput,
   type NodeKind,
+  type RestoreCrossProjectEdgeInput,
   type RestoreEdgeInput,
   type UpdateEdgeInput,
   type UpdateEdgeInteractionInput,
@@ -56,6 +63,34 @@ export function activeDuplicateWhere(
     };
   }
   return { projectId, deletedAt: null, interaction, sourceId, targetId };
+}
+
+/**
+ * The active-duplicate predicate for a CROSS-PROJECT Connection's de-dupe slot
+ * (#123). Unlike {@link activeDuplicateWhere}, a cross-project edge is ALWAYS
+ * DIRECTIONAL — the host end and the foreign end are categorically different
+ * (one is a host Component, the other a foreign Component reached through a
+ * portal), so there is no unordered-pair case even for `ASSOCIATION`: the slot
+ * is `(hostNodeId, foreignProjectId, foreignNodeId, interaction)`, matching the
+ * partial unique index `idx_cross_project_edge_dedup` it backstops. `referenceNodeId`
+ * and `label` are deliberately OUT of the key — two portals embedding the same
+ * foreign project still de-dupe to one cross-project Connection per host endpoint
+ * + foreign endpoint + interaction. The service `findFirst` MUST mirror the index
+ * directionality, or it would falsely reject a legitimate row.
+ */
+export function activeCrossProjectDuplicateWhere(
+  hostNodeId: string,
+  foreignProjectId: string,
+  foreignNodeId: string,
+  interaction: Interaction,
+): Prisma.CrossProjectEdgeWhereInput {
+  return {
+    deletedAt: null,
+    hostNodeId,
+    foreignProjectId,
+    foreignNodeId,
+    interaction,
+  };
 }
 
 /**
@@ -269,33 +304,179 @@ export async function connectCrossProject(
     throw new NotFoundError();
   }
 
-  // (6) Create the row. No dedup pre-check / unique index this slice — that
-  // (and a TOCTOU backstop) is #123. The `select` OMITS `foreignProjectId` (the
-  // internal foreign Project.id) and the unwired `deletionId` so the foreign
-  // project id never reaches a client-facing return (the slice's headline
-  // non-disclosure invariant) — the persisted row still carries both.
-  return db.crossProjectEdge.create({
-    data: {
-      hostProjectId: host.id,
-      hostNodeId,
-      referenceNodeId,
-      foreignProjectId,
-      foreignNodeId,
-      interaction,
-      label,
-    },
+  // (6) De-dupe (#123): a cross-project Connection de-dupes on the DIRECTIONAL
+  // slot `(hostNodeId, foreignProjectId, foreignNodeId, interaction)`, enforced
+  // by the partial unique index `idx_cross_project_edge_dedup` with this service
+  // findFirst as the readable fast path + a P2002 backstop for the TOCTOU race
+  // (mirrors `connectNodes`; ADR-0010). The pre-check runs on `foreignProjectId`
+  // (DERIVED above), never client input.
+  const duplicateWhere = activeCrossProjectDuplicateWhere(
+    hostNodeId,
+    foreignProjectId,
+    foreignNodeId,
+    interaction,
+  );
+  const duplicate = await db.crossProjectEdge.findFirst({
+    where: duplicateWhere,
+    select: { id: true },
+  });
+  if (duplicate) {
+    throw new ConflictError(
+      "That cross-project Connection already exists.",
+      { conflictingEdgeIds: [duplicate.id] },
+    );
+  }
+
+  // (7) Create the row. The `select` OMITS `foreignProjectId` (the internal
+  // foreign Project.id) and the unwired `deletionId` so the foreign project id
+  // never reaches a client-facing return (the slice's headline non-disclosure
+  // invariant) — the persisted row still carries both.
+  try {
+    return await db.crossProjectEdge.create({
+      data: {
+        hostProjectId: host.id,
+        hostNodeId,
+        referenceNodeId,
+        foreignProjectId,
+        foreignNodeId,
+        interaction,
+        label,
+      },
+      select: CROSS_PROJECT_EDGE_REPR_SELECT,
+    });
+  } catch (error) {
+    if (!isCrossProjectEdgeDedupCollision(error)) throw error;
+    // A concurrent racer committed the same slot first; the partial unique index
+    // caught it. Re-read it so the catch path yields the same ConflictError shape.
+    const racer = await db.crossProjectEdge.findFirst({
+      where: duplicateWhere,
+      select: { id: true },
+    });
+    throw new ConflictError("That cross-project Connection already exists.", {
+      conflictingEdgeIds: racer ? [racer.id] : [],
+    });
+  }
+}
+
+// The `select` that yields the non-disclosing {@link CrossProjectEdgeRepr} — it
+// deliberately OMITS `foreignProjectId` (the internal foreign Project.id) and the
+// unwired `deletionId`, the slice's headline non-disclosure invariant. Shared by
+// every cross-project-edge writer (`connectCrossProject`, `deleteCrossProjectEdge`,
+// `restoreCrossProjectEdge`) so the wire shape stays identical.
+const CROSS_PROJECT_EDGE_REPR_SELECT = {
+  id: true,
+  hostProjectId: true,
+  hostNodeId: true,
+  referenceNodeId: true,
+  foreignNodeId: true,
+  interaction: true,
+  label: true,
+  deletedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+/**
+ * Removes a CROSS-PROJECT Connection via soft-delete (sets `deletedAt`) so the
+ * action stays recoverable (#123). HOST-anchored: addressed by the row `id`,
+ * loaded live (an already-deleted row reads as not-found), then authorized
+ * through `authorizeProjectWrite(hostProjectId, "edit")` — the host's `edit`
+ * capability ALONE governs deletion. We deliberately do NOT re-gate the foreign
+ * project: deleting your own host-anchored row must not depend on a foreign grant
+ * the host owner may have since lost (the edge lives in the host graph).
+ *
+ * A plain LONE soft-delete (mirrors `deleteEdge`): it mints NO `deletionId` —
+ * there is no cascade to group. The cascade case (a host Component / portal
+ * delete sweeping its incident cross-project edges under one `deletionId`) lives
+ * in `deleteNode`. Returns the non-disclosing {@link CrossProjectEdgeRepr}.
+ */
+export async function deleteCrossProjectEdge(
+  db: Db,
+  actor: Actor,
+  input: DeleteCrossProjectEdgeInput,
+): Promise<CrossProjectEdgeRepr> {
+  const { id } = deleteCrossProjectEdgeInput.parse(input);
+
+  const edge = await db.crossProjectEdge.findFirst({
+    where: { id, deletedAt: null },
+    select: { id: true, hostProjectId: true },
+  });
+  if (!edge) {
+    throw new NotFoundError();
+  }
+  await authorizeProjectWrite(db, actor, edge.hostProjectId, "edit");
+
+  return db.crossProjectEdge.update({
+    where: { id: edge.id },
+    data: { deletedAt: new Date() },
+    select: CROSS_PROJECT_EDGE_REPR_SELECT,
+  });
+}
+
+/**
+ * Restores a soft-deleted CROSS-PROJECT Connection (#123). Addressed by the row
+ * `id`; loaded WITHOUT a `deletedAt` filter so an unknown id and an already-live
+ * row both read as not-found (a live row has nothing to restore). HOST-anchored:
+ * authorized through `authorizeProjectWrite(hostProjectId, "edit")` only — never
+ * re-gating the foreign, symmetric with `deleteCrossProjectEdge`.
+ *
+ * Pre-checks the de-dupe invariant the revival must not violate (ADR-0010): a
+ * fresh active row may now occupy the `(hostNodeId, foreignProjectId,
+ * foreignNodeId, interaction)` slot. Surfaces a readable `ConflictError` BEFORE
+ * the update (Postgres aborts the transaction on P2002, so diagnostics must come
+ * first), then clears `deletedAt`. Runs inside the caller's transaction.
+ */
+export async function restoreCrossProjectEdge(
+  db: Db,
+  actor: Actor,
+  input: RestoreCrossProjectEdgeInput,
+): Promise<CrossProjectEdgeRepr> {
+  const { id } = restoreCrossProjectEdgeInput.parse(input);
+
+  const edge = await db.crossProjectEdge.findFirst({
+    where: { id },
     select: {
       id: true,
       hostProjectId: true,
       hostNodeId: true,
-      referenceNodeId: true,
+      foreignProjectId: true,
       foreignNodeId: true,
       interaction: true,
-      label: true,
       deletedAt: true,
-      createdAt: true,
-      updatedAt: true,
     },
+  });
+  // An unknown id OR an already-live row (nothing to restore) is not-found.
+  if (edge?.deletedAt == null) {
+    throw new NotFoundError();
+  }
+  await authorizeProjectWrite(db, actor, edge.hostProjectId, "edit");
+
+  // Pre-check the de-dupe slot the revival is about to re-occupy. Done BEFORE the
+  // update so the user gets the conflicting id rather than a generic P2002.
+  const duplicate = await db.crossProjectEdge.findFirst({
+    where: activeCrossProjectDuplicateWhere(
+      edge.hostNodeId,
+      edge.foreignProjectId,
+      edge.foreignNodeId,
+      edge.interaction,
+    ),
+    select: { id: true },
+  });
+  if (duplicate) {
+    throw new ConflictError(
+      "Can't restore this cross-project Connection: a new one now occupies the same slot. Delete the conflicting Connection and retry.",
+      { conflictingEdgeIds: [duplicate.id] },
+    );
+  }
+
+  // Clear deletionId too: a lone-revived edge must fully detach from its old
+  // cascade group. If it kept the stamp, a later restoreNode({deletionId}) would
+  // re-gather this now-live row, and its dedup pre-check would find the edge
+  // occupying its own slot → spurious ConflictError, bricking host-node undo.
+  return db.crossProjectEdge.update({
+    where: { id: edge.id },
+    data: { deletedAt: null, deletionId: null },
+    select: CROSS_PROJECT_EDGE_REPR_SELECT,
   });
 }
 

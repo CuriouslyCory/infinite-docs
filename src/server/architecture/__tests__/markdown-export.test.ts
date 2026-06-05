@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { type Actor } from "../actor";
+import { connectCrossProject } from "../edge.service";
 import { NotFoundError } from "../errors";
 import { exportMarkdown } from "../export.service";
 import {
@@ -13,6 +14,11 @@ import {
   type SerializerInput,
   type SerializerTraceInput,
 } from "../markdown";
+import {
+  createEmbeddedComponent,
+  createNode,
+} from "../node.service";
+import { createProject } from "../project.service";
 import { getTraceMarkdownForActor } from "../trace.service";
 import { resetDb, testDb } from "./helpers/test-db";
 
@@ -188,6 +194,71 @@ function buildSubtreeInput(): SerializerInput {
   };
 }
 
+/**
+ * The determinism fixture: `buildProjectInput()` plus cross-project reference
+ * markers (#123 / ADR-0044). The golden-file tests deliberately stay on the
+ * marker-free `buildProjectInput()` (the three frozen fixtures assert byte-
+ * stability of real exports). This variant exists so the twice-equal + locale-
+ * mutation determinism tests actually exercise the marker sort comparators
+ * (`renderCrossProjectReferences`), making the ADR-0017 marker-determinism claim
+ * true. Input order is intentionally UNSORTED across every tiebreaker
+ * (`hostNodeId`, `foreignProjectTitle`, `foreignEndpointTitle`, `interaction`)
+ * so a non-stable sort or a locale-sensitive comparator would change the bytes.
+ */
+function buildDeterminismInput(): SerializerInput {
+  return {
+    ...buildProjectInput(),
+    portalMarkers: [
+      // n-db sorts AFTER n-api; the two n-api rows force the foreignProjectTitle
+      // tiebreak (Zebra before Alpha in input → Alpha must come first out).
+      {
+        hostNodeId: "n-db",
+        hostTitle: "Postgres",
+        foreignProjectTitle: "Backup Store",
+      },
+      {
+        hostNodeId: "n-api",
+        hostTitle: "API Gateway",
+        foreignProjectTitle: "Zebra Service",
+      },
+      {
+        hostNodeId: "n-api",
+        hostTitle: "API Gateway",
+        foreignProjectTitle: "Alpha Service",
+      },
+    ],
+    crossProjectMarkers: [
+      // All share hostNodeId + foreignProjectTitle, so foreignEndpointTitle then
+      // interaction drive the order (Refund before Charge in input; PUSH vs
+      // REQUEST within the Charge group — input lists REQUEST first).
+      {
+        hostNodeId: "n-api",
+        hostTitle: "API Gateway",
+        foreignProjectTitle: "Payments",
+        foreignEndpointTitle: "Refund",
+        interaction: "REQUEST",
+        label: "issues",
+      },
+      {
+        hostNodeId: "n-api",
+        hostTitle: "API Gateway",
+        foreignProjectTitle: "Payments",
+        foreignEndpointTitle: "Charge",
+        interaction: "REQUEST",
+        label: null,
+      },
+      {
+        hostNodeId: "n-api",
+        hostTitle: "API Gateway",
+        foreignProjectTitle: "Payments",
+        foreignEndpointTitle: "Charge",
+        interaction: "PUSH",
+        label: null,
+      },
+    ],
+  };
+}
+
 describe("serializeGraph (pure, deterministic)", () => {
   it("renders the project export byte-equal to the golden fixture", () => {
     const md = serializeGraph(buildProjectInput());
@@ -205,13 +276,24 @@ describe("serializeGraph (pure, deterministic)", () => {
   });
 
   it("is deterministic: the same graph serializes to the same bytes twice", () => {
-    const a = serializeGraph(buildProjectInput());
-    const b = serializeGraph(buildProjectInput());
+    // Marker-bearing fixture so the cross-project marker sort is in the bytes
+    // under test (ADR-0017 marker-determinism claim).
+    const input = buildDeterminismInput();
+    const a = serializeGraph(input);
+    const b = serializeGraph(input);
     expect(a).toBe(b);
+    // Guard: the markers genuinely render, so this test actually exercises the
+    // marker sort (a regression that dropped the section would still pass a
+    // bare twice-equal, but not this).
+    expect(a).toContain("## Cross-project references");
+    expect(a).toContain("### Embedded projects");
+    expect(a).toContain("### Cross-project connections");
   });
 
   it("is locale-invariant: mutating process locale does not change the output", () => {
-    const before = serializeGraph(buildProjectInput());
+    const input = buildDeterminismInput();
+    const before = serializeGraph(input);
+    expect(before).toContain("## Cross-project references");
     const prior = {
       LANG: process.env.LANG,
       LC_ALL: process.env.LC_ALL,
@@ -221,7 +303,7 @@ describe("serializeGraph (pure, deterministic)", () => {
       process.env.LANG = "fr_FR.UTF-8";
       process.env.LC_ALL = "fr_FR.UTF-8";
       process.env.LC_COLLATE = "fr_FR.UTF-8";
-      const after = serializeGraph(buildProjectInput());
+      const after = serializeGraph(input);
       expect(after).toBe(before);
     } finally {
       process.env.LANG = prior.LANG;
@@ -962,5 +1044,155 @@ describe("getTraceMarkdownForActor (service, real DB)", () => {
 
     expect(markdown).toContain("# Test System — Trace: Auth → DB");
     expect(markdown).toContain("Fewer than two live trace points");
+  });
+});
+
+/**
+ * A host project that EMBEDS a foreign project (a portal) and draws a
+ * cross-project Connection into it. The single user owns both, so they can read
+ * the foreign content; the foreign Component documentation carries a SENTINEL
+ * string so a test can assert it is NEVER inlined into the host export.
+ */
+async function seedHostWithCrossProjectMarkers() {
+  const owner = await testDb.user.create({ data: { name: "Owner" } });
+  const actor: Actor = { userId: owner.id, via: "session" };
+  const host = await createProject(testDb, { userId: owner.id }, { title: "Host" });
+  const foreign = await createProject(
+    testDb,
+    { userId: owner.id },
+    { title: "Foreign System" },
+  );
+
+  const hostNode = await createNode(testDb, actor, {
+    projectId: host.id,
+    title: "Host Component",
+  });
+  const foreignNode = await createNode(testDb, actor, {
+    projectId: foreign.id,
+    title: "Foreign Endpoint",
+    documentation: "SECRET_FOREIGN_DOCS should never be inlined into the host.",
+  });
+  // The portal's HOST-side title is deliberately DISTINCT from the foreign
+  // project's title, so a non-disclosure assertion can check the foreign project
+  // title ("Foreign System") never appears for an unreadable reader without
+  // colliding with this host-owned node title.
+  const portal = await createEmbeddedComponent(testDb, actor, {
+    projectId: host.id,
+    embeddedProjectId: foreign.id,
+    title: "Portal To Foreign",
+  });
+  const edge = await connectCrossProject(testDb, actor, {
+    hostProjectId: host.id,
+    hostNodeId: hostNode.id,
+    referenceNodeId: portal.id,
+    foreignNodeId: foreignNode.id,
+    interaction: "REQUEST",
+  });
+
+  return { owner, actor, host, foreign, hostNode, foreignNode, portal, edge };
+}
+
+describe("exportMarkdown cross-project reference markers (#123)", () => {
+  it("emits a portal marker + a cross-project connection marker (foreign TITLE only, NOT inlined docs)", async () => {
+    const { actor, host, foreign } = await seedHostWithCrossProjectMarkers();
+
+    const { markdown } = await exportMarkdown(testDb, actor, {
+      slug: host.slug,
+      canvasNodeId: null,
+      mode: "full",
+    });
+
+    // Section + non-recursive markers present.
+    expect(markdown).toContain("## Cross-project references");
+    expect(markdown).toContain("### Embedded projects");
+    expect(markdown).toContain(
+      "Portal To Foreign → **Foreign System** _(embedded project, not expanded)_",
+    );
+    expect(markdown).toContain("### Cross-project connections");
+    expect(markdown).toContain(
+      "Host Component → [Foreign System] Foreign Endpoint _(reference, not expanded)_",
+    );
+
+    // CRITICAL: the foreign Component's DOCUMENTATION is never inlined — markers
+    // are references, not expansions (the per-actor firewall, ADR-0041/0044).
+    expect(markdown).not.toContain("SECRET_FOREIGN_DOCS");
+    // Foreign slug never on the export either — markers name foreign TITLE only.
+    expect(markdown).not.toContain(foreign.slug);
+  });
+
+  it("omits the cross-project markers entirely for an actor who cannot read the foreign project", async () => {
+    const { host, foreign } = await seedHostWithCrossProjectMarkers();
+    // Close the foreign project and export as a DIFFERENT actor who has host view
+    // (host stays guestAccess=VIEW by default) but no foreign grant.
+    await testDb.project.update({
+      where: { id: foreign.id },
+      data: { guestAccess: "NONE" },
+    });
+    const stranger = await testDb.user.create({ data: { name: "Stranger" } });
+    const strangerActor: Actor = { userId: stranger.id, via: "session" };
+
+    const { markdown } = await exportMarkdown(testDb, strangerActor, {
+      slug: host.slug,
+      canvasNodeId: null,
+      mode: "full",
+    });
+
+    // The host portal + cross edge exist, but the reader has no foreign grant, so
+    // the firewall drops every marker — the foreign title never reaches the wire.
+    expect(markdown).not.toContain("## Cross-project references");
+    expect(markdown).not.toContain("Foreign System");
+    expect(markdown).not.toContain("Foreign Endpoint");
+    expect(markdown).not.toContain("SECRET_FOREIGN_DOCS");
+  });
+
+  it("DOES emit cross-project markers for an anonymous export when the foreign is genuinely PUBLIC (guestAccess=VIEW)", async () => {
+    const { host, foreign } = await seedHostWithCrossProjectMarkers();
+    // Make the foreign project's public-readability explicit (it defaults to VIEW,
+    // but pin it so the positive direction can't be silenced by a default change).
+    await testDb.project.update({
+      where: { id: foreign.id },
+      data: { guestAccess: "VIEW" },
+    });
+
+    // Anonymous reader (actor null): a genuinely public foreign grants the guest
+    // read, so the firewall KEEPS the markers — the foreign title surfaces. This
+    // guards against a future over-tightening that silently drops ALL anonymous
+    // markers (the zero-marker tests cover only the security direction).
+    const { markdown } = await exportMarkdown(testDb, null, {
+      slug: host.slug,
+      canvasNodeId: null,
+      mode: "full",
+    });
+
+    expect(markdown).toContain("## Cross-project references");
+    expect(markdown).toContain(
+      "Portal To Foreign → **Foreign System** _(embedded project, not expanded)_",
+    );
+    expect(markdown).toContain(
+      "Host Component → [Foreign System] Foreign Endpoint _(reference, not expanded)_",
+    );
+    // Still a reference, never an expansion — foreign docs never inline.
+    expect(markdown).not.toContain("SECRET_FOREIGN_DOCS");
+  });
+
+  it("emits zero cross-project markers for an anonymous export when the foreign holds no guest grant", async () => {
+    const { host, foreign } = await seedHostWithCrossProjectMarkers();
+    // Close the foreign project: an anonymous reader holds no membership and no
+    // guest grant, so the firewall drops every cross-project marker (the headline
+    // non-disclosure invariant — same posture getCanvas takes).
+    await testDb.project.update({
+      where: { id: foreign.id },
+      data: { guestAccess: "NONE" },
+    });
+
+    const { markdown } = await exportMarkdown(testDb, null, {
+      slug: host.slug,
+      canvasNodeId: null,
+      mode: "full",
+    });
+
+    expect(markdown).not.toContain("## Cross-project references");
+    expect(markdown).not.toContain("Foreign Endpoint");
+    expect(markdown).not.toContain("SECRET_FOREIGN_DOCS");
   });
 });

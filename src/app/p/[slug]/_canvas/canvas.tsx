@@ -52,6 +52,7 @@ import {
 import {
   CanEditContext,
   ComponentNodeView,
+  CrossDescendComponentContext,
   DeleteComponentContext,
   DescendComponentContext,
   RenameComponentContext,
@@ -286,6 +287,10 @@ function toProxyRFNode(
       // so the node renders "From [Foreign Project]". Undefined for an ordinary
       // same-project cross-scope proxy.
       foreignProjectTitle: p.foreignProjectTitle,
+      // Cross-boundary "Go to" routing (#123): the portal to push onto `?via=` and
+      // the foreign scope to land on. Present only for a cross-project proxy.
+      referenceNodeId: p.referenceNodeId,
+      foreignParentScopeId: p.foreignParentScopeId,
     },
   };
 }
@@ -1306,6 +1311,12 @@ function CanvasInner({
         posX: null,
         posY: null,
         foreignProjectTitle: foreign.foreignProjectTitle,
+        // Cross-boundary "Go to" routing (#123): the portal is known up front; the
+        // foreign endpoint's parent scope is not (the palette carries no foreign
+        // parentId), so default to the foreign root — the next getCanvas refetch
+        // replaces this proxy with the server-resolved `foreignParentScopeId`.
+        referenceNodeId: foreign.referenceNodeId,
+        foreignParentScopeId: null,
       };
 
       setEdges((es) => addEdge(toRFEdge(optimisticEdge), es));
@@ -2381,6 +2392,38 @@ function CanvasInner({
     [utils, router, slug, embedPath, portalNodeIds],
   );
 
+  // Cross-boundary "Go to" (#123): a cross-project boundary proxy's real endpoint
+  // lives inside an embedded Project, so navigation must CROSS the boundary —
+  // push the host portal (`referenceNodeId`) onto the `?via=` crossing stack and
+  // land on the foreign endpoint's parent scope. The URL stays the HOST's slug
+  // (the foreign slug is never exposed — non-disclosure firewall); the crossing is
+  // re-gated server-side, so even a forged nav collapses to NotFound. When the
+  // foreign endpoint sits at the foreign ROOT (`foreignParentScopeId === null`)
+  // there is no `/n/` segment. Prefetch the target (philosophy #1).
+  const crossDescend = useCallback(
+    ({
+      referenceNodeId,
+      foreignParentScopeId,
+    }: {
+      referenceNodeId: string;
+      foreignParentScopeId: string | null;
+    }) => {
+      const nextVia = [...embedPath, referenceNodeId];
+      const href =
+        foreignParentScopeId === null
+          ? `/p/${slug}?via=${nextVia.join(",")}`
+          : `/p/${slug}/n/${foreignParentScopeId}?via=${nextVia.join(",")}`;
+      void utils.architecture.getCanvas.prefetch({
+        slug,
+        canvasNodeId: foreignParentScopeId,
+        embedPath: nextVia,
+      });
+      router.prefetch(href);
+      router.push(href);
+    },
+    [utils, router, slug, embedPath],
+  );
+
   // Resolve the selected Component once for the detail panel (owner-edit or
   // viewer-read), de-duping the kind/documentation lookups.
   const selectedNode =
@@ -2395,6 +2438,7 @@ function CanvasInner({
           <EdgeGroupContext.Provider value={edgeGroups}>
             <SelectEdgeContext.Provider value={selectEdge}>
               <DescendComponentContext.Provider value={descend}>
+                <CrossDescendComponentContext.Provider value={crossDescend}>
                 <DeleteComponentContext.Provider value={removeComponent}>
                   <CanEditContext.Provider value={effectiveCanEdit}>
                     <ReactFlow<CanvasRFNode, ConnectionEdge>
@@ -2642,6 +2686,7 @@ function CanvasInner({
                     </ReactFlow>
                   </CanEditContext.Provider>
                 </DeleteComponentContext.Provider>
+                </CrossDescendComponentContext.Provider>
               </DescendComponentContext.Provider>
             </SelectEdgeContext.Provider>
           </EdgeGroupContext.Provider>

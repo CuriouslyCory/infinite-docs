@@ -7,7 +7,10 @@ import { useContext } from "react";
 import { KIND_ICON } from "~/lib/node-kinds";
 import { type NodeKind } from "~/lib/schemas";
 
-import { DescendComponentContext } from "./component-node";
+import {
+  CrossDescendComponentContext,
+  DescendComponentContext,
+} from "./component-node";
 
 export type BoundaryProxyNodeData = {
   /** The off-scope Component this proxy stands in for (its title). Untrusted. */
@@ -29,6 +32,20 @@ export type BoundaryProxyNodeData = {
    * foreign Project.id is never on the wire (ADR-0041) — only its title. Untrusted.
    */
   foreignProjectTitle?: string;
+  /**
+   * Cross-boundary "Go to" routing for a CROSS-PROJECT proxy (#123). The host
+   * portal Node id the crossing routes THROUGH — pushed onto `?via=` so the URL
+   * stays the host's (the foreign slug is never exposed; non-disclosure firewall).
+   * Present only alongside `foreignProjectTitle`.
+   */
+  referenceNodeId?: string;
+  /**
+   * The foreign endpoint's own parent scope — the foreign Canvas the "Go to" lands
+   * on (#123). `null` = the foreign project root. An opaque foreign Node id, same
+   * disclosure class as `realEndpointId`; never a project id/slug. Present only for
+   * a cross-project proxy.
+   */
+  foreignParentScopeId?: string | null;
 };
 
 export type BoundaryProxyNode = Node<BoundaryProxyNodeData, "boundary-proxy">;
@@ -61,6 +78,12 @@ export type BoundaryProxyNode = Node<BoundaryProxyNodeData, "boundary-proxy">;
 export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
   const Icon = KIND_ICON[data.kind];
   const onDescend = useContext(DescendComponentContext);
+  const onCrossDescend = useContext(CrossDescendComponentContext);
+  // A cross-project proxy (foreign endpoint behind a portal) carries the routing
+  // ids #122/#123 emit; "Go to" must cross the boundary (push the portal onto
+  // `?via=`, land on the foreign scope) rather than the local same-project descent
+  // — which would 404 (the foreign node isn't in the host project).
+  const isCrossProject = data.referenceNodeId !== undefined;
 
   // The lineal/ingress case bears an ancestor's name on that ancestor's own
   // interior Canvas; lead with the relationship ("Inbound from …") so it never
@@ -125,6 +148,13 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
         className="nodrag shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-white focus-visible:opacity-100"
         onClick={(e) => {
           e.stopPropagation();
+          if (isCrossProject && data.referenceNodeId !== undefined) {
+            onCrossDescend({
+              referenceNodeId: data.referenceNodeId,
+              foreignParentScopeId: data.foreignParentScopeId ?? null,
+            });
+            return;
+          }
           onDescend(data.realEndpointId);
         }}
       >

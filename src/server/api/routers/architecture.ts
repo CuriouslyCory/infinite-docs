@@ -30,8 +30,10 @@ import {
 import {
   connectCrossProject,
   connectNodes,
+  deleteCrossProjectEdge,
   deleteEdge,
   listNodeConnections,
+  restoreCrossProjectEdge,
   restoreEdge,
   updateEdge,
   updateEdgeInteraction,
@@ -66,6 +68,8 @@ import {
   connectCrossProjectInput,
   connectNodesInput,
   createEmbeddedComponentInput,
+  deleteCrossProjectEdgeInput,
+  restoreCrossProjectEdgeInput,
   createInviteInput,
   createNodeInput,
   createProjectInput,
@@ -606,6 +610,36 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await connectCrossProject(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Write mutation (host `edit`+): remove a CROSS-PROJECT Connection via a lone
+  // soft-delete (#123). Host-anchored — only the host's `edit` capability gates
+  // it, never the foreign grant (enforced in the service; ADR-0001/0040).
+  deleteCrossProjectEdge: protectedProcedure
+    .input(deleteCrossProjectEdgeInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await deleteCrossProjectEdge(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Write mutation (host `edit`+): restore a soft-deleted CROSS-PROJECT
+  // Connection (#123). Wrapped in $transaction so the de-dupe pre-check and the
+  // revival commit atomically; host-anchored, the foreign is never re-gated.
+  restoreCrossProjectEdge: protectedProcedure
+    .input(restoreCrossProjectEdgeInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await ctx.db.$transaction((tx) =>
+          restoreCrossProjectEdge(tx, actor, input),
+        );
       } catch (error) {
         throw toTRPCError(error);
       }

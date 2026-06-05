@@ -97,6 +97,40 @@ export interface SerializerBoundaryEdge {
   farKind: PrismaNodeKind;
 }
 
+/**
+ * A NON-RECURSIVE reference marker for a Project Portal in the exported scope
+ * (#123 / ADR-0044). The portal's interior is NEVER expanded — inlining the
+ * embedded Project's content would bypass the per-actor read firewall (ADR-0041),
+ * so the export only acknowledges the portal exists and names the foreign Project
+ * by its TITLE. The foreign Project's id/slug NEVER appear. `foreignProjectTitle`
+ * is already per-actor re-gated + resolved in `export.service.ts` (the pure
+ * serializer resolves no foreign content). `hostNodeId` is the host portal Node id
+ * (used only as a stable sort key, never rendered as an anchor into the foreign
+ * namespace).
+ */
+export interface SerializerPortalMarker {
+  hostNodeId: string;
+  hostTitle: string;
+  foreignProjectTitle: string;
+}
+
+/**
+ * A NON-RECURSIVE reference marker for a cross-project Connection incident to the
+ * exported scope (#123 / ADR-0044). Like a portal marker, the foreign endpoint is
+ * NEVER expanded — only the host Component, the foreign Project TITLE, the foreign
+ * endpoint's TITLE, and the interaction are emitted (a "reference, not expanded").
+ * No foreign id/slug, no `{#anchor}` into the host namespace. All foreign fields
+ * are already per-actor re-gated + resolved in `export.service.ts`.
+ */
+export interface SerializerCrossProjectMarker {
+  hostNodeId: string;
+  hostTitle: string;
+  foreignProjectTitle: string;
+  foreignEndpointTitle: string;
+  interaction: Interaction;
+  label: string | null;
+}
+
 export type SerializerMode = "full" | "index";
 
 /**
@@ -141,6 +175,13 @@ export interface SerializerInput {
   edges: SerializerEdge[];
   boundaryEdges: SerializerBoundaryEdge[];
   mode: SerializerMode;
+  // NON-RECURSIVE cross-project reference markers (#123 / ADR-0044). Already
+  // per-actor re-gated + resolved upstream (foreign content is never resolved in
+  // this pure module). Optional + defaulting to empty so the existing fixtures
+  // stay byte-untouched when a scope has no portals / cross-project edges, and so
+  // an anonymous export (actor null → no foreign grant) emits zero markers.
+  portalMarkers?: SerializerPortalMarker[];
+  crossProjectMarkers?: SerializerCrossProjectMarker[];
 }
 
 // User-facing kind labels (CONTEXT.md "Component kind"). The enum identifiers
@@ -365,6 +406,63 @@ function renderBoundary(input: SerializerInput): string {
   return lines.join("\n");
 }
 
+/**
+ * Renders the NON-RECURSIVE cross-project reference section (#123 / ADR-0044):
+ * Project Portals + cross-project Connections in the exported scope, named by
+ * foreign TITLE only and explicitly marked "not expanded". The foreign id/slug
+ * never appears and no foreign documentation is ever inlined — the whole point is
+ * to acknowledge the reference without crossing the per-actor read firewall.
+ *
+ * Two ordering passes, both via the codepoint `cmp` on host-STABLE keys (never
+ * `Set`/`Map` iteration order): portals by `(hostNodeId, foreignProjectTitle)`;
+ * cross-project edges by `(hostNodeId, foreignProjectTitle, foreignEndpointTitle,
+ * interaction)`. The host node id leads so the order is anchored to host-side
+ * identity the export owner can read, never to foreign content.
+ */
+function renderCrossProjectReferences(input: SerializerInput): string {
+  const portals = input.portalMarkers ?? [];
+  const crossEdges = input.crossProjectMarkers ?? [];
+  if (portals.length === 0 && crossEdges.length === 0) return "";
+
+  const lines = ["## Cross-project references", ""];
+
+  if (portals.length > 0) {
+    const sortedPortals = [...portals].sort(
+      (a, b) =>
+        cmp(a.hostNodeId, b.hostNodeId) ||
+        cmp(a.foreignProjectTitle, b.foreignProjectTitle),
+    );
+    lines.push("### Embedded projects", "");
+    for (const p of sortedPortals) {
+      lines.push(
+        `- ${p.hostTitle} → **${p.foreignProjectTitle}** _(embedded project, not expanded)_`,
+      );
+    }
+    lines.push("");
+  }
+
+  if (crossEdges.length > 0) {
+    const sortedEdges = [...crossEdges].sort(
+      (a, b) =>
+        cmp(a.hostNodeId, b.hostNodeId) ||
+        cmp(a.foreignProjectTitle, b.foreignProjectTitle) ||
+        cmp(a.foreignEndpointTitle, b.foreignEndpointTitle) ||
+        cmp(a.interaction, b.interaction),
+    );
+    lines.push("### Cross-project connections", "");
+    for (const e of sortedEdges) {
+      const glyph = interactionGlyph(e.interaction);
+      const labelPart = e.label ? ` · ${e.label}` : "";
+      lines.push(
+        `- ${e.hostTitle} ${glyph} [${e.foreignProjectTitle}] ${e.foreignEndpointTitle}${labelPart} _(reference, not expanded)_`,
+      );
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
 function renderComponentsFull(
   input: SerializerInput,
   paths: Map<string, { titles: string[]; depth: number }>,
@@ -464,6 +562,12 @@ export function serializeGraph(input: SerializerInput): string {
   parts.push(renderHeader(input));
   const boundary = renderBoundary(input);
   if (boundary.length > 0) parts.push(boundary);
+  // Cross-project reference markers (#123 / ADR-0044): non-recursive, foreign
+  // TITLE only, never inlined content. Additive — empty for a scope with no
+  // portals/cross-edges (and for an anonymous export), so existing fixtures stay
+  // byte-untouched.
+  const crossProject = renderCrossProjectReferences(input);
+  if (crossProject.length > 0) parts.push(crossProject);
   parts.push(
     input.mode === "index"
       ? renderComponentsIndex(input, paths)
