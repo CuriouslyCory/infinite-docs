@@ -5,7 +5,7 @@ import {
 
 import type { Db } from "~/server/architecture/actor";
 import { exportMarkdownForActor } from "~/server/architecture/export.service";
-import { listProjects } from "~/server/architecture/project.service";
+import { listProjectsForActor } from "~/server/architecture/project.service";
 import { getTraceMarkdownForActor } from "~/server/architecture/trace.service";
 import { actorFromAuthInfo } from "./auth";
 import {
@@ -20,11 +20,13 @@ import { toMcpReadError } from "./errors";
  * Registers the read resources (from the {@link READ_RESOURCES} catalog) on a
  * per-request `McpServer`. The db handle is closed over; the Actor is read from
  * each request's `extra.authInfo` (resolved by `withMcpAuth`). `resources/list`
- * enumerates ONLY the calling Actor's projects by reusing the already-owner-
- * scoped `listProjects` — the isolation invariant holds because the enumeration
- * cannot return another user's rows. Each read re-authorizes through
- * `exportMarkdownForActor` (defense in depth); any failure maps to a
- * non-disclosing MCP error.
+ * enumerates the calling Actor's owner-or-member projects via
+ * `listProjectsForActor` (#109) — the isolation invariant holds because every
+ * returned row is bound to `actor.userId` (owner identity or a userId-keyed
+ * membership), so no other user's rows can appear, and `guestAccess` is never
+ * consulted (the token path never exposes the public guest grant). Each read
+ * re-authorizes through `exportMarkdownForActor` (defense in depth); any failure
+ * maps to a non-disclosing MCP error.
  */
 export function registerArchitectureResources(server: McpServer, db: Db): void {
   for (const descriptor of READ_RESOURCES) {
@@ -34,7 +36,7 @@ export function registerArchitectureResources(server: McpServer, db: Db): void {
         list: descriptor.enumerateProjects
           ? async (extra) => {
               const actor = actorFromAuthInfo(extra.authInfo);
-              const projects = await listProjects(db, actor);
+              const projects = await listProjectsForActor(db, actor);
               return {
                 resources: projects.map((project) => ({
                   uri: `${RESOURCE_SCHEME}://${descriptor.name}/${project.id}`,

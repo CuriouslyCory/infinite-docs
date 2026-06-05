@@ -489,20 +489,21 @@ path does not pass through that guard. _(See ADR-0001 and ADR-0003.)_
 
 ### access (module)
 
-The single home, inside the service layer, for authorization predicates. Exposes
-`assertCanRead` (owner **or** valid capability-slug) and `assertCanWrite` (owner only). Every
-service function routes its authorization decision through this module so the policy lives in
-exactly one place. Its `OwnedResource { ownerId }` shape is **structural**, not Project-coupled —
-it authorizes over any row whose owning identity is `ownerId`/`userId` (an **API token**'s
-`userId` feeds it directly), so adding an owned resource type needs no new predicate. Layered
-atop these owner-only predicates is the **capability ladder** (ADR-0040): `resolveCapability`
-(pure, in `access.ts`) resolves a caller's effective rank on `none < view < edit < admin < owner`
-from owner identity, **Member**ship **Role**, and **guest access**, and `requireCapability(cap, min)`
-gates it. The DB-aware read/write seams live in `access-db.ts`: reads gate on _view_ (a denial
-maps to _not-found_, never forbidden — non-disclosure); writes gate on _edit_/_admin_/_owner_ (a
-denial is _forbidden_). The owner-only `assertCanRead`/`assertCanWrite` are retained for the
-bearer-token **MCP** read paths and **API token** management, which stay owner-only in this slice.
-_(See ADR-0001, ADR-0002, ADR-0040.)_
+The single home, inside the service layer, for authorization predicates. Its core is the
+**capability ladder** (ADR-0040): `resolveCapability` (pure, in `access.ts`) resolves a caller's
+effective rank on `none < view < edit < admin < owner` from owner identity, **Member**ship
+**Role**, and **guest access**, and `requireCapability(cap, min)` gates it. Every service function
+routes its authorization decision through this module so the policy lives in exactly one place. The
+DB-aware read/write seams live in `access-db.ts`: reads gate on _view_ (a denial maps to
+_not-found_, never forbidden — non-disclosure); writes gate on _edit_/_admin_/_owner_ (a denial is
+_forbidden_). As of #109 the **MCP** read paths resolve through this same ladder too (owner **or**
+member, `guestAccess` forced **NONE** so a token never inherits the public guest grant) — there is
+one read-authz spine, not two. The only owner-only predicate that remains is `assertCanWrite`,
+retained solely for **API token** management (a token is a personal credential minted/listed/revoked
+by its owner alone, not a project resource on the ladder); its `OwnedResource { ownerId }` shape is
+**structural**, not Project-coupled — it authorizes over any row whose owning identity is
+`ownerId`/`userId` (an **API token**'s `userId` feeds it directly). _(See ADR-0001, ADR-0002,
+ADR-0022, ADR-0040.)_
 
 ### Member
 
@@ -662,11 +663,13 @@ A read-addressable unit an **agent** dereferences over the **MCP path**, returni
 deterministic **markdown**. The three — **`index`**, **`project`**, **`subtree`** — are the
 MCP-addressable face of **Markdown export**'s three modes, **not a new data vocabulary** (the same
 map, addressed by URI). Addressed under the `architecture://` scheme by internal `projectId` (and a
-`nodeId` for `subtree`) — **never by a user id**; an Actor reads only its own projects, and
-`resources/list` enumerates only those (reusing the owner-scoped `listProjects`). The word is
+`nodeId` for `subtree`) — **never by a user id**; an Actor reads the projects it owns **or is a
+member of** (member parity #109; `guestAccess` is never consulted on the token path), and
+`resources/list` enumerates exactly those via the member-aware `listProjectsForActor` (the
+owner-only web `listProjects` is deliberately left untouched). The word is
 **resource** — the MCP-spec native term, so no Component/Node split applies (the overload that
 motivates the split is absent). Never "tool" (a **tool** invokes or mutates — see **MCP tool**),
-"endpoint" (that names the route), or "query". A fourth read resource — **`trace`** (`architecture://trace/{traceId}`, #60) — reads one **saved Trace** as deterministic markdown of its cross-layer on-path subgraph; unlike the project-scoped three it is addressed by internal `traceId` and backed by a dedicated owner-gated service, but shares the same token gate, single-401, and non-disclosing not-found. _(Realized now via #18; the trace resource via #60. See ADR-0017, ADR-0022.)_
+"endpoint" (that names the route), or "query". A fourth read resource — **`trace`** (`architecture://trace/{traceId}`, #60) — reads one **saved Trace** as deterministic markdown of its cross-layer on-path subgraph; unlike the project-scoped three it is addressed by internal `traceId` and backed by a dedicated member-gated service (owner or member, ADR-0040 #109), but shares the same token gate, single-401, and non-disclosing not-found. _(Realized now via #18; the trace resource via #60. See ADR-0017, ADR-0022.)_
 
 ### MCP tool
 
@@ -895,8 +898,8 @@ spec→Component generator in #64. See ADR-0011, ADR-0025.)_
 
 The byte-stable serialization of a **Project** — or one of its subtrees — to markdown for human
 "Copy as markdown" use and the **MCP resources** (realized now via #18). Slug-readable on the web
-path (ADR-0002, the same posture **getCanvas** uses) and owner-gated on the MCP path (ADR-0022),
-with three modes:
+path (ADR-0002, the same posture **getCanvas** uses) and member-gated on the MCP path (owner or
+member, `view` on the capability ladder; ADR-0022 / ADR-0040 #109), with three modes:
 
 - **Full project** (`canvasNodeId: null`, `mode: "full"`) — every **Component** in the Project,
   authored documentation included (heading-shifted), plus a **Connections** section.
@@ -929,8 +932,8 @@ nested Components — `kind` is cosmetic, provenance never appears in the output
 anchors stay stable across re-parse because `parseSpecDiff` preserves `Node.id` on matched `specKey`
 rows. _(Realized now via two owner-resolving front doors over one shared fetch core
 (`serializeProjectScope`) in `src/server/architecture/export.service.ts` — `exportMarkdown(db,
-actor, input)` (slug-readable, web) and `exportMarkdownForActor(db, actor, input)` (owner-gated by
-`projectId`, the MCP read path #18 / ADR-0022) — both depth-independent, honouring the
+actor, input)` (slug-readable, web) and `exportMarkdownForActor(db, actor, input)` (member-gated by
+`projectId` via the capability ladder, the MCP read path #18 / ADR-0022 / #109) — both depth-independent, honouring the
 single-round-trip posture (ADR-0001), and both delegating to the pure `serializeGraph` in
 `src/server/architecture/markdown.ts`. The typed cross-scope rewrite landed at #67 (which amends
 ADR-0017): each Connection serializes exactly once with its `interaction` glyph, deterministically
@@ -942,7 +945,7 @@ breadcrumb-bar scope-anchored copy ship the client-side surface. See ADR-0017.)_
 
 ### Trace
 
-A user-marked path query across the architecture graph: pick two or more **Components** as **trace points**, and Trace shows every Component and **Connection** lying on a path between them, expanded across all layers at once. Trace answers "how do these parts of the system reach each other?" without manually descending each **Canvas**. It is a **derived view over a point set** — the marks persist, the on-path subgraph is recomputed on read by `getTraceView` over the unified undirected (Connection ∪ nesting) graph (ADR-0034). The working selection is the **working trace**; viewing it is the **Trace view**. The word is **Trace** (capitalized as a feature noun) — never "path", "route" (collides with the Project route / the retired FlowRoute), or "trail" (collides with the breadcrumb trail). _(Marking **trace points** into a client-side **working trace** with canvas feedback and the working-set manager, the cross-layer derivation/nested render, AND named/**saved Traces** (#59 — save/list/load/share via the saved route) are realized now; the MCP trace resource + serializer trace mode (#60) are realized now too — a saved Trace reads as deterministic markdown at `architecture://trace/{traceId}`, owner-gated.)_
+A user-marked path query across the architecture graph: pick two or more **Components** as **trace points**, and Trace shows every Component and **Connection** lying on a path between them, expanded across all layers at once. Trace answers "how do these parts of the system reach each other?" without manually descending each **Canvas**. It is a **derived view over a point set** — the marks persist, the on-path subgraph is recomputed on read by `getTraceView` over the unified undirected (Connection ∪ nesting) graph (ADR-0034). The working selection is the **working trace**; viewing it is the **Trace view**. The word is **Trace** (capitalized as a feature noun) — never "path", "route" (collides with the Project route / the retired FlowRoute), or "trail" (collides with the breadcrumb trail). _(Marking **trace points** into a client-side **working trace** with canvas feedback and the working-set manager, the cross-layer derivation/nested render, AND named/**saved Traces** (#59 — save/list/load/share via the saved route) are realized now; the MCP trace resource + serializer trace mode (#60) are realized now too — a saved Trace reads as deterministic markdown at `architecture://trace/{traceId}`, member-gated (owner or member, #109).)_
 
 ### Trace point
 
@@ -954,11 +957,11 @@ The **unsaved, client-side set of trace points** a user is currently assembling 
 
 ### Trace view
 
-The route that opens a **Trace** — reached from the always-enabled header **Trace** button, riding the Project **capability slug** so any slug-holder (owner or **viewer**) can open it (ADR-0002). With two or more **trace points** it renders the cross-layer **Trace subgraph** — the derived union, over every pair of **trace points**, of every **Component** and **Connection** on some path between that pair (plus each Component's nesting ancestors), computed read-only by `getTraceView` and capped at 500 Components — as a dagre-auto-laid-out nested-box React Flow island, every involved layer visible at once and **read-only for everyone** (even the owner): no drag, no connect, no edit; clicking a Component opens its read-only detail with a "Go to canvas" jump to its real layer (ADR-0034). Below the threshold it renders the **working-set manager** — the current **working trace** listed with per-point remove and a clear-all, plus the "add 2+ points to see the graph" empty state. The word is **Trace view** — never "trace page", "trace panel", or "trace canvas" (it is not an editable **Canvas**). It also hosts the **Saved Traces** panel (#59): the owner can save the working trace as a named Trace and rename/delete saved ones; every reader can list and load them. _(Realized now at `/p/[slug]/trace`: the working-set manager / empty state, the cross-layer derivation + nested render, AND the Saved Traces panel + the saved route `/p/[slug]/trace/[traceId]` (#59); the MCP/serializer trace projection (#60) is realized now — the owner-gated `architecture://trace/{traceId}` resource serializing a saved Trace's on-path subgraph.)_
+The route that opens a **Trace** — reached from the always-enabled header **Trace** button, riding the Project **capability slug** so any slug-holder (owner or **viewer**) can open it (ADR-0002). With two or more **trace points** it renders the cross-layer **Trace subgraph** — the derived union, over every pair of **trace points**, of every **Component** and **Connection** on some path between that pair (plus each Component's nesting ancestors), computed read-only by `getTraceView` and capped at 500 Components — as a dagre-auto-laid-out nested-box React Flow island, every involved layer visible at once and **read-only for everyone** (even the owner): no drag, no connect, no edit; clicking a Component opens its read-only detail with a "Go to canvas" jump to its real layer (ADR-0034). Below the threshold it renders the **working-set manager** — the current **working trace** listed with per-point remove and a clear-all, plus the "add 2+ points to see the graph" empty state. The word is **Trace view** — never "trace page", "trace panel", or "trace canvas" (it is not an editable **Canvas**). It also hosts the **Saved Traces** panel (#59): the owner can save the working trace as a named Trace and rename/delete saved ones; every reader can list and load them. _(Realized now at `/p/[slug]/trace`: the working-set manager / empty state, the cross-layer derivation + nested render, AND the Saved Traces panel + the saved route `/p/[slug]/trace/[traceId]` (#59); the MCP/serializer trace projection (#60) is realized now — the member-gated `architecture://trace/{traceId}` resource serializing a saved Trace's on-path subgraph (owner or member, #109).)_
 
 ### Saved Trace
 
-A named, persisted **Trace** — a stored set of **trace points** over a Project, owned by the Project and addressed at `/p/[slug]/trace/[traceId]`. Distinct from the **working trace** (the unsaved, per-browser `localStorage` set): a saved Trace lives in the database (`Trace` + `TracePoint` rows), is shareable by the project **capability slug** (any slug-holder reads; only the owner saves/renames/deletes — ADR-0002), and is soft-deletable + undoable as one `deletionId` batch (ADR-0030). Only the POINT SET persists; the on-path subgraph is recomputed on read by `getTraceView` (derived, like **Canvas**; ADR-0034). Loading a saved Trace REPLACES the working trace with its points (with an undo toast if unsaved points are discarded). The word is **saved Trace** (or **named Trace**) — distinct from **working trace**; never "trace template" or "stored path". _(Realized now via #59; ADR-0035. The MCP trace resource that reads a saved Trace — owner-gated `architecture://trace/{traceId}`, deterministic markdown — is realized now via #60.)_
+A named, persisted **Trace** — a stored set of **trace points** over a Project, owned by the Project and addressed at `/p/[slug]/trace/[traceId]`. Distinct from the **working trace** (the unsaved, per-browser `localStorage` set): a saved Trace lives in the database (`Trace` + `TracePoint` rows), is shareable by the project **capability slug** (any slug-holder reads; only the owner saves/renames/deletes — ADR-0002), and is soft-deletable + undoable as one `deletionId` batch (ADR-0030). Only the POINT SET persists; the on-path subgraph is recomputed on read by `getTraceView` (derived, like **Canvas**; ADR-0034). Loading a saved Trace REPLACES the working trace with its points (with an undo toast if unsaved points are discarded). The word is **saved Trace** (or **named Trace**) — distinct from **working trace**; never "trace template" or "stored path". _(Realized now via #59; ADR-0035. The MCP trace resource that reads a saved Trace — member-gated `architecture://trace/{traceId}` (owner or member, #109), deterministic markdown — is realized now via #60.)_
 
 ## Standing notes
 

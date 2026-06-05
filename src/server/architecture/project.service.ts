@@ -71,6 +71,35 @@ export async function listProjects(db: Db, actor: Actor): Promise<Project[]> {
 }
 
 /**
+ * Lists every (non-deleted) Project the actor can reach as owner OR member —
+ * the discovery surface for the bearer-token MCP `resources/list` (#109). Unlike
+ * the owner-only {@link listProjects} the web dashboard uses (whose per-card
+ * delete is owner-gated), this includes projects where the actor holds a
+ * membership row, so a member's owned + shared projects both enumerate. Member-
+ * or-owner only: `guestAccess` is NOT consulted — the token path never exposes
+ * the public guest grant, so enumeration equals the member-aware read grant
+ * (mirrors `exportMarkdownForActor`/`getTraceMarkdownForActor`, ADR-0040 #109).
+ *
+ * `@@unique([projectId, userId])` on `ProjectMembership` means at most one
+ * membership row per actor, so the `some` filter cannot duplicate a project.
+ */
+export async function listProjectsForActor(
+  db: Db,
+  actor: Actor,
+): Promise<Project[]> {
+  return db.project.findMany({
+    where: {
+      deletedAt: null,
+      OR: [
+        { ownerId: actor.userId },
+        { memberships: { some: { userId: actor.userId } } },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+/**
  * Fetches a Project by its capability-URL slug, gated on `view` (ADR-0040). For a
  * `guestAccess=VIEW` project (the default) any holder of the slug — anonymous or
  * not — resolves `view`, exactly as ADR-0002 specified; a `guestAccess=NONE`

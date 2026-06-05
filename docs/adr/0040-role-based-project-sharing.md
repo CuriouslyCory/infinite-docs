@@ -197,14 +197,42 @@ Forbidden). `getCanvas` gates once at the slug→project bind — authorization 
 that single gate covers every descent scope, every breadcrumb ancestor, and every boundary proxy
 (all interior to the same Project; ADR-0031), with no per-node authz.
 
-### The MCP read path stays owner-only in this slice
+### The MCP read path: owner-only in #104, member-aware as of #109
 
-The bearer-token MCP read paths (`exportMarkdownForActor`, `getTraceMarkdownForActor`) are
-deliberately **NOT** routed through the capability ladder here. They keep their owner-only
-`assertCanRead` (ADR-0022): a token actor reads only its own projects, never via the public guest
-grant and not (yet) via membership. This keeps #104 behavior-identical for MCP. Member parity on
-the MCP surface is a later slice (#109). API-token management (`token.service`) likewise stays
-owner-only.
+**Superseded by #109 (the final slice of this epic).** #104 deliberately kept the bearer-token MCP
+read paths (`exportMarkdownForActor`, `getTraceMarkdownForActor`) OFF the capability ladder — they
+used an owner-only `assertCanRead`, so a token actor read only its own projects. #109 lifts that
+exception: both read services now resolve through the **one** `resolveCapability` and gate on
+`view`, so a token actor reads every project it **owns or is a member of**. `assertCanRead` is
+deleted — there is one read-authz spine, not two.
+
+Four pins make this safe and coherent (#109):
+
+1. **`guestAccess` is forced to `NONE` on the token path.** A token is a userId-identified
+   credential, never the anonymous slug-holder the guest grant was defined for, so it must NOT read
+   a `guestAccess=VIEW` project it is not a member of. Both read services pass
+   `resolveCapability(actor, { ownerId, guestAccess: "NONE" }, membership)`. This bounds a leaked
+   token's blast radius to the minting user's own + member projects — without this, since `VIEW` is
+   the default, a leaked token would be a near-universal read key.
+2. **Enumeration equals the read grant.** `resources/list` enumerates owner-or-member projects via
+   the new `listProjectsForActor` (the owner-only web `listProjects` is deliberately left untouched
+   so the dashboard's owner-gated per-card delete button stays coherent). A token reads exactly what
+   it can enumerate — no invisible, un-discoverable read surface.
+3. **Deny → `NotFoundError` (non-disclosure).** A non-member (and a guest-VIEW non-member, per pin 1)
+   resolves `none`; the read service maps that directly to not-found, indistinguishable from a
+   missing project, matching the slug read seams. The MCP adapter would collapse Forbidden/NotFound
+   anyway, but the service contract is now consistently "not authorized == not found."
+4. **Writes were already member-gated since #104; #109 is read-only.** Every MCP write tool routes
+   through an `authorizeProjectWrite(…, "edit")`-gated service, so a VIEWER token is already blocked
+   and an EDITOR+/ADMIN/owner token already passes — the pre-#109 write surface was actually
+   _broader_ than its owner-only read surface, an incoherence #109 removes by lifting reads to match.
+   **Invariant going forward:** any new MCP write tool MUST route through a `authorizeProjectWrite`-
+   gated service, never the raw DB client.
+
+API-token MANAGEMENT (`token.service`) is the one surface that stays owner-only — a token is a
+personal credential (minted/listed/revoked by its owner alone), not a project resource on the
+ladder. It is the sole remaining caller of the owner-only `assertCanWrite` predicate; that is
+deliberate, not an oversight.
 
 ### Reaffirming ADR-0021: ranks are enforced, scopes are not
 
@@ -213,7 +241,9 @@ of **API token scopes**. `Role`/guest-access ranks _are_ enforced at the `access
 their whole purpose. **Token scopes remain stored-not-enforced** (ADR-0021): authorization still
 derives from `userId` (now: the userId's effective capability on the Project), and `actor.scopes`
 still never decides an outcome. An Actor minted from a token (`via: "token"`, ADR-0022) is
-authorized exactly as the minting user would be, and its `scopes` array is still inert. Roles
+authorized exactly as the minting user would be, and its `scopes` array is still inert. As of #109
+this holds for MCP **reads** too: the read services use the identical userId→capability resolver as
+the web, so there is one scope-free authz spine across both transports. Roles
 answer "what may this _user_ do on this _Project_"; scopes remain a stored label on the token that
 answers nothing yet. `ProjectRole` and token `scopes` are two different axes; the "never roles"
 synonym-rejection in the Token-scopes glossary entry refers to scopes, not to `ProjectRole`.

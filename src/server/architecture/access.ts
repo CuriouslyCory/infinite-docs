@@ -107,14 +107,13 @@ interface OwnedResource {
 }
 
 /**
- * The OWNER-ONLY predicates, retained for the surfaces the capability ladder
- * deliberately does NOT touch in this slice (ADR-0040, invariant): the
- * bearer-token MCP read paths (`exportMarkdownForActor`,
- * `getTraceMarkdownForActor`) and API-token management (`token.service`). They
- * treat `guestAccess` as if it were `NONE` and never consult membership — a
- * token actor is authorized exactly as the owner, never via the public guest
- * grant nor (yet) via membership (member parity on MCP is #109). Web/slug reads
- * use the capability ladder instead; these two are the owner-gated exceptions.
+ * The one OWNER-ONLY predicate that remains, retained for the single surface the
+ * capability ladder deliberately does NOT touch: API-token MANAGEMENT
+ * (`token.service`). A token is a personal credential — minted, listed, and
+ * revoked by its owner alone — not a project resource shared on the ladder, so
+ * `guestAccess` and membership are intentionally never consulted here. Every
+ * other surface (web/slug reads, MCP reads since #109, and all writes) resolves
+ * through {@link resolveCapability} — there is one authz spine, not two (ADR-0040).
  *
  * Owner-only write: throws {@link ForbiddenError} on deny.
  */
@@ -122,21 +121,4 @@ export function assertCanWrite(actor: Actor, resource: OwnedResource): void {
   if (actor.userId !== resource.ownerId) {
     throw new ForbiddenError();
   }
-}
-
-/**
- * Owner-only read for the bearer-token MCP path: the owner may read; everyone
- * else is denied with {@link ForbiddenError} (the MCP adapter collapses both
- * not-found and forbidden to one non-disclosing "not found", ADR-0002/0022). The
- * `viaCapabilitySlug` escape hatch is retained but unused on these paths — the
- * token path never presents a slug, so it can never reach the guest grant.
- */
-export function assertCanRead(
-  actor: Actor | null,
-  resource: OwnedResource,
-  opts?: { viaCapabilitySlug?: boolean },
-): void {
-  if (opts?.viaCapabilitySlug) return;
-  if (actor?.userId === resource.ownerId) return;
-  throw new ForbiddenError();
 }

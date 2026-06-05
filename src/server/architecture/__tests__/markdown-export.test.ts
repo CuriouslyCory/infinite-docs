@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { type Actor } from "../actor";
-import { ForbiddenError, NotFoundError } from "../errors";
+import { NotFoundError } from "../errors";
 import { exportMarkdown } from "../export.service";
 import {
   serializeGraph,
@@ -747,10 +747,10 @@ describe("exportMarkdown (service, real DB)", () => {
 });
 
 /**
- * Integration: the owner-gated MCP Trace read (#60). Seeds a user + project +
- * nodes + edges + a saved Trace with two cross-layer trace points (direct
- * inserts, fixed ids — ADR-0003) and asserts the owner-scoping + non-disclosure
- * posture end-to-end, plus the degenerate empty state.
+ * Integration: the member-aware MCP Trace read (#60, member parity #109). Seeds
+ * a user + project + nodes + edges + a saved Trace with two cross-layer trace
+ * points (direct inserts, fixed ids — ADR-0003) and asserts the owner-or-member
+ * scoping + non-disclosure posture end-to-end, plus the degenerate empty state.
  */
 async function seedTrace(ownerId: string): Promise<{
   traceId: string;
@@ -827,7 +827,9 @@ describe("getTraceMarkdownForActor (service, real DB)", () => {
     );
   });
 
-  it("forbids reading a Trace in another user's project (headline cross-owner test)", async () => {
+  // Deny → NotFoundError (non-disclosure): a non-member token cannot tell a
+  // Trace it may not read from one that does not exist (ADR-0002/0040, #109).
+  it("reports a Trace in another user's project as not-found (headline cross-owner test)", async () => {
     const owner = await testDb.user.create({ data: { name: "Owner" } });
     const intruder = await testDb.user.create({ data: { name: "Intruder" } });
     const { traceId } = await seedTrace(owner.id);
@@ -838,7 +840,64 @@ describe("getTraceMarkdownForActor (service, real DB)", () => {
         { userId: intruder.id, via: "token" },
         { traceId },
       ),
-    ).rejects.toBeInstanceOf(ForbiddenError);
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  // Member parity (#109): an EDITOR member of the Trace's project reads it.
+  it("renders a Trace for an EDITOR member of the project", async () => {
+    const owner = await testDb.user.create({ data: { name: "Owner" } });
+    const member = await testDb.user.create({ data: { name: "Member" } });
+    const { traceId } = await seedTrace(owner.id);
+    await testDb.projectMembership.create({
+      data: { projectId: "p-trace", userId: member.id, role: "EDITOR" },
+    });
+
+    const { markdown } = await getTraceMarkdownForActor(
+      testDb,
+      { userId: member.id, via: "token" },
+      { traceId },
+    );
+
+    expect(markdown).toContain("# Test System — Trace: Auth → DB");
+  });
+
+  // A VIEWER member reads too — a Trace read needs only `view`.
+  it("renders a Trace for a VIEWER member of the project", async () => {
+    const owner = await testDb.user.create({ data: { name: "Owner" } });
+    const member = await testDb.user.create({ data: { name: "Member" } });
+    const { traceId } = await seedTrace(owner.id);
+    await testDb.projectMembership.create({
+      data: { projectId: "p-trace", userId: member.id, role: "VIEWER" },
+    });
+
+    const { markdown } = await getTraceMarkdownForActor(
+      testDb,
+      { userId: member.id, via: "token" },
+      { traceId },
+    );
+
+    expect(markdown).toContain("# Test System — Trace: Auth → DB");
+  });
+
+  // Q1 pin: `guestAccess=VIEW` does NOT grant a non-member token actor — the
+  // token path forces `guestAccess` to NONE, so a public-readable project's
+  // Trace is still not-found to a stranger token (#109).
+  it("does NOT grant a non-member token actor a Trace via guestAccess=VIEW", async () => {
+    const owner = await testDb.user.create({ data: { name: "Owner" } });
+    const intruder = await testDb.user.create({ data: { name: "Intruder" } });
+    const { traceId } = await seedTrace(owner.id);
+    await testDb.project.update({
+      where: { id: "p-trace" },
+      data: { guestAccess: "VIEW" },
+    });
+
+    await expect(
+      getTraceMarkdownForActor(
+        testDb,
+        { userId: intruder.id, via: "token" },
+        { traceId },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 
   it("reports a soft-deleted Trace as not-found", async () => {
