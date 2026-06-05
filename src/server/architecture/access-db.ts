@@ -151,6 +151,66 @@ export async function resolveReadableProject(
 }
 
 /**
+ * Id-keyed READ seam (#119): resolve a Project by its internal id, pull
+ * `guestAccess` + the actor's membership (one round trip, skipped for anon), and
+ * resolve the capability. Throws `NotFoundError` when the id resolves nothing OR
+ * when the resolved capability is below `view`.
+ *
+ * The non-disclosure mapping (`none → NotFoundError`, NOT `ForbiddenError`) is the
+ * WHOLE point of this seam and the reason it cannot reuse the id-keyed WRITE seam
+ * {@link authorizeProjectWrite}: a Project Portal re-gates the descending actor's
+ * capability against the EMBEDDED project's id, which the host's owner planted and
+ * any reader of the host could replay through `?via=`. The id here is therefore an
+ * untrusted, replayable handle exactly like the read slug — so a denial must look
+ * identical to a missing project (a `guestAccess=NONE` foreign project is
+ * indistinguishable from a deleted one), or the portal would oracle the existence
+ * (and read-access shape) of projects the actor cannot read. It honors the target's
+ * own `guestAccess` (mirror, not force-NONE) so a `guestAccess=VIEW` embedded
+ * project is descendable by anyone who can reach the host, exactly as the slug seam
+ * grants a public read. Filters `deletedAt: null`. See ADR-0040's non-disclosure
+ * invariant; mirrors {@link resolveReadableProject} keyed by id instead of slug.
+ */
+export async function resolveReadableProjectById(
+  db: Db,
+  actor: Actor | null,
+  projectId: string,
+): Promise<{ id: string; viewerCapability: Capability }> {
+  const project = await db.project.findFirst({
+    where: { id: projectId, deletedAt: null },
+    select: {
+      id: true,
+      ownerId: true,
+      guestAccess: true,
+      ...(actor
+        ? {
+            memberships: {
+              where: { userId: actor.userId },
+              select: { role: true },
+              take: 1,
+            },
+          }
+        : {}),
+    },
+  });
+  if (!project) {
+    throw new NotFoundError();
+  }
+
+  const { memberships, ...rest } = project as {
+    id: string;
+    ownerId: string;
+    guestAccess: GuestAccess;
+    memberships?: { role: ProjectRole }[];
+  };
+  const membership = actor ? (memberships?.[0] ?? null) : null;
+  const viewerCapability = resolveCapability(actor, rest, membership);
+  if (viewerCapability === "none") {
+    throw new NotFoundError();
+  }
+  return { id: rest.id, viewerCapability };
+}
+
+/**
  * Id-keyed WRITE seam: load a Project by internal id, resolve the actor's
  * capability (owner identity + membership; guest access still applies but is
  * moot for a write minimum), and `requireCapability(cap, min)` — which throws

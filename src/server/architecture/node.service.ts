@@ -5,12 +5,17 @@ import {
   type NodeKind as PrismaNodeKind,
   type Prisma,
 } from "../../../generated/prisma/client";
-import { authorizeProjectWrite, resolveReadableProject } from "./access-db";
+import {
+  authorizeProjectWrite,
+  resolveReadableProject,
+  resolveReadableProjectById,
+} from "./access-db";
 import { activeDuplicateWhere } from "./edge.service";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { isEdgeDedupCollision, isPrismaUniqueViolation } from "./prisma-errors";
 import {
+  createEmbeddedComponentInput,
   createNodeInput,
   deleteNodeInput,
   getCanvasInput,
@@ -22,6 +27,7 @@ import {
   updateNodeKindInput,
   updatePositionsInput,
   upsertBoundaryProxyPlacementInput,
+  type CreateEmbeddedComponentInput,
   type CreateNodeInput,
   type DeleteNodeInput,
   type GetCanvasInput,
@@ -193,6 +199,73 @@ export async function createNode(
   return db.node.create({ data });
 }
 
+/**
+ * Creates a Project Portal — a Component carrying `embeddedProjectId`, a live
+ * pointer into another Project (#119). The dual-project gate runs in a DELIBERATE
+ * ORDER, and the order IS the non-disclosure property:
+ *
+ *   1. HOST `edit` FIRST (`authorizeProjectWrite(projectId, "edit")` → Forbidden on
+ *      deny). The host id is a handle the caller already holds, so a Forbidden here
+ *      leaks nothing — and gating it first means a caller who cannot edit the host
+ *      never even probes the target, so this path can NEVER be used to oracle a
+ *      foreign project's existence/read-shape.
+ *   2. SELF-EMBED reject (`embeddedProjectId === projectId` → ValidationError): a
+ *      Project embedding itself is a degenerate infinite portal; reject it before
+ *      the target read so the message is precise.
+ *   3. TARGET ≥ `view` (`resolveReadableProjectById(embeddedProjectId)` → NotFound
+ *      on deny). "You may only embed what you can read." A target the actor cannot
+ *      read is indistinguishable from a missing one (non-disclosure), so an editor
+ *      of the host cannot enumerate foreign projects by trying to embed ids.
+ *
+ * `kind` is cosmetic (a portal's behavior comes from the FK, not the kind —
+ * ADR-0018). `parentId`, when non-null, must be a live Node in the HOST project
+ * (the same set-membership posture `createNode` uses). Identity comes from the
+ * actor, never `input` (ADR-0001); `title` is UNTRUSTED, stored verbatim.
+ */
+export async function createEmbeddedComponent(
+  db: Db,
+  actor: Actor,
+  input: CreateEmbeddedComponentInput,
+): Promise<Node> {
+  const { projectId, embeddedProjectId, parentId, kind, title, posX, posY } =
+    createEmbeddedComponentInput.parse(input);
+
+  // (1) Host edit gate FIRST — Forbidden on deny (the handle is already held).
+  const project = await authorizeProjectWrite(db, actor, projectId, "edit");
+
+  // (2) Reject self-embed before touching the target.
+  if (embeddedProjectId === project.id) {
+    throw new ValidationError("A Project cannot embed itself.");
+  }
+
+  // (3) Target read gate — NotFound on deny (non-disclosure; "embed what you read").
+  await resolveReadableProjectById(db, actor, embeddedProjectId);
+
+  // A non-null parent must be a live Node in the HOST project — a portal lives on
+  // the host's Canvas, so its scope is a host Node, never a foreign one.
+  if (parentId !== null) {
+    const parent = await db.node.findFirst({
+      where: { id: parentId, projectId: project.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!parent) {
+      throw new NotFoundError();
+    }
+  }
+
+  return db.node.create({
+    data: {
+      projectId: project.id,
+      parentId,
+      kind,
+      title,
+      posX,
+      posY,
+      embeddedProjectId,
+    },
+  });
+}
+
 // Bound on the breadcrumb ancestry walk. The graph is acyclic — `moveNode`
 // owns cycle prevention (ADR-0024,
 // rejecting any reparent whose new parent sits in the moving subtree) — so the
@@ -324,25 +397,86 @@ interface CrossScopeEdgeRow {
  * a `guestAccess=NONE` project resolves to not-found for a non-member. `actor` is
  * now consulted (for the owner check and the membership lookup), though anonymous
  * callers still skip the membership query.
+ *
+ * Project Portals (#119): `embedPath` is the ordered stack of portal Node ids
+ * crossed to reach this scope. After the host slug gate, the walk re-resolves the
+ * DESCENDING ACTOR's capability against each crossing's embedded Project (never the
+ * host's capability — the host's grant must not govern foreign content), so the
+ * URL stays on the host while the ACTIVE project advances inward. Every crossing is
+ * re-gated because `embedPath` is untrusted client state: a forged or stale id, a
+ * non-portal node, a foreign node, or an embedded project the actor cannot read all
+ * collapse to NotFound (non-disclosure — the headline security property). All the
+ * interior/edge/breadcrumb/placement reads below run against the resolved ACTIVE
+ * project.id (they are already project-id-parameterized), and `embedTrail` carries
+ * the crossed portals so the client stitches the host→portal→foreign spine. Each
+ * interior portal Node is annotated `isPortal: true` + `embedAccess: "open"|"locked"`
+ * per-actor so the client renders a No-access pill without leaking the target's
+ * existence — and the foreign `embeddedProjectId` is stripped from every interior
+ * node (non-disclosure firewall: it never reaches the wire).
  */
 export async function getCanvas(
   db: Db,
   actor: Actor | null,
   input: GetCanvasInput,
 ): Promise<{
-  interiorNodes: Node[];
+  interiorNodes: (Omit<Node, "embeddedProjectId"> & {
+    isPortal: boolean;
+    embedAccess?: "open" | "locked";
+  })[];
   interiorEdges: CanvasInteriorEdge[];
   boundaryProxies: CanvasBoundaryProxy[];
   breadcrumbs: { id: string; title: string; kind: NodeKind }[];
+  embedTrail: { id: string; title: string; kind: NodeKind }[];
+  activeProject: { id: string; title: string };
 }> {
-  const { slug, canvasNodeId } = getCanvasInput.parse(input);
+  const { slug, canvasNodeId, embedPath } = getCanvasInput.parse(input);
 
   // Gate ONCE at the slug→project bind, capability >= `view` (ADR-0040).
   // Authorization is project-scoped, so this single gate covers every descent
   // scope, every breadcrumb ancestor, and every boundary proxy below — all
-  // interior to this same project — with no per-node authz. A non-member of a
-  // `guestAccess=NONE` project gets not-found, never forbidden.
-  const project = await resolveReadableProject(db, actor, slug);
+  // interior to the ACTIVE project (resolved by the portal walk below) — with no
+  // per-node authz. A non-member of a `guestAccess=NONE` project gets not-found.
+  const hostProject = await resolveReadableProject(db, actor, slug);
+
+  // Walk the portal stack IN ORDER (#119). `project` starts as the host and
+  // advances to each crossing's embedded Project, re-gated per-actor. The portal
+  // Node is loaded scoped to the CURRENT active project (id + projectId), so a
+  // foreign or non-existent id never resolves, and a node lacking
+  // `embeddedProjectId` is not a portal — both collapse to NotFound. The re-gate
+  // (`resolveReadableProjectById`) maps a target the actor cannot read to NotFound
+  // too, so a locked portal is indistinguishable from a stale id (non-disclosure).
+  let activeProjectId = hostProject.id;
+  const embedTrail: { id: string; title: string; kind: NodeKind }[] = [];
+  for (const portalNodeId of embedPath) {
+    const portal = await db.node.findFirst({
+      where: { id: portalNodeId, projectId: activeProjectId, deletedAt: null },
+      select: { embeddedProjectId: true, title: true, kind: true },
+    });
+    if (portal?.embeddedProjectId == null) {
+      throw new NotFoundError();
+    }
+    const resolved = await resolveReadableProjectById(
+      db,
+      actor,
+      portal.embeddedProjectId,
+    );
+    activeProjectId = resolved.id;
+    embedTrail.push({
+      id: portalNodeId,
+      title: portal.title,
+      kind: portal.kind,
+    });
+  }
+
+  // The active project the reads below run against. After an empty walk this is
+  // the host; after a non-empty walk it is the innermost embedded project. Load
+  // its display title for the client's foreign-segment spine; the foreign SLUG is
+  // deliberately NOT exposed (the URL stays the host's — ADR-0002 non-disclosure).
+  const activeProjectRow = await db.project.findUniqueOrThrow({
+    where: { id: activeProjectId },
+    select: { id: true, title: true },
+  });
+  const project = { id: activeProjectId };
 
   // The four reads run in one `Promise.all` — no waterfall, no dependency on
   // `interiorNodes` resolving first (ADR-0001). The interior Nodes fall out of a
@@ -589,7 +723,50 @@ export async function getCanvas(
     }
   }
 
-  return { interiorNodes, interiorEdges, boundaryProxies, breadcrumbs };
+  // Annotate each interior portal Node (one carrying `embeddedProjectId`) with the
+  // DESCENDING ACTOR's access to its target: "open" if `resolveReadableProjectById`
+  // resolves ≥ view, "locked" if it throws NotFound (the target is missing, deleted,
+  // or unreadable — all indistinguishable, non-disclosure). The per-portal re-resolves
+  // run in parallel (no waterfall); a typical Canvas has few portals, so this stays a
+  // handful of point lookups.
+  //
+  // CRITICAL non-disclosure firewall: the foreign `embeddedProjectId` is the real
+  // internal Project.id of a project the host owner may have NO grant to — it must
+  // NEVER reach the wire. We strip it from EVERY interior node and emit only a
+  // non-identifying `isPortal` boolean discriminator (the client keys descent off the
+  // portal NODE id, never the embedded project id). Redacting uniformly — open and
+  // locked alike — keeps the firewall total and removes any need to reason about
+  // which case is safe to expose.
+  const annotatedInteriorNodes = await Promise.all(
+    interiorNodes.map(
+      async (
+        node,
+      ): Promise<
+        Omit<Node, "embeddedProjectId"> & {
+          isPortal: boolean;
+          embedAccess?: "open" | "locked";
+        }
+      > => {
+        const { embeddedProjectId, ...rest } = node;
+        if (embeddedProjectId === null) return { ...rest, isPortal: false };
+        try {
+          await resolveReadableProjectById(db, actor, embeddedProjectId);
+          return { ...rest, isPortal: true, embedAccess: "open" };
+        } catch {
+          return { ...rest, isPortal: true, embedAccess: "locked" };
+        }
+      },
+    ),
+  );
+
+  return {
+    interiorNodes: annotatedInteriorNodes,
+    interiorEdges,
+    boundaryProxies,
+    breadcrumbs,
+    embedTrail,
+    activeProject: { id: activeProjectRow.id, title: activeProjectRow.title },
+  };
 }
 
 /** A Component as the project-wide "Connect to…" search returns it (#66). */

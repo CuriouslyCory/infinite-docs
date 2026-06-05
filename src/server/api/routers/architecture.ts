@@ -10,9 +10,11 @@ import {
   getProjectAccess,
   getProjectBySlug,
   listProjects,
+  listReferenceableProjects,
   setGuestAccess,
 } from "~/server/architecture/project.service";
 import {
+  createEmbeddedComponent,
   createNode,
   deleteNode,
   getCanvas,
@@ -60,9 +62,11 @@ import {
   applySpecInput,
   claimInviteInput,
   connectNodesInput,
+  createEmbeddedComponentInput,
   createInviteInput,
   createNodeInput,
   createProjectInput,
+  listReferenceableProjectsInput,
   createTraceInput,
   grantMemberByEmailInput,
   removeMemberInput,
@@ -292,6 +296,36 @@ export const architectureRouter = createTRPCRouter({
       const actor: Actor = { userId: ctx.session.user.id, via: "session" };
       try {
         return await createNode(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Write mutation: create a Project Portal (#119). The service enforces the
+  // dual-project gate IN ORDER — host `edit` (Forbidden on deny) BEFORE target ≥
+  // `view` (NotFound on deny) — and rejects self-embed. The host-first ordering is
+  // the non-disclosure property (a non-host-editor never probes the target).
+  // `protectedProcedure` is the transport gate; real authz is in the service.
+  createEmbeddedComponent: protectedProcedure
+    .input(createEmbeddedComponentInput)
+    .mutation(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await createEmbeddedComponent(ctx.db, actor, input);
+      } catch (error) {
+        throw toTRPCError(error);
+      }
+    }),
+
+  // Signed-in query: the embed-target picker (#119). The service restricts to the
+  // actor's OWNED projects this slice (minus the host), returning a narrow
+  // `{ id, title, slug }` — the actor's own slug, never a foreign-slug leak.
+  listReferenceableProjects: protectedProcedure
+    .input(listReferenceableProjectsInput)
+    .query(async ({ ctx, input }) => {
+      const actor: Actor = { userId: ctx.session.user.id, via: "session" };
+      try {
+        return await listReferenceableProjects(ctx.db, actor, input);
       } catch (error) {
         throw toTRPCError(error);
       }

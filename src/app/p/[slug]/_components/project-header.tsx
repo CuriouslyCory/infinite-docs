@@ -28,6 +28,7 @@ export function ProjectHeader({
   canEdit,
   canManage,
   projectId,
+  embedPath = [],
 }: {
   slug: string;
   projectTitle: string;
@@ -36,6 +37,8 @@ export function ProjectHeader({
   canEdit: boolean;
   canManage: boolean;
   projectId: string;
+  /** Portal crossing stack (#119); threaded to the breadcrumb bar's getCanvas key. */
+  embedPath?: string[];
 }) {
   return (
     <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
@@ -52,6 +55,7 @@ export function ProjectHeader({
           slug={slug}
           canvasNodeId={canvasNodeId}
           projectTitle={projectTitle}
+          embedPath={embedPath}
         />
       </Suspense>
       <div className="ml-auto flex items-center gap-2">

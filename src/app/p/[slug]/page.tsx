@@ -15,10 +15,18 @@ import { HydrateClient, api } from "~/trpc/server";
  */
 export default async function ProjectPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ via?: string }>;
 }) {
   const { slug } = await params;
+  // Project Portal crossing stack (#119): descending a portal lands on the host
+  // ROOT URL with `?via=<portal ids>`, so the root route renders the FOREIGN
+  // project's root Canvas while staying on the host slug. `[]` is the ordinary host
+  // root. UNTRUSTED — the server re-gates every crossing (forged chain → NotFound).
+  const { via } = await searchParams;
+  const embedPath = via ? via.split(",").filter(Boolean) : [];
 
   let project;
   try {
@@ -38,14 +46,22 @@ export default async function ProjectPage({
   // Derive the edit affordance from the server-resolved capability and pass a
   // plain boolean to the client island — the Capability type (whose module graph
   // reaches Prisma) never crosses into the client bundle (ADR-0040, ADR-0004).
-  const canEdit = capabilityAtLeast(project.viewerCapability, "edit");
+  // Read-only inside an embed this slice (#119): crossing a portal makes the
+  // foreign root view-only regardless of the actor's HOST capability.
+  const canEdit =
+    embedPath.length === 0 &&
+    capabilityAtLeast(project.viewerCapability, "edit");
   const canManage = capabilityAtLeast(project.viewerCapability, "admin");
 
   // Prefetch the root Canvas so the client island reads it from the hydration
   // cache with no extra round trip (ADR-0004 names this route as that seam). The
-  // input MUST match the island's query key exactly — { slug, canvasNodeId: null }
-  // — or hydration misses and the island silently refetches (a waterfall).
-  void api.architecture.getCanvas.prefetch({ slug, canvasNodeId: null });
+  // input MUST match the island's query key exactly — { slug, canvasNodeId: null,
+  // embedPath } — or hydration misses and the island silently refetches.
+  void api.architecture.getCanvas.prefetch({
+    slug,
+    canvasNodeId: null,
+    embedPath,
+  });
 
   return (
     <HydrateClient>
@@ -57,6 +73,7 @@ export default async function ProjectPage({
           canEdit={canEdit}
           canManage={canManage}
           projectId={project.id}
+          embedPath={embedPath}
         />
         <div className="min-h-0 flex-1">
           <CanvasIsland
@@ -64,6 +81,7 @@ export default async function ProjectPage({
             slug={slug}
             projectId={project.id}
             canEdit={canEdit}
+            embedPath={embedPath}
           />
         </div>
       </main>
