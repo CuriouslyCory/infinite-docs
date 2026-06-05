@@ -63,7 +63,7 @@ export function CopyMarkdownToolbar({ slug }: { slug: string }) {
   );
 
   return (
-    <div className="flex items-center gap-1 rounded-lg bg-black/40 p-2 backdrop-blur">
+    <div className="border-border bg-card/80 flex items-center gap-1 rounded-lg border p-2 backdrop-blur">
       <button
         type="button"
         onClick={() => void copyToClipboard(fetcher, slug, null, "full")}
