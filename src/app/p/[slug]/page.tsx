@@ -46,8 +46,11 @@ export default async function ProjectPage({
   // Derive the edit affordance from the server-resolved capability and pass a
   // plain boolean to the client island — the Capability type (whose module graph
   // reaches Prisma) never crosses into the client bundle (ADR-0040, ADR-0004).
-  // Read-only inside an embed this slice (#119): crossing a portal makes the
-  // foreign root view-only regardless of the actor's HOST capability.
+  // This boolean reflects the HOST capability only and is meaningful at the host
+  // scope; inside a portal the island re-derives the edit affordance from the
+  // FOREIGN project's capability (`activeProject.canEdit`) and owns the
+  // foreign-scope UI, so we force this false there to avoid double-signalling
+  // (#121, ADR-0042). `embedded` tells the header to defer to the island.
   const canEdit =
     embedPath.length === 0 &&
     capabilityAtLeast(project.viewerCapability, "edit");
@@ -74,6 +77,7 @@ export default async function ProjectPage({
           canManage={canManage}
           projectId={project.id}
           embedPath={embedPath}
+          embedded={embedPath.length > 0}
         />
         <div className="min-h-0 flex-1">
           <CanvasIsland

@@ -10,7 +10,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "../errors";
-import { createNode } from "../node.service";
+import { createEmbeddedComponent, createNode } from "../node.service";
 import { createProject } from "../project.service";
 import { resetDb, testDb } from "./helpers/test-db";
 
@@ -318,6 +318,45 @@ describe("applyGraph", () => {
       expect(selfParentError).toBeInstanceOf(ValidationError);
       expect((selfParentError as ValidationError).message).toContain("a");
       expect(await testDb.node.count()).toBe(0);
+    });
+
+    it("rejects a server-ref parent that is a portal Component (#121)", async () => {
+      const { actor, project } = await seedOwnerAndProject();
+      const target = await makeProject(
+        // The actor owns `project`; embed a second owned project as a portal.
+        (
+          await testDb.project.findUniqueOrThrow({
+            where: { id: project.id },
+            select: { ownerId: true },
+          })
+        ).ownerId,
+        "Apply Target",
+      );
+      const portal = await createEmbeddedComponent(testDb, actor, {
+        projectId: project.id,
+        embeddedProjectId: target.id,
+        title: "Portal",
+      });
+      const portalCount = await testDb.node.count();
+
+      // The batch routes child creation through createNode, which rejects a
+      // portal parent — the door cannot be bypassed via apply-graph.
+      await expect(
+        applyGraph(testDb, actor, {
+          projectId: project.id,
+          components: [
+            {
+              clientId: "child",
+              parent: { ref: "server", id: portal.id },
+              title: "Illegal Child",
+            },
+          ],
+          connections: [],
+        }),
+      ).rejects.toBeInstanceOf(ValidationError);
+
+      // Only the portal exists — no child was written.
+      expect(await testDb.node.count()).toBe(portalCount);
     });
   });
 

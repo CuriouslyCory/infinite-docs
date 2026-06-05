@@ -16,6 +16,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
+import { Eye, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
@@ -569,6 +570,15 @@ function CanvasInner({
     { interiorNodes, interiorEdges, boundaryProxies, breadcrumbs, activeProject },
   ] = api.architecture.getCanvas.useSuspenseQuery(canvasInput);
 
+  // Edit-through (#121, ADR-0042): once descended through a portal, writes target
+  // the FOREIGN active project, not the host slug's project, and the capability
+  // that governs them is the foreign grant (`activeProject.canEdit`, a plain
+  // server-derived boolean — the Capability union never crosses to the client).
+  // At the host scope (empty walk) both collapse to the props the shell passed.
+  const embedded = embedPath.length > 0;
+  const writeProjectId = embedded ? activeProject.id : projectId;
+  const effectiveCanEdit = embedded ? activeProject.canEdit : canEdit;
+
   // The kind palette ranks its suggestions by the scope's own Component kind —
   // the parent of any Component added here (CONTEXT.md "Kind affinity"). The
   // current scope is the last breadcrumb; the root scope has none, so `null`
@@ -664,7 +674,7 @@ function CanvasInner({
           boundaryProxies: [],
           breadcrumbs: [],
           embedTrail: [],
-          activeProject: { id: projectId, title: "" },
+          activeProject: { id: projectId, title: "", canEdit: false },
         };
         return { ...base, ...patch(base) };
       });
@@ -698,13 +708,19 @@ function CanvasInner({
       patchCanvas((c) => ({
         interiorNodes: [
           ...c.interiorNodes,
-          optimisticCanvasNode(tempId, projectId, canvasNodeId, kind, position),
+          optimisticCanvasNode(
+            tempId,
+            writeProjectId,
+            canvasNodeId,
+            kind,
+            position,
+          ),
         ],
       }));
 
       try {
         const real = await createNode.mutateAsync({
-          projectId,
+          projectId: writeProjectId,
           parentId: canvasNodeId,
           kind,
           posX: position.x,
@@ -731,7 +747,7 @@ function CanvasInner({
     },
     [
       screenToFlowPosition,
-      projectId,
+      writeProjectId,
       canvasNodeId,
       setNodes,
       patchCanvas,
@@ -776,7 +792,7 @@ function CanvasInner({
           {
             ...optimisticCanvasNode(
               tempId,
-              projectId,
+              writeProjectId,
               canvasNodeId,
               "GENERIC",
               position,
@@ -792,7 +808,7 @@ function CanvasInner({
 
       try {
         const real = await createEmbeddedComponent.mutateAsync({
-          projectId,
+          projectId: writeProjectId,
           embeddedProjectId: target.id,
           parentId: canvasNodeId,
           title: target.title,
@@ -818,7 +834,7 @@ function CanvasInner({
     },
     [
       screenToFlowPosition,
-      projectId,
+      writeProjectId,
       canvasNodeId,
       setNodes,
       patchCanvas,
@@ -1034,7 +1050,7 @@ function CanvasInner({
       }));
 
       try {
-        await updatePositions.mutateAsync({ projectId, positions });
+        await updatePositions.mutateAsync({ projectId: writeProjectId, positions });
       } catch {
         setNodes((ns) =>
           ns.map((n) => {
@@ -1053,7 +1069,7 @@ function CanvasInner({
         toast.error("Couldn’t save the new position. Please try again.");
       }
     },
-    [utils, canvasInput, projectId, updatePositions, setNodes, patchCanvas],
+    [utils, canvasInput, writeProjectId, updatePositions, setNodes, patchCanvas],
   );
 
   // Persist a boundary proxy's placement on this scope when its drag stops (#91 /
@@ -1093,7 +1109,7 @@ function CanvasInner({
 
       try {
         await upsertProxyPlacement.mutateAsync({
-          projectId,
+          projectId: writeProjectId,
           containerNodeId: canvasNodeId,
           realEndpointId,
           posX,
@@ -1132,7 +1148,7 @@ function CanvasInner({
     [
       utils,
       canvasInput,
-      projectId,
+      writeProjectId,
       canvasNodeId,
       upsertProxyPlacement,
       setNodes,
@@ -1188,7 +1204,7 @@ function CanvasInner({
       try {
         const real = reconciledCanvasEdge(
           await connectNodes.mutateAsync({
-            projectId,
+            projectId: writeProjectId,
             sourceId: source,
             targetId: target,
           }),
@@ -1207,7 +1223,7 @@ function CanvasInner({
         toast.error("Couldn’t add the connection. Please try again.");
       }
     },
-    [utils, canvasInput, setEdges, patchCanvas, projectId, connectNodes],
+    [utils, canvasInput, setEdges, patchCanvas, writeProjectId, connectNodes],
   );
 
   // The "Connect to…" gesture (#66): wire the selected Component to ANY other
@@ -1356,7 +1372,7 @@ function CanvasInner({
 
       try {
         const real = await connectNodes.mutateAsync({
-          projectId,
+          projectId: writeProjectId,
           sourceId: sourceNodeId,
           targetId: target.id,
         });
@@ -1475,7 +1491,7 @@ function CanvasInner({
       setEdges,
       setNodes,
       patchCanvas,
-      projectId,
+      writeProjectId,
       connectNodes,
     ],
   );
@@ -2232,7 +2248,7 @@ function CanvasInner({
             <SelectEdgeContext.Provider value={selectEdge}>
               <DescendComponentContext.Provider value={descend}>
                 <DeleteComponentContext.Provider value={removeComponent}>
-                  <CanEditContext.Provider value={canEdit}>
+                  <CanEditContext.Provider value={effectiveCanEdit}>
                     <ReactFlow<CanvasRFNode, ConnectionEdge>
                       nodes={nodes}
                       edges={edges}
@@ -2339,9 +2355,9 @@ function CanvasInner({
                       }
                       nodeTypes={nodeTypes}
                       edgeTypes={edgeTypes}
-                      nodesDraggable={canEdit}
-                      nodesConnectable={canEdit}
-                      deleteKeyCode={canEdit ? undefined : null}
+                      nodesDraggable={effectiveCanEdit}
+                      nodesConnectable={effectiveCanEdit}
+                      deleteKeyCode={effectiveCanEdit ? undefined : null}
                       // Double-click means "descend into a Component", never
                       // "zoom the pane". React Flow only tags DRAGGABLE nodes
                       // with `nopan`, so for a viewer (nodesDraggable=false) the
@@ -2355,7 +2371,7 @@ function CanvasInner({
                       <Background />
                       <Controls />
                       <Panel position="top-left" className="flex gap-2">
-                        {canEdit && (
+                        {effectiveCanEdit && (
                           <AddComponent
                             onAdd={addComponent}
                             parentKind={parentKind}
@@ -2365,7 +2381,7 @@ function CanvasInner({
                         {/* Embed a Project Portal (#119). Edit-gated; the picker
                             lists the actor's other projects and the island commits
                             the host-edit + target-read gated create. */}
-                        {canEdit && (
+                        {effectiveCanEdit && (
                           <EmbedProject
                             excludeProjectId={activeProject.id}
                             onEmbed={addEmbed}
@@ -2379,7 +2395,7 @@ function CanvasInner({
                         <CopyMarkdownToolbar slug={slug} />
                       </Panel>
                       {selectedNodeId !== null &&
-                        (canEdit ? (
+                        (effectiveCanEdit ? (
                           <Panel
                             key={selectedNodeId}
                             position="top-right"
@@ -2442,6 +2458,38 @@ function CanvasInner({
                           </p>
                         </Panel>
                       )}
+                      {/* Honesty banner (#121, ADR-0042): when this scope was
+                          reached THROUGH a portal, make the foreign scope
+                          unmistakable. Editable: every write here persists to
+                          that project, not the host (amber/Pencil). Read-only: the
+                          actor only holds `view` on the foreign project, so this
+                          descended scope carries no edit affordances — surface a
+                          neutral "view only" indicator so the read-only scope is
+                          self-evident at the scope level, symmetric with the header
+                          ViewOnlyBadge the shell suppresses while embedded. */}
+                      {embedded &&
+                        (effectiveCanEdit ? (
+                          <Panel position="top-center">
+                            <span
+                              className="mt-2 flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-xs font-medium text-amber-200/90"
+                              title="Changes here are saved to the embedded project, not this one."
+                            >
+                              <Pencil size={12} aria-hidden />
+                              Editing embedded project: {activeProject.title}
+                            </span>
+                          </Panel>
+                        ) : (
+                          <Panel position="top-center">
+                            <span
+                              className="mt-2 flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-xs font-medium text-white/70"
+                              title="You're viewing an embedded project. Only someone with edit access to it can make changes."
+                            >
+                              <Eye size={12} aria-hidden />
+                              Viewing embedded project: {activeProject.title} —
+                              view only
+                            </span>
+                          </Panel>
+                        ))}
                     </ReactFlow>
                   </CanEditContext.Provider>
                 </DeleteComponentContext.Provider>

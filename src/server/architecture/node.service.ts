@@ -167,10 +167,19 @@ export async function createNode(
   if (parentId !== null) {
     const parent = await db.node.findFirst({
       where: { id: parentId, projectId: project.id, deletedAt: null },
-      select: { id: true },
+      select: { id: true, embeddedProjectId: true },
     });
     if (!parent) {
       throw new NotFoundError();
+    }
+    // A portal Component has no host interior — its interior IS the foreign
+    // root, so a host child can never hang off it (#121, ADR-0042). Rejected by
+    // the FK discriminator, not by kind. Distinct from not-found: the parent
+    // exists in scope but cannot legally hold interior children.
+    if (parent.embeddedProjectId !== null) {
+      throw new ValidationError(
+        "A portal Component has no interior; embed children belong to the embedded project.",
+      );
     }
   }
 
@@ -256,10 +265,15 @@ export async function createEmbeddedComponent(
   if (parentId !== null) {
     const parent = await db.node.findFirst({
       where: { id: parentId, projectId: project.id, deletedAt: null },
-      select: { id: true },
+      select: { id: true, embeddedProjectId: true },
     });
     if (!parent) {
       throw new NotFoundError();
+    }
+    if (parent.embeddedProjectId !== null) {
+      throw new ValidationError(
+        "A portal Component has no interior; embed children belong to the embedded project.",
+      );
     }
   }
 
@@ -441,7 +455,7 @@ export async function getCanvas(
   boundaryProxies: CanvasBoundaryProxy[];
   breadcrumbs: { id: string; title: string; kind: NodeKind }[];
   embedTrail: { id: string; title: string; kind: NodeKind }[];
-  activeProject: { id: string; title: string };
+  activeProject: { id: string; title: string; canEdit: boolean };
 }> {
   const { slug, canvasNodeId, embedPath } = getCanvasInput.parse(input);
 
@@ -451,6 +465,13 @@ export async function getCanvas(
   // interior to the ACTIVE project (resolved by the portal walk below) — with no
   // per-node authz. A non-member of a `guestAccess=NONE` project gets not-found.
   const hostProject = await resolveReadableProject(db, actor, slug);
+
+  // The capability that governs writes against the ACTIVE scope. It starts as
+  // the host's and advances to each crossed portal's target capability, so after
+  // a portal walk `canEdit` reflects the FOREIGN project's grant — the seam that
+  // makes edit-through honest without putting the Capability union on the wire
+  // (#121, ADR-0042). Only the derived boolean crosses to the client (ADR-0004).
+  let activeCapability = hostProject.viewerCapability;
 
   // Walk the portal stack IN ORDER (#119). `project` starts as the host and
   // advances to each crossing's embedded Project, re-gated per-actor. The portal
@@ -475,6 +496,7 @@ export async function getCanvas(
       portal.embeddedProjectId,
     );
     activeProjectId = resolved.id;
+    activeCapability = resolved.viewerCapability;
     embedTrail.push({
       id: portalNodeId,
       title: portal.title,
@@ -851,7 +873,11 @@ export async function getCanvas(
     boundaryProxies,
     breadcrumbs,
     embedTrail,
-    activeProject: { id: activeProjectRow.id, title: activeProjectRow.title },
+    activeProject: {
+      id: activeProjectRow.id,
+      title: activeProjectRow.title,
+      canEdit: capabilityAtLeast(activeCapability, "edit"),
+    },
   };
 }
 
@@ -1048,10 +1074,18 @@ export async function moveNode(
   if (parentId !== null) {
     const parent = await db.node.findFirst({
       where: { id: parentId, projectId: node.projectId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, embeddedProjectId: true },
     });
     if (!parent) {
       throw new NotFoundError();
+    }
+    // A portal Component has no host interior; a node can never be moved into
+    // one (#121, ADR-0042). Rejected before the cycle/orphan computation so the
+    // illegal target never reaches the graph walk.
+    if (parent.embeddedProjectId !== null) {
+      throw new ValidationError(
+        "A portal Component has no interior; embed children belong to the embedded project.",
+      );
     }
   }
 

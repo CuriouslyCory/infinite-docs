@@ -7,6 +7,9 @@ import {
   createEmbeddedComponent,
   createNode,
   getCanvas,
+  moveNode,
+  updatePositions,
+  upsertBoundaryProxyPlacement,
 } from "../node.service";
 import { createProject } from "../project.service";
 import { resetDb, testDb } from "./helpers/test-db";
@@ -476,5 +479,262 @@ describe("getCanvas through a Project Portal", () => {
       where: { id: portal.id },
     });
     expect(persisted?.embeddedProjectId).toBe(target.id);
+  });
+});
+
+describe("portal-interior guard (#121)", () => {
+  it("rejects createNode whose parent is a portal Component", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const host = await makeProject(user.id, "Host");
+    const target = await makeProject(user.id, "Target");
+    const portal = await createEmbeddedComponent(testDb, actor, {
+      projectId: host.id,
+      embeddedProjectId: target.id,
+      title: "Portal",
+    });
+
+    // A portal has no host interior — a child can never hang off it.
+    await expect(
+      createNode(testDb, actor, {
+        projectId: host.id,
+        parentId: portal.id,
+        title: "Illegal Child",
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    // Nothing was written under the portal.
+    const childCount = await testDb.node.count({
+      where: { parentId: portal.id },
+    });
+    expect(childCount).toBe(0);
+  });
+
+  it("rejects moveNode onto a portal Component", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const host = await makeProject(user.id, "Host");
+    const target = await makeProject(user.id, "Target");
+    const portal = await createEmbeddedComponent(testDb, actor, {
+      projectId: host.id,
+      embeddedProjectId: target.id,
+      title: "Portal",
+    });
+    const movable = await createNode(testDb, actor, {
+      projectId: host.id,
+      title: "Movable",
+    });
+
+    await expect(
+      moveNode(testDb, actor, { id: movable.id, parentId: portal.id }),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    // The move was rejected before any reparent — the node stays at the root.
+    const persisted = await testDb.node.findUnique({
+      where: { id: movable.id },
+    });
+    expect(persisted?.parentId).toBeNull();
+  });
+
+  it("rejects createEmbeddedComponent whose parent is a portal Component", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const host = await makeProject(user.id, "Host");
+    const target = await makeProject(user.id, "Target");
+    const other = await makeProject(user.id, "Other");
+    const portal = await createEmbeddedComponent(testDb, actor, {
+      projectId: host.id,
+      embeddedProjectId: target.id,
+      title: "Portal",
+    });
+
+    // A portal has no host interior — placing ANOTHER portal under it
+    // (portal-under-portal) is the same invariant violation as a plain child.
+    await expect(
+      createEmbeddedComponent(testDb, actor, {
+        projectId: host.id,
+        embeddedProjectId: other.id,
+        parentId: portal.id,
+        title: "Nested Portal",
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    // Nothing was written under the portal.
+    const childCount = await testDb.node.count({
+      where: { parentId: portal.id },
+    });
+    expect(childCount).toBe(0);
+  });
+});
+
+describe("edit-through a Project Portal (#121)", () => {
+  /**
+   * Shared setup: an actor who is HOST EDITOR and holds some role on the TARGET,
+   * with a portal placed at the host root. Returns everything a write-through
+   * test needs to drive the foreign scope.
+   */
+  async function seedPortal(targetRole: "EDITOR" | "VIEWER") {
+    const hostOwner = await makeUser("Host Owner");
+    const targetOwner = await makeUser("Target Owner");
+    const actorUser = await makeUser("Through Actor");
+    const targetActor: Actor = { userId: targetOwner.id, via: "session" };
+    const actor: Actor = { userId: actorUser.id, via: "session" };
+    const host = await makeProject(hostOwner.id, "Host");
+    const target = await makeProject(targetOwner.id, "Target");
+    await closeProject(target.id);
+
+    // The target owner places the portal (granted host EDITOR to write it).
+    await testDb.projectMembership.create({
+      data: { projectId: host.id, userId: targetOwner.id, role: "EDITOR" },
+    });
+    const portal = await createEmbeddedComponent(testDb, targetActor, {
+      projectId: host.id,
+      embeddedProjectId: target.id,
+      title: "Portal",
+    });
+
+    // The through-actor is host EDITOR + the requested role on the target.
+    await testDb.projectMembership.create({
+      data: { projectId: host.id, userId: actorUser.id, role: "EDITOR" },
+    });
+    await testDb.projectMembership.create({
+      data: { projectId: target.id, userId: actorUser.id, role: targetRole },
+    });
+
+    return { actor, host, target, portal };
+  }
+
+  it("lets an EDITOR-on-target create through the portal — persists to the target, visible standalone", async () => {
+    const { actor, host, target, portal } = await seedPortal("EDITOR");
+
+    // The write addresses the FOREIGN project id (what the island sends once
+    // descended), authorized against the target's EDITOR grant.
+    const created = await createNode(testDb, actor, {
+      projectId: target.id,
+      title: "Made Through Portal",
+    });
+    expect(created.projectId).toBe(target.id);
+
+    // It is real in the target — opening the target standalone shows it.
+    const targetStandalone = await getCanvas(testDb, actor, {
+      slug: target.slug,
+      canvasNodeId: null,
+    });
+    expect(targetStandalone.interiorNodes.map((n) => n.title)).toContain(
+      "Made Through Portal",
+    );
+
+    // And it shows when descending through the host's portal too.
+    const through = await getCanvas(testDb, actor, {
+      slug: host.slug,
+      canvasNodeId: null,
+      embedPath: [portal.id],
+    });
+    expect(through.activeProject.id).toBe(target.id);
+    expect(through.interiorNodes.map((n) => n.title)).toContain(
+      "Made Through Portal",
+    );
+  });
+
+  it("denies a VIEWER-on-target write through the portal (createNode) with Forbidden", async () => {
+    const { actor, target } = await seedPortal("VIEWER");
+
+    await expect(
+      createNode(testDb, actor, {
+        projectId: target.id,
+        title: "Should Be Denied",
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    const count = await testDb.node.count({ where: { projectId: target.id } });
+    expect(count).toBe(0);
+  });
+
+  it("denies a VIEWER-on-target connect/position write through the portal with Forbidden", async () => {
+    const { actor, target } = await seedPortal("VIEWER");
+    // Seed two nodes in the target as its owner so there is something to write.
+    const { ownerId } = await testDb.project.findUniqueOrThrow({
+      where: { id: target.id },
+      select: { ownerId: true },
+    });
+    const ownerActor: Actor = { userId: ownerId, via: "session" };
+    const a = await createNode(testDb, ownerActor, {
+      projectId: target.id,
+      title: "A",
+    });
+    const b = await createNode(testDb, ownerActor, {
+      projectId: target.id,
+      title: "B",
+    });
+
+    // A VIEWER's connect is denied.
+    await expect(
+      connectNodes(testDb, actor, {
+        projectId: target.id,
+        sourceId: a.id,
+        targetId: b.id,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    // A VIEWER's position write is denied too.
+    await expect(
+      updatePositions(testDb, actor, {
+        projectId: target.id,
+        positions: [{ id: a.id, posX: 10, posY: 20 }],
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    // And a VIEWER's boundary-proxy placement write — the sixth project-id-keyed
+    // write through the portal — is denied on the host-edit gate too.
+    await expect(
+      upsertBoundaryProxyPlacement(testDb, actor, {
+        projectId: target.id,
+        containerNodeId: null,
+        realEndpointId: a.id,
+        posX: 10,
+        posY: 20,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("activeProject.canEdit: owner descending own portal → true", async () => {
+    const user = await makeUser();
+    const actor: Actor = { userId: user.id, via: "session" };
+    const host = await makeProject(user.id, "Host");
+    const target = await makeProject(user.id, "Target");
+    const portal = await createEmbeddedComponent(testDb, actor, {
+      projectId: host.id,
+      embeddedProjectId: target.id,
+      title: "Portal",
+    });
+
+    // Host root: the actor owns the host → canEdit true.
+    const hostCanvas = await getCanvas(testDb, actor, {
+      slug: host.slug,
+      canvasNodeId: null,
+    });
+    expect(hostCanvas.activeProject.canEdit).toBe(true);
+
+    // Descended into the target the actor also owns → still true.
+    const through = await getCanvas(testDb, actor, {
+      slug: host.slug,
+      canvasNodeId: null,
+      embedPath: [portal.id],
+    });
+    expect(through.activeProject.id).toBe(target.id);
+    expect(through.activeProject.canEdit).toBe(true);
+  });
+
+  it("activeProject.canEdit: viewer-shared descend → false", async () => {
+    const { actor, host, target, portal } = await seedPortal("VIEWER");
+
+    const through = await getCanvas(testDb, actor, {
+      slug: host.slug,
+      canvasNodeId: null,
+      embedPath: [portal.id],
+    });
+    expect(through.activeProject.id).toBe(target.id);
+    // The actor holds only `view` on the target → edit-through is denied.
+    expect(through.activeProject.canEdit).toBe(false);
   });
 });
