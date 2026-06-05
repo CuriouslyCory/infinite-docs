@@ -92,6 +92,54 @@ export const grantMemberByEmailInput = z.object({
 export type GrantMemberByEmailInput = z.infer<typeof grantMemberByEmailInput>;
 
 /**
+ * Input for changing an existing member's Role (`updateMemberRole`, #108).
+ * Addressed by `projectId` (the internal handle the manager already holds in the
+ * ShareMenu), NOT the slug — writes are never slug-granted (ADR-0002). Gated
+ * ADMIN+ in the service, which also rejects targeting the owner (the owner is the
+ * `ownerId` identity, never a membership row — ADR-0040). Unlike the grant paths
+ * (`claimInvite`/`grantMemberByEmail`, which apply MAX to never downgrade a
+ * bearer claim), this is a DIRECT SET: an explicit admin action is authoritative,
+ * so an intentional EDITOR→VIEWER downgrade is the whole point of the panel.
+ */
+export const updateMemberRoleInput = z.object({
+  projectId: z.string().min(1),
+  userId: z.string().min(1),
+  role: projectRole,
+});
+export type UpdateMemberRoleInput = z.infer<typeof updateMemberRoleInput>;
+
+/**
+ * Input for removing a member (`removeMember`, #108). Addressed by `projectId`
+ * (the internal handle the manager already holds), NOT the slug — writes are
+ * never slug-granted (ADR-0002). Gated ADMIN+ in the service, which rejects
+ * targeting the owner (owner is identity, never a membership row — ADR-0040). An
+ * admin MAY remove another admin and MAY remove themselves; only the owner is
+ * untouchable. Removal deletes the membership row, so access falls back to the
+ * project's guest grant (or none) on the member's next authorization pass.
+ */
+export const removeMemberInput = z.object({
+  projectId: z.string().min(1),
+  userId: z.string().min(1),
+});
+export type RemoveMemberInput = z.infer<typeof removeMemberInput>;
+
+/**
+ * Input for revoking an invite link (`revokeInvite`, #108). Addressed by the
+ * invite `id` — the natural key for the row the manage-access panel lists. The
+ * service deliberately INVERTS the usual id-keyed Forbidden posture here: an
+ * inviteId is NOT a presumed-held project handle (unlike `projectId` in the other
+ * mutations), so an inviteId the caller cannot administer — or one that does not
+ * exist — must both map to ONE `NotFoundError`, never disclosing the invite (and
+ * thus its project) to a non-admin who guessed or holds the id (ADR-0040
+ * non-disclosure). Revoking blocks FUTURE claims only; memberships already
+ * granted via the link are untouched.
+ */
+export const revokeInviteInput = z.object({
+  inviteId: z.string().min(1),
+});
+export type RevokeInviteInput = z.infer<typeof revokeInviteInput>;
+
+/**
  * The expiry choices the invite-create flow offers, in days. Mirrors
  * `apiTokenExpiresInDays` (a bounded day-count, never a raw date — sidesteps
  * past-date and clock-skew classes) but defaults to **7**: invites churn faster

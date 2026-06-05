@@ -586,6 +586,156 @@ describe("getProjectAccess — ADMIN+ read with non-disclosure ladder (#105, ADR
   });
 });
 
+describe("getProjectAccess — grown member/invite shape (#108)", () => {
+  it("returns owner (separate, not in members), members with name/email/role, and viewerUserId", async () => {
+    const owner = await testDb.user.create({
+      data: { name: "Owner", email: "owner@team.com" },
+    });
+    const editor = await testDb.user.create({
+      data: { name: "Edith", email: "edith@team.com" },
+    });
+    const viewer = await testDb.user.create({
+      data: { name: null, email: "viewer@team.com" },
+    });
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Shared" },
+    );
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: editor.id, role: "EDITOR" },
+    });
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: viewer.id, role: "VIEWER" },
+    });
+
+    const access = await getProjectAccess(
+      testDb,
+      { userId: owner.id },
+      { slug: project.slug },
+    );
+
+    expect(access.viewerUserId).toBe(owner.id);
+    expect(access.owner).toEqual({
+      userId: owner.id,
+      name: "Owner",
+      email: "owner@team.com",
+    });
+    // Owner is NOT in members (ADR-0040 — identity, never a membership row).
+    expect(access.members.map((m) => m.userId)).not.toContain(owner.id);
+    expect(access.members).toEqual([
+      {
+        userId: editor.id,
+        name: "Edith",
+        email: "edith@team.com",
+        role: "EDITOR",
+      },
+      {
+        userId: viewer.id,
+        name: null,
+        email: "viewer@team.com",
+        role: "VIEWER",
+      },
+    ]);
+  });
+
+  it("an ADMIN member (not the owner) gets the full payload with their own viewerUserId", async () => {
+    const owner = await makeUser("Owner");
+    const admin = await testDb.user.create({
+      data: { name: "Admin", email: "admin@team.com" },
+    });
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Shared" },
+    );
+    await testDb.projectMembership.create({
+      data: { projectId: project.id, userId: admin.id, role: "ADMIN" },
+    });
+
+    const access = await getProjectAccess(
+      testDb,
+      { userId: admin.id },
+      { slug: project.slug },
+    );
+
+    expect(access.viewerUserId).toBe(admin.id);
+    expect(access.owner.userId).toBe(owner.id);
+    // The admin themselves IS a membership row (only the owner is excluded).
+    expect(access.members.map((m) => m.userId)).toContain(admin.id);
+  });
+
+  it("includes expired and maxed-out invites but EXCLUDES revoked ones", async () => {
+    const owner = await makeUser("Owner");
+    const project = await createProject(
+      testDb,
+      { userId: owner.id },
+      { title: "Invites" },
+    );
+
+    const active = await testDb.projectInvite.create({
+      data: {
+        projectId: project.id,
+        role: "VIEWER",
+        tokenHash: "hash-active",
+        prefix: "infinv_aaa",
+        keyVersion: 1,
+      },
+    });
+    const expired = await testDb.projectInvite.create({
+      data: {
+        projectId: project.id,
+        role: "EDITOR",
+        tokenHash: "hash-expired",
+        prefix: "infinv_bbb",
+        keyVersion: 1,
+        expiresAt: new Date(Date.now() - 1000),
+      },
+    });
+    const maxed = await testDb.projectInvite.create({
+      data: {
+        projectId: project.id,
+        role: "VIEWER",
+        tokenHash: "hash-maxed",
+        prefix: "infinv_ccc",
+        keyVersion: 1,
+        maxUses: 2,
+        useCount: 2,
+      },
+    });
+    const revoked = await testDb.projectInvite.create({
+      data: {
+        projectId: project.id,
+        role: "ADMIN",
+        tokenHash: "hash-revoked",
+        prefix: "infinv_ddd",
+        keyVersion: 1,
+        revokedAt: new Date(),
+      },
+    });
+
+    const access = await getProjectAccess(
+      testDb,
+      { userId: owner.id },
+      { slug: project.slug },
+    );
+
+    const ids = access.invites.map((i) => i.id);
+    expect(ids).toContain(active.id);
+    expect(ids).toContain(expired.id);
+    expect(ids).toContain(maxed.id);
+    expect(ids).not.toContain(revoked.id);
+
+    const maxedRow = access.invites.find((i) => i.id === maxed.id);
+    expect(maxedRow).toMatchObject({
+      prefix: "infinv_ccc",
+      role: "VIEWER",
+      maxUses: 2,
+      useCount: 2,
+    });
+  });
+});
+
 describe("deleteProject — non-disclosure on slug-keyed write (ADR-0040)", () => {
   it("throws NotFoundError (not Forbidden) for a logged-in non-member of a guestAccess=NONE project", async () => {
     const owner = await makeUser("Owner");

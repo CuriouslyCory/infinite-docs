@@ -2,7 +2,7 @@ import { type ProjectRole } from "../../../generated/prisma/client";
 import { roleRank } from "./access";
 import { authorizeProjectWrite } from "./access-db";
 import type { Actor, Db } from "./actor";
-import { NotFoundError } from "./errors";
+import { ForbiddenError, NotFoundError } from "./errors";
 import { isPrismaUniqueViolation } from "./prisma-errors";
 import {
   CURRENT_KEY_VERSION,
@@ -13,9 +13,11 @@ import {
 import {
   claimInviteInput,
   createInviteInput,
+  revokeInviteInput,
   type ClaimInviteInput,
   type CreateInviteInput,
   type ProjectRoleInput,
+  type RevokeInviteInput,
 } from "~/lib/schemas";
 
 const MAX_TOKEN_ATTEMPTS = 3;
@@ -275,4 +277,53 @@ async function claimWithinTx(
   }
 
   return { slug };
+}
+
+/**
+ * Revokes an invite link (#108), gated `admin` (owner or ADMIN member; ADR-0040)
+ * — with a DELIBERATE non-disclosure inversion of the usual id-keyed Forbidden
+ * posture. An `inviteId` is NOT a presumed-held project handle (unlike the
+ * `projectId` the other manage mutations carry, which the manager already holds in
+ * the ShareMenu); a non-admin who guessed or holds an inviteId must not learn the
+ * invite — and thus its project — exists. So BOTH a missing invite AND a
+ * `ForbiddenError` from the admin gate collapse to ONE `NotFoundError`: the two
+ * are indistinguishable to the caller (ADR-0040 non-disclosure). Any non-Forbidden
+ * error from the gate (e.g. a NotFound for a soft-deleted project) propagates
+ * unchanged.
+ *
+ * The flip is idempotent: the conditional `updateMany` (`revokedAt: null`
+ * predicate) makes a re-revoke a silent no-op success — the invite provably exists
+ * and the actor is admin, so a 0-count just means "already revoked", not a
+ * failure. Revoking blocks FUTURE claims only (`claimInvite` rejects a
+ * non-null `revokedAt`); memberships already granted via the link are untouched.
+ */
+export async function revokeInvite(
+  db: Db,
+  actor: Actor,
+  input: RevokeInviteInput,
+): Promise<{ id: string }> {
+  const { inviteId } = revokeInviteInput.parse(input);
+
+  const invite = await db.projectInvite.findUnique({
+    where: { id: inviteId },
+    select: { projectId: true },
+  });
+  if (!invite) {
+    throw new NotFoundError();
+  }
+
+  try {
+    await authorizeProjectWrite(db, actor, invite.projectId, "admin");
+  } catch (error) {
+    if (error instanceof ForbiddenError) {
+      throw new NotFoundError();
+    }
+    throw error;
+  }
+
+  await db.projectInvite.updateMany({
+    where: { id: inviteId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  return { id: inviteId };
 }

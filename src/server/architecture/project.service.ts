@@ -22,6 +22,7 @@ import {
   type GetProjectAccessInput,
   type GuestAccessLevel,
   type GetProjectBySlugInput,
+  type ProjectRoleInput,
   type SetGuestAccessInput,
 } from "~/lib/schemas";
 import { generateSlug } from "./slug";
@@ -156,25 +157,59 @@ export async function setGuestAccess(
   return { id: projectId, guestAccess: level };
 }
 
-/**
- * The sharing/access facts the ShareMenu and (later, #108) the member/invite
- * panel read. Returned as a NAMED object — never a bare enum — so #108 appends
- * `members`/`invites` fields with zero break to the #105 callers, who read only
- * `.guestAccess`.
- */
-export interface ProjectAccess {
-  guestAccess: GuestAccessLevel;
+/** One non-owner member of a Project, as the manage-access panel lists it. */
+export interface ProjectAccessMember {
+  userId: string;
+  name: string | null;
+  email: string | null;
+  role: ProjectRoleInput;
+}
+
+/** One active (non-revoked) invite link, as the manage-access panel lists it. */
+export interface ProjectAccessInvite {
+  id: string;
+  prefix: string;
+  role: ProjectRoleInput;
+  expiresAt: Date | null;
+  maxUses: number | null;
+  useCount: number;
 }
 
 /**
- * Reads a Project's sharing/access facts (#105), gated on `admin` (ADR-0040).
- * Composes the non-disclosure ladder exactly: `authorizeProjectRead` throws
- * `NotFoundError` when the actor cannot even read (anon/non-member at NONE, or an
- * unknown slug) — a true non-reader stays non-disclosed; then
+ * The sharing/access facts the ShareMenu (#105) and the manage-access panel
+ * (#108) read. Returned as a NAMED object — never a bare enum — so the #105
+ * callers (who read only `.guestAccess`) survive the #108 growth untouched; their
+ * optimistic update spreads `{ ...old, guestAccess }`, preserving these fields.
+ *
+ * `owner` is returned SEPARATELY from `members` because the owner is the apex
+ * identity (`ownerId`), never a membership row (ADR-0040) — the panel renders it
+ * as a non-editable row. `members` therefore EXCLUDES the owner. `invites` holds
+ * only non-revoked links (expired/maxed ones stay visible so an admin sees why a
+ * link died and can revoke it; revoked = already dismissed). `viewerUserId` is
+ * the admin actor's own id, so the panel can tag "(You)" and confirm self-removal.
+ */
+export interface ProjectAccess {
+  guestAccess: GuestAccessLevel;
+  viewerUserId: string;
+  owner: { userId: string; name: string | null; email: string | null };
+  members: ProjectAccessMember[];
+  invites: ProjectAccessInvite[];
+}
+
+/**
+ * Reads a Project's sharing/access facts (#105, grown for #108), gated on `admin`
+ * (ADR-0040). Composes the non-disclosure ladder exactly: `authorizeProjectRead`
+ * throws `NotFoundError` when the actor cannot even read (anon/non-member at NONE,
+ * or an unknown slug) — a true non-reader stays non-disclosed; then
  * `requireCapability(cap, "admin")` throws `ForbiddenError` for a reader below
  * admin (a guest-VIEW reader, VIEWER, or EDITOR) — they already proved existence
  * by reading, so Forbidden discloses nothing. The owner and ADMIN members get the
- * facts. Returns {@link ProjectAccess}, shaped to grow for #108.
+ * facts.
+ *
+ * The three reads fire in one `Promise.all` (no waterfall) and the members read
+ * pulls each member's `User.name`/`email` via a relation include (no N+1). The
+ * actor is non-null past the admin gate (ADMIN+ requires a session), so
+ * `viewerUserId` is `actor.userId`.
  */
 export async function getProjectAccess(
   db: Db,
@@ -188,7 +223,52 @@ export async function getProjectAccess(
     slug,
   );
   requireCapability(viewerCapability, "admin");
-  return { guestAccess: project.guestAccess };
+
+  const [owner, members, invites] = await Promise.all([
+    db.user.findUnique({
+      where: { id: project.ownerId },
+      select: { id: true, name: true, email: true },
+    }),
+    db.projectMembership.findMany({
+      where: { projectId: project.id },
+      select: {
+        userId: true,
+        role: true,
+        user: { select: { name: true, email: true } },
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+    db.projectInvite.findMany({
+      where: { projectId: project.id, revokedAt: null },
+      select: {
+        id: true,
+        prefix: true,
+        role: true,
+        expiresAt: true,
+        maxUses: true,
+        useCount: true,
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  return {
+    guestAccess: project.guestAccess,
+    // Past the admin gate the actor is non-null (ADMIN+ requires a session).
+    viewerUserId: actor!.userId,
+    owner: {
+      userId: project.ownerId,
+      name: owner?.name ?? null,
+      email: owner?.email ?? null,
+    },
+    members: members.map((m) => ({
+      userId: m.userId,
+      name: m.user.name,
+      email: m.user.email,
+      role: m.role,
+    })),
+    invites,
+  };
 }
 
 async function createWithUniqueSlug(

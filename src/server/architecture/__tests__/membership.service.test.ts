@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { type ProjectRole } from "../../../../generated/prisma/client";
-import { ForbiddenError } from "../errors";
-import { grantMemberByEmail } from "../membership.service";
+import { authorizeProjectWrite } from "../access-db";
+import { ConflictError, ForbiddenError, NotFoundError } from "../errors";
+import {
+  grantMemberByEmail,
+  removeMember,
+  updateMemberRole,
+} from "../membership.service";
 import { createProject } from "../project.service";
 import { resetDb, testDb } from "./helpers/test-db";
 
@@ -193,5 +198,221 @@ describe("grantMemberByEmail — ADMIN+ gate", () => {
       where: { projectId: project.id, userId: target.id },
     });
     expect(count).toBe(0);
+  });
+});
+
+describe("updateMemberRole — direct set (#108)", () => {
+  it("an ADMIN upgrades a VIEWER to EDITOR", async () => {
+    const owner = await makeUser("Owner");
+    const member = await makeUser("Member");
+    const project = await makeProject(owner.id);
+    await addMember(project.id, member.id, "VIEWER");
+
+    const result = await updateMemberRole(
+      testDb,
+      { userId: owner.id },
+      { projectId: project.id, userId: member.id, role: "EDITOR" },
+    );
+
+    expect(result).toEqual({
+      projectId: project.id,
+      userId: member.id,
+      role: "EDITOR",
+    });
+    expect(await membershipRole(project.id, member.id)).toBe("EDITOR");
+  });
+
+  it("DOWNGRADES an EDITOR to VIEWER — direct set, never MAX", async () => {
+    const owner = await makeUser("Owner");
+    const member = await makeUser("Member");
+    const project = await makeProject(owner.id);
+    await addMember(project.id, member.id, "EDITOR");
+
+    await updateMemberRole(
+      testDb,
+      { userId: owner.id },
+      { projectId: project.id, userId: member.id, role: "VIEWER" },
+    );
+
+    expect(await membershipRole(project.id, member.id)).toBe("VIEWER");
+  });
+
+  it("rejects targeting the owner with ConflictError and writes nothing", async () => {
+    const owner = await makeUser("Owner");
+    const project = await makeProject(owner.id);
+
+    await expect(
+      updateMemberRole(
+        testDb,
+        { userId: owner.id },
+        { projectId: project.id, userId: owner.id, role: "VIEWER" },
+      ),
+    ).rejects.toBeInstanceOf(ConflictError);
+    // The owner never had a membership row, and none was created.
+    expect(await membershipRole(project.id, owner.id)).toBeNull();
+  });
+
+  it("throws NotFoundError for an absent membership row", async () => {
+    const owner = await makeUser("Owner");
+    const stranger = await makeUser("Stranger");
+    const project = await makeProject(owner.id);
+
+    await expect(
+      updateMemberRole(
+        testDb,
+        { userId: owner.id },
+        { projectId: project.id, userId: stranger.id, role: "EDITOR" },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("an ADMIN member (not the owner) can change another member's role", async () => {
+    const owner = await makeUser("Owner");
+    const admin = await makeUser("Admin");
+    const member = await makeUser("Member");
+    const project = await makeProject(owner.id);
+    await addMember(project.id, admin.id, "ADMIN");
+    await addMember(project.id, member.id, "VIEWER");
+
+    await updateMemberRole(
+      testDb,
+      { userId: admin.id },
+      { projectId: project.id, userId: member.id, role: "ADMIN" },
+    );
+
+    expect(await membershipRole(project.id, member.id)).toBe("ADMIN");
+  });
+
+  it("rejects a VIEWER, an EDITOR, and a non-member (Forbidden); non-member projectId stays Forbidden", async () => {
+    const owner = await makeUser("Owner");
+    const viewer = await makeUser("Viewer");
+    const editor = await makeUser("Editor");
+    const stranger = await makeUser("Stranger");
+    const target = await makeUser("Target");
+    const project = await makeProject(owner.id);
+    await addMember(project.id, viewer.id, "VIEWER");
+    await addMember(project.id, editor.id, "EDITOR");
+    await addMember(project.id, target.id, "VIEWER");
+
+    for (const userId of [viewer.id, editor.id, stranger.id]) {
+      await expect(
+        updateMemberRole(
+          testDb,
+          { userId },
+          { projectId: project.id, userId: target.id, role: "EDITOR" },
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenError);
+    }
+    expect(await membershipRole(project.id, target.id)).toBe("VIEWER");
+  });
+});
+
+describe("removeMember — delete + access lost (#108)", () => {
+  it("an ADMIN removes a member; the row is gone and the user loses access", async () => {
+    const owner = await makeUser("Owner");
+    const member = await makeUser("Member");
+    const project = await makeProject(owner.id);
+    await addMember(project.id, member.id, "EDITOR");
+
+    const result = await removeMember(
+      testDb,
+      { userId: owner.id },
+      { projectId: project.id, userId: member.id },
+    );
+
+    expect(result).toEqual({ projectId: project.id, userId: member.id });
+    expect(await membershipRole(project.id, member.id)).toBeNull();
+
+    // Access falls back to the guest grant / none: at guestAccess=NONE the
+    // ex-member can no longer even read.
+    await testDb.project.update({
+      where: { id: project.id },
+      data: { guestAccess: "NONE" },
+    });
+    await expect(
+      authorizeProjectWrite(testDb, { userId: member.id }, project.id, "view"),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("rejects targeting the owner with ConflictError", async () => {
+    const owner = await makeUser("Owner");
+    const project = await makeProject(owner.id);
+
+    await expect(
+      removeMember(
+        testDb,
+        { userId: owner.id },
+        { projectId: project.id, userId: owner.id },
+      ),
+    ).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("throws NotFoundError for an absent membership row", async () => {
+    const owner = await makeUser("Owner");
+    const stranger = await makeUser("Stranger");
+    const project = await makeProject(owner.id);
+
+    await expect(
+      removeMember(
+        testDb,
+        { userId: owner.id },
+        { projectId: project.id, userId: stranger.id },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("an ADMIN may remove ANOTHER ADMIN", async () => {
+    const owner = await makeUser("Owner");
+    const adminA = await makeUser("AdminA");
+    const adminB = await makeUser("AdminB");
+    const project = await makeProject(owner.id);
+    await addMember(project.id, adminA.id, "ADMIN");
+    await addMember(project.id, adminB.id, "ADMIN");
+
+    await removeMember(
+      testDb,
+      { userId: adminA.id },
+      { projectId: project.id, userId: adminB.id },
+    );
+
+    expect(await membershipRole(project.id, adminB.id)).toBeNull();
+  });
+
+  it("an ADMIN may remove THEMSELVES", async () => {
+    const owner = await makeUser("Owner");
+    const admin = await makeUser("Admin");
+    const project = await makeProject(owner.id);
+    await addMember(project.id, admin.id, "ADMIN");
+
+    await removeMember(
+      testDb,
+      { userId: admin.id },
+      { projectId: project.id, userId: admin.id },
+    );
+
+    expect(await membershipRole(project.id, admin.id)).toBeNull();
+  });
+
+  it("rejects a VIEWER, an EDITOR, and a non-member (Forbidden); the row survives", async () => {
+    const owner = await makeUser("Owner");
+    const viewer = await makeUser("Viewer");
+    const editor = await makeUser("Editor");
+    const stranger = await makeUser("Stranger");
+    const target = await makeUser("Target");
+    const project = await makeProject(owner.id);
+    await addMember(project.id, viewer.id, "VIEWER");
+    await addMember(project.id, editor.id, "EDITOR");
+    await addMember(project.id, target.id, "VIEWER");
+
+    for (const userId of [viewer.id, editor.id, stranger.id]) {
+      await expect(
+        removeMember(
+          testDb,
+          { userId },
+          { projectId: project.id, userId: target.id },
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenError);
+    }
+    expect(await membershipRole(project.id, target.id)).toBe("VIEWER");
   });
 });
