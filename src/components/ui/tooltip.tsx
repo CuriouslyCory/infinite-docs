@@ -57,7 +57,7 @@ export function TooltipPanel({
         className="z-50"
       >
         <TooltipPrimitive.Popup
-          className={`pointer-events-none max-w-[20rem] rounded-md border border-white/15 bg-[#1f2138]/95 px-2.5 py-1.5 text-xs leading-snug text-white shadow-2xl backdrop-blur-md transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 ${className}`}
+          className={`border-border bg-popover/95 text-popover-foreground pointer-events-none max-w-[20rem] rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-2xl backdrop-blur-md transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 ${className}`}
           {...props}
         >
           {children}

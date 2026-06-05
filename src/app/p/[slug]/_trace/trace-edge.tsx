@@ -62,7 +62,7 @@ export function TraceConnectionEdgeView({
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             }}
-            className="pointer-events-none absolute rounded bg-[#15162c] px-1.5 py-0.5 text-[10px] text-white/70"
+            className="pointer-events-none absolute rounded bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground"
           >
             {data.label}
           </div>

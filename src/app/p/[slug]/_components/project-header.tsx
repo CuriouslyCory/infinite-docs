@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Route } from "lucide-react";
 import { Suspense } from "react";
 
+import { ThemeToggle } from "~/app/_components/theme-toggle";
 import { Breadcrumbs } from "~/app/p/[slug]/_canvas/breadcrumbs";
 import { ShareMenu } from "~/app/p/[slug]/_components/share-menu";
 import { ViewOnlyBadge } from "~/app/p/[slug]/_components/view-only-badge";
@@ -51,10 +52,10 @@ export function ProjectHeader({
   embedded?: boolean;
 }) {
   return (
-    <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+    <header className="border-border flex items-center gap-3 border-b px-4 py-3">
       <Link
         href="/"
-        className="text-sm text-white/60 no-underline transition hover:text-white"
+        className="text-muted-foreground hover:text-foreground text-sm no-underline transition"
       >
         ← Projects
       </Link>
@@ -72,13 +73,14 @@ export function ProjectHeader({
         {!canEdit && !embedded && <ViewOnlyBadge />}
         <Link
           href={`/p/${slug}/trace`}
-          className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-xs font-medium text-white/80 no-underline transition hover:bg-white/15 hover:text-white"
+          className="border-border bg-muted text-muted-foreground hover:bg-muted hover:text-foreground flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium no-underline transition"
           title="Open the Trace view"
         >
           <Route size={12} aria-hidden />
           Trace
         </Link>
         <ShareMenu slug={slug} projectId={projectId} canManage={canManage} />
+        <ThemeToggle />
       </div>
     </header>
   );

@@ -76,7 +76,7 @@ export function ConnectToPalette({
       // scores the query against `keywords`, so identity and search stay separate
       // and titles can repeat across scopes without colliding.
       label="Connect to a Component"
-      className="w-80 border border-white/15 shadow-2xl"
+      className="w-80 border border-border shadow-2xl"
     >
       <CommandInput placeholder="Search components…" autoFocus />
       <CommandList>
@@ -185,10 +185,10 @@ function ConnectItem({
       <Icon
         size={14}
         aria-hidden
-        className="shrink-0 text-[hsl(280,100%,80%)]"
+        className="shrink-0 text-primary"
       />
       <span className="truncate">{component.title}</span>
-      <span className="ml-auto shrink-0 truncate pl-2 text-xs text-white/40">
+      <span className="ml-auto shrink-0 truncate pl-2 text-xs text-muted-foreground/70">
         {path.length > 0 ? path.join(" / ") : "Project root"}
       </span>
     </CommandItem>
@@ -264,11 +264,11 @@ export function ConnectToPopover({
           // as a permanent loading spinner (TanStack v5 leaves `data`
           // undefined and `isLoading=false` after retries exhaust). Closing
           // and reopening the popover re-fires the lazy query.
-          <div className="w-80 rounded-lg border border-white/15 bg-[#1f2138] p-4 text-sm text-white/40 shadow-2xl">
+          <div className="w-80 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground/70 shadow-2xl">
             Couldn’t load components. Close and reopen to retry.
           </div>
         ) : isLoading || !components ? (
-          <div className="w-80 rounded-lg border border-white/15 bg-[#1f2138] p-4 text-sm text-white/40 shadow-2xl">
+          <div className="w-80 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground/70 shadow-2xl">
             Loading components…
           </div>
         ) : (

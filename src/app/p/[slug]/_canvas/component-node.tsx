@@ -181,14 +181,12 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
   return (
     <div
       title={data.optimistic ? undefined : "Double-click to open"}
-      className={`group relative flex items-center gap-2 rounded-lg border px-3 py-2 text-sm text-white shadow-lg ${
-        isPortal ? "bg-[#1a2433]" : "bg-[#1f2138]"
-      } ${
+      className={`group bg-card text-card-foreground relative flex items-center gap-2 rounded-lg border-2 px-3 py-2 text-sm shadow-lg ${
         isTraced
-          ? "border-[hsl(280,100%,70%)]"
+          ? "border-primary"
           : isPortal
-            ? "border-dashed border-sky-400/60"
-            : "border-white/15"
+            ? "border-portal/60 border-dashed"
+            : "border-border"
       } ${data.optimistic ? "opacity-60" : "opacity-100"}`}
     >
       {/* Trace-point indicator (#57): a distinct corner badge, kept visually
@@ -198,7 +196,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
         <span
           aria-label="Trace point"
           title="Trace point"
-          className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-[hsl(280,100%,70%)] text-white shadow"
+          className="border-border bg-primary text-primary-foreground absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full border shadow"
         >
           <Route size={11} aria-hidden />
         </span>
@@ -214,17 +212,13 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
         position={Position.Left}
         aria-label="Connection point (left)"
         title="Drag to connect (left)"
-        className="h-2! w-2! border-white/40! bg-white/60!"
+        className="border-primary! bg-foreground! h-2.5! w-2.5! border-2!"
       />
-      <Icon
-        size={16}
-        aria-hidden
-        className="shrink-0 text-[hsl(280,100%,80%)]"
-      />
+      <Icon size={16} aria-hidden className="text-primary shrink-0" />
       {editing ? (
         // `nodrag` keeps React Flow from starting a node drag while typing.
         <input
-          className="nodrag w-[12rem] rounded bg-white/10 px-1 py-0.5 text-sm text-white outline-none"
+          className="nodrag bg-muted text-foreground w-[12rem] rounded px-1 py-0.5 text-sm outline-none"
           aria-label="Rename component"
           autoFocus
           value={draft}
@@ -255,7 +249,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           <span
             aria-label="No access to embedded project"
             title="No access"
-            className="flex shrink-0 items-center gap-1 rounded-full border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-white/50"
+            className="border-border bg-muted text-muted-foreground flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
           >
             <Lock size={9} aria-hidden />
             No access
@@ -264,7 +258,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           <span
             aria-label="Embedded project (view only)"
             title="View only"
-            className="flex shrink-0 items-center gap-1 rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
+            className="border-edit/30 bg-edit/10 text-edit flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
           >
             <Eye size={9} aria-hidden />
             View only
@@ -273,7 +267,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           <span
             aria-label="Embedded project"
             title="Embedded project"
-            className="flex shrink-0 items-center gap-1 rounded-full border border-sky-400/30 bg-sky-400/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-200"
+            className="border-portal/30 bg-portal/10 text-portal flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
           >
             <ExternalLink size={9} aria-hidden />
             Project
@@ -290,7 +284,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           type="button"
           aria-label={`Open ${data.title}`}
           title="Open"
-          className="nodrag shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-white focus-visible:opacity-100"
+          className="nodrag text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
           onClick={(e) => {
             e.stopPropagation();
             onDescend(id);
@@ -310,7 +304,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           type="button"
           aria-label={`Rename ${data.title}`}
           title="Rename"
-          className="nodrag shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-white focus-visible:opacity-100"
+          className="nodrag text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
           onClick={(e) => {
             e.stopPropagation();
             beginEditing();
@@ -332,7 +326,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
           type="button"
           aria-label={`Delete ${data.title}`}
           title="Delete"
-          className="nodrag shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-red-400 focus-visible:opacity-100"
+          className="nodrag text-muted-foreground hover:text-destructive shrink-0 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
           onClick={(e) => {
             e.stopPropagation();
             onDelete(id);
@@ -349,7 +343,7 @@ export function ComponentNodeView({ id, data }: NodeProps<ComponentNode>) {
         position={Position.Right}
         aria-label="Connection point (right)"
         title="Drag to connect (right)"
-        className="h-2! w-2! border-white/40! bg-white/60!"
+        className="border-primary! bg-foreground! h-2.5! w-2.5! border-2!"
       />
     </div>
   );

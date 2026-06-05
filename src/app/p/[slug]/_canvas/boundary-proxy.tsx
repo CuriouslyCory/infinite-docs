@@ -102,7 +102,7 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
           ? `Inbound from ${data.title} (off-scope). Go to the real Component.`
           : `Stands in for ${data.title}, which lives outside this canvas. Go to the real Component.`
       }
-      className="group flex items-center gap-2 rounded-lg border border-dashed border-white/25 bg-[#1a1b2e] px-3 py-2 text-sm text-white/70 shadow-inner"
+      className="group flex items-center gap-2 rounded-lg border border-dashed border-border bg-muted px-3 py-2 text-sm text-muted-foreground shadow-inner"
     >
       {/* Both Ports render so the incident Connection attaches on either side;
           a proxy is non-connectable (seeded `connectable: false`), so they are
@@ -112,19 +112,19 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
         position={Position.Left}
         isConnectable={false}
         aria-label="Connection point (left)"
-        className="h-2! w-2! border-white/30! bg-white/40!"
+        className="h-2! w-2! border-foreground/30! bg-foreground/40!"
       />
       {data.lineal && (
         <CornerDownRight
           size={13}
           aria-hidden
-          className="shrink-0 text-[hsl(280,100%,80%)]/70"
+          className="shrink-0 text-primary/70"
         />
       )}
-      <Icon size={16} aria-hidden className="shrink-0 text-white/50" />
+      <Icon size={16} aria-hidden className="shrink-0 text-muted-foreground" />
       <span className="flex max-w-[14rem] flex-col leading-tight">
         {data.lineal && (
-          <span className="text-[10px] tracking-wide text-white/40 uppercase">
+          <span className="text-[10px] tracking-wide text-muted-foreground/70 uppercase">
             Inbound from
           </span>
         )}
@@ -132,7 +132,7 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
             Project, so lead with "From [Foreign Project]" so the proxy reads as a
             cross-project boundary, not a local off-scope one. Untrusted title. */}
         {data.foreignProjectTitle && !data.lineal && (
-          <span className="truncate text-[10px] tracking-wide text-[hsl(280,100%,80%)]/70 uppercase">
+          <span className="truncate text-[10px] tracking-wide text-primary/70 uppercase">
             From {data.foreignProjectTitle}
           </span>
         )}
@@ -145,7 +145,7 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
         type="button"
         aria-label={goToLabel}
         title={goToLabel}
-        className="nodrag shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-white focus-visible:opacity-100"
+        className="nodrag shrink-0 text-muted-foreground/70 opacity-0 transition group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
         onClick={(e) => {
           e.stopPropagation();
           if (isCrossProject && data.referenceNodeId !== undefined) {
@@ -165,7 +165,7 @@ export function BoundaryProxyNodeView({ data }: NodeProps<BoundaryProxyNode>) {
         position={Position.Right}
         isConnectable={false}
         aria-label="Connection point (right)"
-        className="h-2! w-2! border-white/30! bg-white/40!"
+        className="h-2! w-2! border-foreground/30! bg-foreground/40!"
       />
     </div>
   );

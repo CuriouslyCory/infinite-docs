@@ -49,7 +49,7 @@ export function KindPalette({
       // cmdk filters on each item's `value` (the label); a label substring match
       // surfaces a kind from either group, so search overrides affinity ordering.
       label="Component kind"
-      className="w-72 border border-white/15 shadow-2xl"
+      className="w-72 border border-border shadow-2xl"
     >
       <CommandInput placeholder="Search kinds…" autoFocus />
       <CommandList>
@@ -99,14 +99,14 @@ function KindItem({
       <Icon
         size={14}
         aria-hidden
-        className="shrink-0 text-[hsl(280,100%,80%)]"
+        className="shrink-0 text-primary"
       />
       <span className="truncate">{KIND_LABEL[kind]}</span>
       {active && (
         <Check
           size={14}
           aria-hidden
-          className="ml-auto shrink-0 text-white/60"
+          className="ml-auto shrink-0 text-muted-foreground"
         />
       )}
     </CommandItem>

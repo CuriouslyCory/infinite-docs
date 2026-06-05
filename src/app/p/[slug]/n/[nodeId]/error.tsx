@@ -22,9 +22,9 @@ export default function InteriorCanvasError({
   const { slug } = useParams<{ slug: string }>();
 
   return (
-    <main className="flex h-dvh flex-col items-center justify-center gap-4 bg-[#15162c] px-6 text-center text-white">
+    <main className="flex h-dvh flex-col items-center justify-center gap-4 bg-background px-6 text-center text-foreground">
       <h1 className="text-lg font-medium">This Canvas isn’t available</h1>
-      <p className="max-w-sm text-sm text-white/60">
+      <p className="max-w-sm text-sm text-muted-foreground">
         The Component you tried to open isn’t here — it may have been removed,
         or the link is out of date.
       </p>
@@ -32,13 +32,13 @@ export default function InteriorCanvasError({
         <button
           type="button"
           onClick={reset}
-          className="rounded border border-white/20 px-3 py-1.5 transition hover:bg-white/10"
+          className="rounded border border-border px-3 py-1.5 transition hover:bg-foreground/10"
         >
           Try again
         </button>
         <Link
           href={`/p/${slug}`}
-          className="rounded border border-white/20 px-3 py-1.5 no-underline transition hover:bg-white/10"
+          className="rounded border border-border px-3 py-1.5 no-underline transition hover:bg-foreground/10"
         >
           Back to the top-level Canvas
         </Link>

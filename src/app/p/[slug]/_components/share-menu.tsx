@@ -56,7 +56,7 @@ export function ShareMenu({
         render={
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-xs font-medium text-white/80 transition hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none"
+            className="border-border bg-muted text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition focus-visible:ring-2 focus-visible:outline-none"
           >
             <Share2 size={12} aria-hidden />
             Share
@@ -66,15 +66,15 @@ export function ShareMenu({
       <PopoverPanel
         side="bottom"
         align="end"
-        className="flex w-72 flex-col gap-3 rounded-xl border border-white/10 bg-[#1d1e3a] p-4 text-sm text-white shadow-xl"
+        className="border-border bg-popover text-foreground flex w-72 flex-col gap-3 rounded-xl border p-4 text-sm shadow-xl"
       >
         <div className="flex flex-col gap-1.5">
-          <span className="text-white/60">Share this project</span>
+          <span className="text-muted-foreground">Share this project</span>
           <CopyButton
             value={url}
             label="Copy link"
             copiedLabel="Link copied"
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-white/10 px-3 py-2 text-sm font-medium transition hover:bg-white/20"
+            className="bg-muted hover:bg-muted inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition"
           />
         </div>
         {canManage && (
@@ -127,7 +127,7 @@ function GuestAccessToggle({
 
   return (
     <fieldset className="flex flex-col gap-1.5">
-      <legend className="text-white/60">Guest access</legend>
+      <legend className="text-muted-foreground">Guest access</legend>
       {/*
         Native radio inputs (visually hidden, styled via their <label>) so the
         browser gives a real radiogroup for free: a single tab stop, arrow-key
@@ -136,18 +136,18 @@ function GuestAccessToggle({
         handling. Selection-follows-focus is native radio behaviour; each change
         fires the optimistic mutation, which is reversible and idempotent.
       */}
-      <div className="flex gap-1 rounded-lg bg-white/5 p-1">
+      <div className="bg-muted flex gap-1 rounded-lg p-1">
         {guestAccessLevel.options.map((opt) => {
           const disabled = setAccess.isPending || !access.isSuccess;
           return (
             <label
               key={opt}
-              className={`flex-1 rounded-md px-2 py-1 text-center text-xs transition focus-within:ring-2 focus-within:ring-white/40 ${
+              className={`focus-within:ring-ring flex-1 rounded-md px-2 py-1 text-center text-xs transition focus-within:ring-2 ${
                 disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
               } ${
                 level === opt
-                  ? "bg-white/15 text-white"
-                  : "text-white/60 hover:text-white"
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <input
@@ -164,7 +164,7 @@ function GuestAccessToggle({
           );
         })}
       </div>
-      <span className="text-xs text-white/40">
+      <span className="text-muted-foreground/70 text-xs">
         {level === "VIEW"
           ? "Anyone with the link can view."
           : "Only you and invited members."}

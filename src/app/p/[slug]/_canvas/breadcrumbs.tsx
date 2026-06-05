@@ -75,7 +75,7 @@ export function Breadcrumbs({
       ) : (
         <Link
           href={`/p/${slug}`}
-          className="max-w-[12rem] truncate text-white/60 no-underline transition hover:text-white"
+          className="max-w-[12rem] truncate text-muted-foreground no-underline transition hover:text-foreground"
         >
           {projectTitle}
         </Link>
@@ -89,11 +89,11 @@ export function Breadcrumbs({
           <ChevronRight
             size={14}
             aria-hidden
-            className="shrink-0 text-sky-400/50"
+            className="shrink-0 text-portal/50"
           />
           <span
             title="Embedded project"
-            className="max-w-[10rem] truncate text-sky-200/70"
+            className="max-w-[10rem] truncate text-portal/70"
           >
             {portal.title}
           </span>
@@ -107,7 +107,7 @@ export function Breadcrumbs({
           <ChevronRight
             size={14}
             aria-hidden
-            className="shrink-0 text-white/30"
+            className="shrink-0 text-muted-foreground/60"
           />
           {activeRootIsCurrent ? (
             <span
@@ -119,7 +119,7 @@ export function Breadcrumbs({
           ) : (
             <Link
               href={activeRootHref}
-              className="max-w-[12rem] truncate text-white/60 no-underline transition hover:text-white"
+              className="max-w-[12rem] truncate text-muted-foreground no-underline transition hover:text-foreground"
             >
               {activeRootTitle}
             </Link>
@@ -134,7 +134,7 @@ export function Breadcrumbs({
             <ChevronRight
               size={14}
               aria-hidden
-              className="shrink-0 text-white/30"
+              className="shrink-0 text-muted-foreground/60"
             />
             {isCurrent ? (
               <span
@@ -146,7 +146,7 @@ export function Breadcrumbs({
             ) : (
               <Link
                 href={`/p/${slug}/n/${crumb.id}${viaSuffix}`}
-                className="max-w-[12rem] truncate text-white/60 no-underline transition hover:text-white"
+                className="max-w-[12rem] truncate text-muted-foreground no-underline transition hover:text-foreground"
               >
                 {crumb.title}
               </Link>

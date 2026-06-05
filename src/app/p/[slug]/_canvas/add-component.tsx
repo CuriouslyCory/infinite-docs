@@ -32,7 +32,7 @@ export function AddComponent({
           type="button"
           aria-haspopup="listbox"
           disabled={pending}
-          className="flex items-center gap-1.5 rounded-lg bg-[hsl(280,100%,70%)] px-3 py-1.5 text-sm font-semibold text-black backdrop-blur transition hover:bg-[hsl(280,100%,80%)] disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground backdrop-blur transition hover:bg-primary disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus size={14} aria-hidden />
           {pending ? "Adding…" : "Add Component"}

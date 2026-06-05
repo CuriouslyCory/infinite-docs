@@ -68,7 +68,7 @@ export default async function ProjectPage({
 
   return (
     <HydrateClient>
-      <main className="flex h-dvh flex-col bg-[#15162c] text-white">
+      <main className="flex h-dvh flex-col bg-background text-foreground">
         <ProjectHeader
           slug={slug}
           projectTitle={project.title}

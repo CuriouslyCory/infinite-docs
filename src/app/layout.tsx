@@ -1,8 +1,9 @@
 import "~/styles/globals.css";
 
 import { type Metadata } from "next";
-import { Geist } from "next/font/google";
+import { Geist, Oxanium } from "next/font/google";
 
+import { themeInitScript } from "~/lib/theme";
 import { TRPCReactProvider } from "~/trpc/react";
 
 export const metadata: Metadata = {
@@ -16,13 +17,28 @@ const geist = Geist({
   variable: "--font-geist-sans",
 });
 
+const oxanium = Oxanium({
+  subsets: ["latin"],
+  variable: "--font-oxanium",
+});
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geist.variable}`}>
-      <body>
+    <html
+      lang="en"
+      className={`${geist.variable} ${oxanium.variable}`}
+      suppressHydrationWarning
+    >
+      <body className="bg-background text-foreground font-sans antialiased">
+        {/* Applies the stored/default theme class before first paint (no FOUC).
+            Server-rendered, so React never client-renders a <script> (which it
+            warns about). suppressHydrationWarning on <html> covers the class it
+            mutates. */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <TRPCReactProvider>{children}</TRPCReactProvider>
+        <div className="retro-overlay" aria-hidden />
       </body>
     </html>
   );

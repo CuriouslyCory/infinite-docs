@@ -277,13 +277,13 @@ export function ComponentDocsEditor({
       onPasteCapture={onPasteCapture}
     >
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold tracking-wide text-white/60 uppercase">
+        <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Documentation
         </h3>
         {readOnly ? null : mode === "view" ? (
           <button
             type="button"
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-white/60 transition hover:bg-white/10 hover:text-white"
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"
             onClick={enterEdit}
           >
             <Pencil size={12} aria-hidden />
@@ -292,7 +292,7 @@ export function ComponentDocsEditor({
         ) : (
           <button
             type="button"
-            className="rounded bg-[hsl(280,100%,70%)] px-2 py-0.5 text-xs font-medium text-white transition hover:bg-[hsl(280,100%,60%)]"
+            className="rounded bg-primary px-2 py-0.5 text-xs font-medium text-foreground transition hover:bg-primary"
             onClick={leaveEdit}
           >
             Done
@@ -302,12 +302,12 @@ export function ComponentDocsEditor({
 
       {mode === "view" && isEmpty ? (
         readOnly ? (
-          <p className="px-1 py-4 text-xs text-white/40">No documentation.</p>
+          <p className="px-1 py-4 text-xs text-muted-foreground/70">No documentation.</p>
         ) : (
           <button
             type="button"
             onClick={enterEdit}
-            className="rounded border border-dashed border-white/15 px-3 py-4 text-left text-xs text-white/40 transition hover:border-white/30 hover:text-white/60"
+            className="rounded border border-dashed border-border px-3 py-4 text-left text-xs text-muted-foreground/70 transition hover:border-foreground/30 hover:text-muted-foreground"
           >
             No documentation yet — click Edit to describe this Component.
           </button>
@@ -327,11 +327,11 @@ export function ComponentDocsEditor({
           }}
         >
           {mode === "edit" && (
-            <div className="nodrag flex flex-wrap items-center gap-0.5 rounded bg-white/5 p-1">
+            <div className="nodrag flex flex-wrap items-center gap-0.5 rounded bg-muted p-1">
               {toolbarGroups.map((group, gi) => (
                 <div key={gi} className="flex items-center gap-0.5">
                   {gi > 0 && (
-                    <span className="mx-0.5 h-5 w-px bg-white/10" aria-hidden />
+                    <span className="mx-0.5 h-5 w-px bg-muted" aria-hidden />
                   )}
                   {group.map(({ icon: Icon, title, run }) => (
                     <button
@@ -339,7 +339,7 @@ export function ComponentDocsEditor({
                       type="button"
                       title={title}
                       aria-label={title}
-                      className="flex h-7 w-7 items-center justify-center rounded text-white/60 transition hover:bg-white/10 hover:text-white"
+                      className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"
                       onMouseDown={(e) => {
                         e.preventDefault();
                         run();
@@ -356,9 +356,9 @@ export function ComponentDocsEditor({
             readOnly={mode === "view"}
             onBlur={mode === "edit" ? saveNow : undefined}
             placeholder="Write documentation in markdown…"
-            className={`plate-doc nodrag rounded text-sm text-white/90 outline-none ${
+            className={`plate-doc nodrag rounded text-sm text-foreground outline-none ${
               mode === "edit"
-                ? "max-h-80 min-h-32 overflow-y-auto bg-white/5 p-2"
+                ? "max-h-80 min-h-32 overflow-y-auto bg-muted p-2"
                 : "p-0"
             }`}
           />

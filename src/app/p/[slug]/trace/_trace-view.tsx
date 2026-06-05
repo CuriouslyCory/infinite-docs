@@ -184,9 +184,9 @@ function SavedTracesPanel({
   if (!canSave && !hasTraces) return null;
 
   return (
-    <div className="border-b border-white/10 bg-white/[0.03] px-6 py-4">
+    <div className="border-b border-border bg-foreground/[0.03] px-6 py-4">
       <div className="mx-auto flex w-full max-w-xl flex-col gap-3">
-        <h2 className="text-sm font-semibold text-white/80">Saved Traces</h2>
+        <h2 className="text-sm font-semibold text-muted-foreground">Saved Traces</h2>
 
         {canSave && (
           <div className="flex items-center gap-2">
@@ -199,13 +199,13 @@ function SavedTracesPanel({
               }}
               placeholder="Name this Trace…"
               maxLength={120}
-              className="min-w-0 flex-1 rounded border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white placeholder:text-white/30 focus:border-[hsl(280,100%,70%)] focus:outline-none"
+              className="min-w-0 flex-1 rounded border border-border bg-muted px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
             />
             <button
               type="button"
               onClick={handleSave}
               disabled={name.trim().length === 0 || createTrace.isPending}
-              className="flex shrink-0 items-center gap-1.5 rounded bg-[hsl(280,100%,70%)] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[hsl(280,100%,75%)] disabled:opacity-40"
+              className="flex shrink-0 items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-primary disabled:opacity-40"
             >
               <Save size={14} aria-hidden />
               Save
@@ -227,7 +227,7 @@ function SavedTracesPanel({
             ))}
           </ul>
         ) : (
-          <p className="text-xs text-white/40">
+          <p className="text-xs text-muted-foreground/70">
             No saved Traces yet. Mark 2 or more trace points and save one.
           </p>
         )}
@@ -317,11 +317,11 @@ function SavedTraceRow({
   };
 
   return (
-    <li className="flex items-center gap-2 rounded bg-white/5 px-3 py-2">
+    <li className="flex items-center gap-2 rounded bg-muted px-3 py-2">
       <Route
         size={14}
         aria-hidden
-        className="shrink-0 text-[hsl(280,100%,80%)]"
+        className="shrink-0 text-primary"
       />
       {editing ? (
         <input
@@ -338,12 +338,12 @@ function SavedTraceRow({
             }
           }}
           maxLength={120}
-          className="min-w-0 flex-1 rounded border border-white/10 bg-white/10 px-2 py-0.5 text-sm text-white focus:border-[hsl(280,100%,70%)] focus:outline-none"
+          className="min-w-0 flex-1 rounded border border-border bg-muted px-2 py-0.5 text-sm text-foreground focus:border-primary focus:outline-none"
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate text-sm text-white">
+        <span className="min-w-0 flex-1 truncate text-sm text-foreground">
           {trace.name}
-          <span className="ml-2 text-xs text-white/40">
+          <span className="ml-2 text-xs text-muted-foreground/70">
             {trace.nodeIds.length} points
           </span>
         </span>
@@ -354,7 +354,7 @@ function SavedTraceRow({
         aria-label="Load Trace"
         title="Load Trace"
         onClick={onLoad}
-        className="flex shrink-0 items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs font-medium text-white/80 transition hover:bg-white/15 hover:text-white"
+        className="flex shrink-0 items-center gap-1 rounded bg-muted px-2 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
       >
         <Upload size={12} aria-hidden />
         Load
@@ -368,7 +368,7 @@ function SavedTraceRow({
             title="Save name"
             onMouseDown={(e) => e.preventDefault()}
             onClick={commitRename}
-            className="shrink-0 text-white/40 transition hover:text-white"
+            className="shrink-0 text-muted-foreground/70 transition hover:text-foreground"
           >
             <Check size={14} aria-hidden />
           </button>
@@ -382,7 +382,7 @@ function SavedTraceRow({
                 setDraft(trace.name);
                 setEditing(true);
               }}
-              className="shrink-0 text-white/40 transition hover:text-white"
+              className="shrink-0 text-muted-foreground/70 transition hover:text-foreground"
             >
               <Pencil size={14} aria-hidden />
             </button>
@@ -391,7 +391,7 @@ function SavedTraceRow({
               aria-label="Delete Trace"
               title="Delete Trace"
               onClick={() => deleteTrace.mutate({ slug, traceId: trace.id })}
-              className="shrink-0 text-white/40 transition hover:text-red-400"
+              className="shrink-0 text-muted-foreground/70 transition hover:text-destructive"
             >
               <Trash2 size={14} aria-hidden />
             </button>
@@ -417,9 +417,9 @@ function WorkingSetManager({
   if (count === 0) {
     return (
       <div className="mx-auto flex max-w-md flex-col items-center gap-3 px-6 py-20 text-center">
-        <Route size={28} aria-hidden className="text-white/40" />
-        <h2 className="text-lg font-semibold text-white">Trace</h2>
-        <p className="text-sm text-white/60">
+        <Route size={28} aria-hidden className="text-muted-foreground/70" />
+        <h2 className="text-lg font-semibold text-foreground">Trace</h2>
+        <p className="text-sm text-muted-foreground">
           Add 2 or more trace points to see the graph. Open a Component and
           check “Trace this Component” to mark it.
         </p>
@@ -430,11 +430,11 @@ function WorkingSetManager({
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-4 px-6 py-10">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">Trace points</h2>
+        <h2 className="text-lg font-semibold text-foreground">Trace points</h2>
         <button
           type="button"
           onClick={clear}
-          className="flex items-center gap-1.5 rounded bg-white/10 px-2 py-1 text-xs font-medium text-white/80 transition hover:bg-white/15 hover:text-white"
+          className="flex items-center gap-1.5 rounded bg-muted px-2 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
         >
           <Trash2 size={12} aria-hidden />
           Clear all
@@ -442,7 +442,7 @@ function WorkingSetManager({
       </div>
 
       {count < 2 && (
-        <p className="rounded border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/60">
+        <p className="rounded border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
           Add 2 or more trace points to see the graph.
         </p>
       )}
@@ -481,7 +481,7 @@ function TraceCrossLayer({
 
   if (isLoading) {
     return (
-      <div className="px-6 py-20 text-center text-sm text-white/40">
+      <div className="px-6 py-20 text-center text-sm text-muted-foreground/70">
         Deriving trace…
       </div>
     );
@@ -489,7 +489,7 @@ function TraceCrossLayer({
 
   if (isError || !data) {
     return (
-      <div className="px-6 py-20 text-center text-sm text-white/40">
+      <div className="px-6 py-20 text-center text-sm text-muted-foreground/70">
         Couldn’t derive this trace right now.
       </div>
     );
@@ -498,9 +498,9 @@ function TraceCrossLayer({
   if (data.tracePointIds.length < 2 || data.nodes.length === 0) {
     return (
       <div className="mx-auto flex max-w-md flex-col items-center gap-3 px-6 py-20 text-center">
-        <Route size={28} aria-hidden className="text-white/40" />
-        <h2 className="text-lg font-semibold text-white">Trace</h2>
-        <p className="text-sm text-white/60">
+        <Route size={28} aria-hidden className="text-muted-foreground/70" />
+        <h2 className="text-lg font-semibold text-foreground">Trace</h2>
+        <p className="text-sm text-muted-foreground">
           Add 2 or more trace points on live Components to see the graph.
         </p>
       </div>
@@ -523,21 +523,21 @@ function TracePointRow({
 }) {
   const Icon = component ? KIND_ICON[component.kind] : Route;
   return (
-    <li className="flex items-center gap-2 rounded bg-white/5 px-3 py-2">
+    <li className="flex items-center gap-2 rounded bg-muted px-3 py-2">
       <Icon
         size={14}
         aria-hidden
-        className="shrink-0 text-[hsl(280,100%,80%)]"
+        className="shrink-0 text-primary"
       />
       {component ? (
-        <span className="min-w-0 flex-1 truncate text-sm text-white">
+        <span className="min-w-0 flex-1 truncate text-sm text-foreground">
           {component.title}
-          <span className="ml-2 text-xs text-white/40">
+          <span className="ml-2 text-xs text-muted-foreground/70">
             {KIND_LABEL[component.kind]}
           </span>
         </span>
       ) : (
-        <span className="min-w-0 flex-1 truncate text-sm text-white/40 italic">
+        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground/70 italic">
           Removed component
         </span>
       )}
@@ -546,7 +546,7 @@ function TracePointRow({
         aria-label="Remove trace point"
         title="Remove trace point"
         onClick={onRemove}
-        className="shrink-0 text-white/40 transition hover:text-white"
+        className="shrink-0 text-muted-foreground/70 transition hover:text-foreground"
       >
         <X size={14} aria-hidden />
       </button>

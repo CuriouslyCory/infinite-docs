@@ -62,26 +62,26 @@ export function ProjectDashboard() {
           placeholder="New project name"
           maxLength={200}
           aria-label="New project name"
-          className="flex-1 rounded-lg bg-white/10 px-4 py-2 text-white placeholder:text-white/40 focus:bg-white/15 focus:outline-none"
+          className="flex-1 rounded-lg bg-muted px-4 py-2 text-foreground placeholder:text-muted-foreground/70 focus:bg-muted focus:outline-none"
         />
         <button
           type="submit"
           disabled={!canSubmit}
-          className="rounded-lg bg-[hsl(280,100%,70%)] px-6 py-2 font-semibold text-black transition hover:bg-[hsl(280,100%,80%)] disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg bg-primary px-6 py-2 font-semibold text-primary-foreground transition hover:bg-primary disabled:cursor-not-allowed disabled:opacity-50"
         >
           {createProject.isPending ? "Creating…" : "Create"}
         </button>
       </form>
 
       {createProject.isError && (
-        <p role="alert" className="mt-2 text-sm text-red-300">
+        <p role="alert" className="mt-2 text-sm text-destructive">
           Couldn’t create the project. Please try again.
         </p>
       )}
 
       <div className="mt-8">
         {projects.length === 0 ? (
-          <p className="text-white/50">
+          <p className="text-muted-foreground">
             No projects yet. Create one above to start modeling your
             architecture.
           </p>
@@ -91,9 +91,9 @@ export function ProjectDashboard() {
               <li key={project.id} className="group relative">
                 <Link
                   href={`/p/${project.slug}`}
-                  className="block rounded-xl bg-white/10 p-4 pr-12 transition hover:bg-white/20"
+                  className="block rounded-xl bg-muted p-4 pr-12 transition hover:bg-muted"
                 >
-                  <span className="font-medium text-white">
+                  <span className="font-medium text-foreground">
                     {project.title}
                   </span>
                 </Link>
@@ -107,7 +107,7 @@ export function ProjectDashboard() {
                       title: project.title,
                     })
                   }
-                  className="absolute top-1/2 right-3 -translate-y-1/2 rounded p-1.5 text-white/40 opacity-0 transition group-hover:opacity-100 hover:bg-white/10 hover:text-red-400 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+                  className="absolute top-1/2 right-3 -translate-y-1/2 rounded p-1.5 text-muted-foreground/70 opacity-0 transition group-hover:opacity-100 hover:bg-foreground/10 hover:text-destructive focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                 >
                   <Trash2 size={16} aria-hidden />
                 </button>

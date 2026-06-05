@@ -10,7 +10,7 @@ import { Eye } from "lucide-react";
 export function ViewOnlyBadge() {
   return (
     <span
-      className="ml-auto flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-xs font-medium text-white/70"
+      className="ml-auto flex items-center gap-1.5 rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground"
       title="You're viewing a shared project. Only the owner can make changes."
     >
       <Eye size={12} aria-hidden />

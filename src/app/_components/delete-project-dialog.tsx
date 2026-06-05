@@ -106,11 +106,11 @@ function DeleteProjectForm({
       finalFocus={finalFocusRef}
       className="w-[min(28rem,calc(100vw-2rem))]"
     >
-      <header className="flex flex-col gap-1 border-b border-white/10 px-5 py-4">
+      <header className="flex flex-col gap-1 border-b border-border px-5 py-4">
         <DialogTitle>Delete project</DialogTitle>
         <DialogDescription>
           This permanently removes{" "}
-          <span className="font-medium break-words text-white">
+          <span className="font-medium break-words text-foreground">
             {project.title}
           </span>{" "}
           and everything inside it. This can’t be undone.
@@ -126,9 +126,9 @@ function DeleteProjectForm({
         className="flex flex-col gap-4 px-5 py-4"
       >
         <label htmlFor={inputId} className="flex flex-col gap-1.5 text-sm">
-          <span className="text-white/70">
+          <span className="text-muted-foreground">
             Type{" "}
-            <span className="font-medium break-words text-white">
+            <span className="font-medium break-words text-foreground">
               {project.title}
             </span>{" "}
             to confirm
@@ -141,7 +141,7 @@ function DeleteProjectForm({
             placeholder="Project name"
             autoFocus
             autoComplete="off"
-            className="rounded-lg bg-white/10 px-4 py-2 text-white placeholder:text-white/40 focus:bg-white/15 focus:outline-none"
+            className="rounded-lg bg-muted px-4 py-2 text-foreground placeholder:text-muted-foreground/70 focus:bg-muted focus:outline-none"
           />
         </label>
 
@@ -149,7 +149,7 @@ function DeleteProjectForm({
           <button
             type="button"
             onClick={onClose}
-            className="rounded px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
+            className="rounded px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-foreground/5"
           >
             Cancel
           </button>
@@ -158,8 +158,8 @@ function DeleteProjectForm({
             disabled={!canDelete}
             className={`rounded px-3 py-1.5 text-sm font-semibold transition ${
               canDelete
-                ? "bg-red-500/90 text-white hover:bg-red-500"
-                : "cursor-not-allowed bg-white/5 text-white/40"
+                ? "bg-destructive/10 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                : "cursor-not-allowed bg-muted text-muted-foreground/70"
             }`}
           >
             Delete project

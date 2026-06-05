@@ -141,7 +141,7 @@ export function ManageAccessDialog({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center justify-center gap-2 rounded-lg bg-white/10 px-3 py-2 text-sm font-medium transition hover:bg-white/20"
+        className="inline-flex items-center justify-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-medium transition hover:bg-muted"
       >
         <ShieldCheck size={14} aria-hidden />
         Manage access
@@ -149,7 +149,7 @@ export function ManageAccessDialog({
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogPanel className="w-[min(34rem,calc(100vw-2rem))]">
-          <header className="flex flex-col gap-1 border-b border-white/10 px-5 py-4">
+          <header className="flex flex-col gap-1 border-b border-border px-5 py-4">
             <DialogTitle>Manage access</DialogTitle>
             <DialogDescription>
               Change roles, remove people, and revoke invite links.
@@ -158,28 +158,28 @@ export function ManageAccessDialog({
 
           <div className="flex-1 overflow-y-auto px-5 py-4">
             <section className="flex flex-col gap-2">
-              <h3 className="text-xs font-semibold tracking-wide text-white/40 uppercase">
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground/70 uppercase">
                 People
               </h3>
 
               {data && (
-                <div className="flex items-center justify-between gap-2 rounded-lg bg-white/5 px-3 py-2">
-                  <span className="min-w-0 truncate text-sm text-white">
+                <div className="flex items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2">
+                  <span className="min-w-0 truncate text-sm text-foreground">
                     {data.owner.name ?? data.owner.email ?? "Owner"}
                     {data.owner.userId === viewerId && (
-                      <span className="ml-1.5 text-xs text-white/40">
+                      <span className="ml-1.5 text-xs text-muted-foreground/70">
                         (You)
                       </span>
                     )}
                   </span>
-                  <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs text-white/70">
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                     Owner
                   </span>
                 </div>
               )}
 
               {data?.members.length === 0 && (
-                <p className="text-xs text-white/40">
+                <p className="text-xs text-muted-foreground/70">
                   No members yet — invite someone from the Share menu.
                 </p>
               )}
@@ -190,12 +190,12 @@ export function ManageAccessDialog({
                 return (
                   <div
                     key={m.userId}
-                    className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 hover:bg-white/5"
+                    className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 hover:bg-foreground/5"
                   >
-                    <span className="min-w-0 truncate text-sm text-white">
+                    <span className="min-w-0 truncate text-sm text-foreground">
                       {label}
                       {isSelf && (
-                        <span className="ml-1.5 text-xs text-white/40">
+                        <span className="ml-1.5 text-xs text-muted-foreground/70">
                           (You)
                         </span>
                       )}
@@ -212,7 +212,7 @@ export function ManageAccessDialog({
                             role: e.target.value as ProjectRoleInput,
                           })
                         }
-                        className="rounded-lg bg-white/10 px-2 py-1 text-sm text-white focus:bg-white/15 focus:outline-none disabled:opacity-50"
+                        className="rounded-lg bg-muted px-2 py-1 text-sm text-foreground focus:bg-muted focus:outline-none disabled:opacity-50"
                       >
                         {projectRole.options.map((opt) => (
                           <option key={opt} value={opt} className="text-black">
@@ -235,7 +235,7 @@ export function ManageAccessDialog({
                           removeMember.mutate({ projectId, userId: m.userId });
                           if (isSelf) setOpen(false);
                         }}
-                        className="rounded p-1.5 text-red-300 transition hover:bg-red-500/10 hover:text-red-200 disabled:opacity-50"
+                        className="rounded p-1.5 text-destructive transition hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
                       >
                         <Trash2 size={15} aria-hidden />
                       </button>
@@ -245,23 +245,23 @@ export function ManageAccessDialog({
               })}
             </section>
 
-            <section className="mt-5 flex flex-col gap-2 border-t border-white/10 pt-4">
-              <h3 className="text-xs font-semibold tracking-wide text-white/40 uppercase">
+            <section className="mt-5 flex flex-col gap-2 border-t border-border pt-4">
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground/70 uppercase">
                 Invite links
               </h3>
               {data?.invites.length === 0 && (
-                <p className="text-xs text-white/40">No active invite links.</p>
+                <p className="text-xs text-muted-foreground/70">No active invite links.</p>
               )}
               {data?.invites.map((inv) => (
                 <div
                   key={inv.id}
-                  className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 hover:bg-white/5"
+                  className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 hover:bg-foreground/5"
                 >
                   <div className="min-w-0">
-                    <code className="font-mono text-xs text-white">
+                    <code className="font-mono text-xs text-foreground">
                       {inv.prefix}…
                     </code>
-                    <p className="truncate text-xs text-white/50">
+                    <p className="truncate text-xs text-muted-foreground">
                       {ROLE_LABEL[inv.role]} · {formatExpiry(inv.expiresAt)} ·{" "}
                       {formatUses(inv.useCount, inv.maxUses)}
                     </p>
@@ -271,7 +271,7 @@ export function ManageAccessDialog({
                     aria-label={`Revoke invite ${inv.prefix}`}
                     disabled={revokeInvite.isPending}
                     onClick={() => revokeInvite.mutate({ inviteId: inv.id })}
-                    className="shrink-0 rounded p-1.5 text-red-300 transition hover:bg-red-500/10 hover:text-red-200 disabled:opacity-50"
+                    className="shrink-0 rounded p-1.5 text-destructive transition hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
                   >
                     <X size={15} aria-hidden />
                   </button>
@@ -280,8 +280,8 @@ export function ManageAccessDialog({
             </section>
           </div>
 
-          <footer className="flex justify-end border-t border-white/10 px-5 py-3">
-            <DialogClose className="rounded px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5">
+          <footer className="flex justify-end border-t border-border px-5 py-3">
+            <DialogClose className="rounded px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-foreground/5">
               Done
             </DialogClose>
           </footer>

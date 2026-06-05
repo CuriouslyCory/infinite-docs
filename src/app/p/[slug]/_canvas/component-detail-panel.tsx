@@ -25,7 +25,7 @@ import { KindPickerPopover } from "./kind-palette";
 const ComponentDocsEditor = dynamic(
   () => import("./component-docs-editor").then((m) => m.ComponentDocsEditor),
   {
-    loading: () => <p className="text-xs text-white/40">Loading editor…</p>,
+    loading: () => <p className="text-xs text-muted-foreground/70">Loading editor…</p>,
   },
 );
 
@@ -143,14 +143,14 @@ export function ComponentDetailPanel(props: ComponentDetailPanelProps) {
   }, [onClose]);
 
   return (
-    <div className="pointer-events-auto flex h-full w-80 flex-col gap-4 overflow-y-auto rounded-l-lg border-l border-white/15 bg-[#1f2138] p-4 text-sm text-white shadow-2xl">
-      <header className="flex items-center justify-between border-b border-white/10 pb-2">
+    <div className="pointer-events-auto flex h-full w-80 flex-col gap-4 overflow-y-auto rounded-l-lg border-l border-border bg-card p-4 text-sm text-foreground shadow-2xl">
+      <header className="flex items-center justify-between border-b border-border pb-2">
         <h2 className="font-semibold">Component detail</h2>
         <button
           type="button"
           aria-label="Close component detail"
           title="Close"
-          className="text-white/40 transition hover:text-white"
+          className="text-muted-foreground/70 transition hover:text-foreground"
           onClick={onClose}
         >
           <X size={16} aria-hidden />
@@ -248,14 +248,14 @@ function TraceCheckbox({ nodeId, slug }: { nodeId: string; slug: string }) {
           type="checkbox"
           checked={checked}
           onChange={onToggle}
-          className="h-4 w-4 shrink-0 accent-[hsl(280,100%,70%)]"
+          className="h-4 w-4 shrink-0 accent-primary"
         />
-        <Route size={14} aria-hidden className="shrink-0 text-white/60" />
-        <span className="text-sm font-medium text-white">
+        <Route size={14} aria-hidden className="shrink-0 text-muted-foreground" />
+        <span className="text-sm font-medium text-foreground">
           Trace this Component
         </span>
       </label>
-      <p className="pl-6 text-xs text-white/40">
+      <p className="pl-6 text-xs text-muted-foreground/70">
         Mark 2 or more Components to see how they connect.
       </p>
     </section>
@@ -271,14 +271,14 @@ function ReadOnlyKindRow({ currentKind }: { currentKind: NodeKind }) {
   const Icon = KIND_ICON[currentKind];
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold tracking-wide text-white/60 uppercase">
+      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         Kind
       </h3>
-      <div className="flex items-center gap-2 rounded bg-white/5 px-2 py-1.5 text-sm text-white">
+      <div className="flex items-center gap-2 rounded bg-muted px-2 py-1.5 text-sm text-foreground">
         <Icon
           size={14}
           aria-hidden
-          className="shrink-0 text-[hsl(280,100%,80%)]"
+          className="shrink-0 text-primary"
         />
         <span className="truncate">{KIND_LABEL[currentKind]}</span>
       </div>
@@ -298,7 +298,7 @@ function KindSection({
   const Icon = KIND_ICON[currentKind];
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold tracking-wide text-white/60 uppercase">
+      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         Kind
       </h3>
       {/* Opens the SAME kind palette the Add control uses (ADR-0020), keyed by
@@ -311,18 +311,18 @@ function KindSection({
           <button
             type="button"
             aria-haspopup="listbox"
-            className="nodrag flex items-center gap-2 rounded bg-white/10 px-2 py-1.5 text-sm text-white transition hover:bg-white/15"
+            className="nodrag flex items-center gap-2 rounded bg-muted px-2 py-1.5 text-sm text-foreground transition hover:bg-muted"
           >
             <Icon
               size={14}
               aria-hidden
-              className="shrink-0 text-[hsl(280,100%,80%)]"
+              className="shrink-0 text-primary"
             />
             <span className="truncate">{KIND_LABEL[currentKind]}</span>
             <ChevronDown
               size={14}
               aria-hidden
-              className="ml-auto shrink-0 text-white/40"
+              className="ml-auto shrink-0 text-muted-foreground/70"
             />
           </button>
         }
@@ -380,7 +380,7 @@ function ConnectionsSection({
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold tracking-wide text-white/60 uppercase">
+        <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Connections
         </h3>
         {onConnect && (
@@ -393,7 +393,7 @@ function ConnectionsSection({
               <button
                 type="button"
                 aria-haspopup="listbox"
-                className="nodrag flex items-center gap-1 rounded bg-white/10 px-1.5 py-0.5 text-xs text-white transition hover:bg-white/15"
+                className="nodrag flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs text-foreground transition hover:bg-muted"
               >
                 <Plus size={12} aria-hidden />
                 Add connection
@@ -404,14 +404,14 @@ function ConnectionsSection({
       </div>
 
       {isLoading ? (
-        <p className="text-xs text-white/40">Loading…</p>
+        <p className="text-xs text-muted-foreground/70">Loading…</p>
       ) : isError ? (
         // Distinct from "No connections yet." so a failed fetch is not silently
         // indistinguishable from a genuinely empty list (TanStack v5 leaves
         // `data` undefined on first-fetch error).
-        <p className="text-xs text-white/40">Couldn’t load connections.</p>
+        <p className="text-xs text-muted-foreground/70">Couldn’t load connections.</p>
       ) : !connections || connections.length === 0 ? (
-        <p className="text-xs text-white/40">No connections yet.</p>
+        <p className="text-xs text-muted-foreground/70">No connections yet.</p>
       ) : (
         <ul className="flex flex-col gap-1">
           {connections.map((connection) => (
@@ -452,11 +452,11 @@ function ConnectionRow({
   // temp_" delete affordance (component-node.tsx).
   const canDelete = onDelete && !connection.id.startsWith("temp_");
   return (
-    <li className="group flex flex-col gap-0.5 rounded bg-white/5 px-2 py-1.5">
+    <li className="group flex flex-col gap-0.5 rounded bg-muted px-2 py-1.5">
       <div className="flex items-center gap-2">
         <span
           aria-hidden
-          className="w-3 shrink-0 text-center text-white/40"
+          className="w-3 shrink-0 text-center text-muted-foreground/70"
           title={INTERACTION_LABEL[connection.interaction]}
         >
           {glyph}
@@ -464,9 +464,9 @@ function ConnectionRow({
         <Icon
           size={14}
           aria-hidden
-          className="shrink-0 text-[hsl(280,100%,80%)]"
+          className="shrink-0 text-primary"
         />
-        <span className="truncate text-sm text-white">
+        <span className="truncate text-sm text-foreground">
           {connection.other.title}
         </span>
         {/* Delete affordance, mirroring the canvas node's trash control: a
@@ -477,14 +477,14 @@ function ConnectionRow({
             type="button"
             aria-label={`Delete connection to ${connection.other.title}`}
             title="Delete connection"
-            className="ml-auto shrink-0 text-white/40 opacity-0 transition group-hover:opacity-100 hover:text-red-400 focus-visible:opacity-100"
+            className="ml-auto shrink-0 text-muted-foreground/70 opacity-0 transition group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
             onClick={() => onDelete(connection.id)}
           >
             <Trash2 size={14} aria-hidden />
           </button>
         )}
       </div>
-      <span className="pl-5 text-xs text-white/40">
+      <span className="pl-5 text-xs text-muted-foreground/70">
         {INTERACTION_LABEL[connection.interaction]}
         {connection.label ? ` · ${connection.label}` : ""}
       </span>
