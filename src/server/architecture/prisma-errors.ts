@@ -70,6 +70,40 @@ export function isEdgeDedupCollision(error: unknown): boolean {
   );
 }
 
+// The partial unique index enforcing live-only cross-project Connection de-dupe
+// (#123 / ADR-0010): `idx_cross_project_edge_dedup`, keyed on the DIRECTIONAL
+// `(hostNodeId, foreignProjectId, foreignNodeId, interaction)` slot. Narrowed on
+// the constraint name so an unrelated future P2002 on CrossProjectEdge is not
+// swallowed as "duplicate cross-project Connection"; carried on both Prisma error
+// shapes (legacy `meta.target` and the `@prisma/adapter-pg` driver path's
+// `meta.driverAdapterError.cause.originalMessage`), mirroring isEdgeDedupCollision.
+const CROSS_PROJECT_EDGE_DEDUP_INDEX_NAME = "idx_cross_project_edge_dedup";
+
+export function isCrossProjectEdgeDedupCollision(error: unknown): boolean {
+  if (!isPrismaUniqueViolation(error)) return false;
+  const meta = error.meta;
+  if (!meta || typeof meta !== "object") return false;
+
+  const target = (meta as { target?: unknown }).target;
+  if (
+    typeof target === "string" &&
+    target === CROSS_PROJECT_EDGE_DEDUP_INDEX_NAME
+  ) {
+    return true;
+  }
+
+  const driverCause = (meta as { driverAdapterError?: { cause?: unknown } })
+    .driverAdapterError?.cause;
+  if (!driverCause || typeof driverCause !== "object") return false;
+
+  const originalMessage = (driverCause as { originalMessage?: unknown })
+    .originalMessage;
+  return (
+    typeof originalMessage === "string" &&
+    originalMessage.includes(CROSS_PROJECT_EDGE_DEDUP_INDEX_NAME)
+  );
+}
+
 // The partial unique index enforcing live-only unique Trace names per Project
 // (#59 / ADR-0035). Narrowed on the constraint name so an unrelated future P2002
 // on Trace is not swallowed as a name collision; carried on both Prisma error

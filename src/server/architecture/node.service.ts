@@ -11,7 +11,10 @@ import {
   resolveReadableProject,
   resolveReadableProjectById,
 } from "./access-db";
-import { activeDuplicateWhere } from "./edge.service";
+import {
+  activeCrossProjectDuplicateWhere,
+  activeDuplicateWhere,
+} from "./edge.service";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { isEdgeDedupCollision, isPrismaUniqueViolation } from "./prisma-errors";
@@ -355,6 +358,15 @@ export interface CanvasBoundaryProxy {
   // The foreign Project.id is NEVER on the wire — only its title, and only after the
   // reading actor re-resolved ≥ view on it (ADR-0041 firewall).
   foreignProjectTitle?: string;
+  // Cross-boundary "Go to" routing (#123), emitted ONLY for a CROSS-PROJECT proxy
+  // that survived the per-actor foreign re-gate. `referenceNodeId` is the host
+  // portal Node id the crossing routes THROUGH (pushed onto `?via=`); the URL stays
+  // the host's. `foreignParentScopeId` is the foreign endpoint's own parent scope
+  // — the foreign Canvas the client lands on (`null` = the foreign root). Both are
+  // opaque foreign/host Node ids (same disclosure class as `realEndpointId`); NO
+  // foreign project id or slug ever rides the wire.
+  referenceNodeId?: string;
+  foreignParentScopeId?: string | null;
 }
 
 // One row per active Connection whose endpoint ancestry makes it relevant to the
@@ -950,7 +962,7 @@ export async function getCanvas(
     // owns the sweep) simply finds no title here and its row emits no proxy.
     const foreignNodeById = new Map<
       string,
-      { title: string; kind: NodeKind }
+      { title: string; kind: NodeKind; parentId: string | null }
     >();
     if (surviving.length > 0) {
       const foreignNodes = await db.node.findMany({
@@ -959,10 +971,17 @@ export async function getCanvas(
           projectId: { in: [...readableForeignProjectTitles.keys()] },
           deletedAt: null,
         },
-        select: { id: true, title: true, kind: true },
+        // `parentId` rides the SAME batch read (#123) so a cross-project proxy's
+        // "Go to" can land on the foreign endpoint's own Canvas — no extra query,
+        // and still only opaque Node ids (no project id/slug) on the wire.
+        select: { id: true, title: true, kind: true, parentId: true },
       });
       for (const n of foreignNodes) {
-        foreignNodeById.set(n.id, { title: n.title, kind: n.kind });
+        foreignNodeById.set(n.id, {
+          title: n.title,
+          kind: n.kind,
+          parentId: n.parentId,
+        });
       }
     }
 
@@ -982,6 +1001,11 @@ export async function getCanvas(
         foreignProjectTitle: readableForeignProjectTitles.get(
           row.foreignProjectId,
         ),
+        // Cross-boundary "Go to" routing (#123): the portal to push onto `?via=`
+        // and the foreign Canvas to land on. Both opaque ids, emitted ONLY here —
+        // on a row that already cleared the per-actor foreign re-gate above.
+        referenceNodeId: row.referenceNodeId,
+        foreignParentScopeId: foreign.parentId,
       });
       // The host Component is assumed co-scope with the portal this slice (the
       // connect gesture anchors the host endpoint on the same Canvas the portal
@@ -1528,6 +1552,7 @@ export async function deleteNode(
   nodeIds: string[];
   edgeIds: string[];
   specIds: string[];
+  crossProjectEdgeIds: string[];
 }> {
   const { id } = deleteNodeInput.parse(input);
 
@@ -1598,6 +1623,29 @@ export async function deleteNode(
   });
   const specIds = sweptSpecs.map((s) => s.id);
 
+  // Cross-project Connection sweep (#123): any live CrossProjectEdge anchored in
+  // THIS host Project whose HOST endpoint (`hostNodeId`) OR routing portal
+  // (`referenceNodeId`) is in the swept subtree — deleting the host Component or
+  // the portal removes the edge that hangs off it. The predicate is scoped to
+  // `hostProjectId` and touches ONLY host-side columns: the FOREIGN columns
+  // (`foreignProjectId`/`foreignNodeId`) are deliberately EXCLUDED — a foreign
+  // delete must never cascade into the host graph (the model's loose-FK posture),
+  // and conversely a host delete never reaches into the foreign graph. Stamped
+  // with the SAME `deletionId` so `restoreNode` revives the whole set as a unit.
+  const crossEdgeWhere = {
+    hostProjectId: node.projectId,
+    deletedAt: null,
+    OR: [
+      { hostNodeId: { in: nodeIds } },
+      { referenceNodeId: { in: nodeIds } },
+    ],
+  };
+  const sweptCrossEdges = await db.crossProjectEdge.findMany({
+    where: crossEdgeWhere,
+    select: { id: true },
+  });
+  const crossProjectEdgeIds = sweptCrossEdges.map((e) => e.id);
+
   await db.node.updateMany({
     where: { id: { in: nodeIds }, deletedAt: null },
     data: { deletedAt, deletionId },
@@ -1610,6 +1658,10 @@ export async function deleteNode(
     where: specWhere,
     data: { deletedAt, deletionId },
   });
+  await db.crossProjectEdge.updateMany({
+    where: crossEdgeWhere,
+    data: { deletedAt, deletionId },
+  });
 
   // Post-stamp guard (ADR-0008): the sequential cascade always gathers every live
   // descendant, so a live child still sitting directly under the freshly-stamped
@@ -1617,7 +1669,7 @@ export async function deleteNode(
   // commit. Fail loud rather than leave a silent, unrecoverable orphan.
   await assertNoOrphanedChildren(db, nodeIds);
 
-  return { deletionId, nodeIds, edgeIds, specIds };
+  return { deletionId, nodeIds, edgeIds, specIds, crossProjectEdgeIds };
 }
 
 /**
@@ -1657,6 +1709,7 @@ export async function restoreNode(
   nodeIds: string[];
   edgeIds: string[];
   specIds: string[];
+  crossProjectEdgeIds: string[];
 }> {
   const { deletionId } = restoreNodeInput.parse(input);
 
@@ -1685,6 +1738,16 @@ export async function restoreNode(
   const stampedSpecs = await db.spec.findMany({
     where: { deletionId },
     select: { id: true, ownerNodeId: true },
+  });
+  const stampedCrossEdges = await db.crossProjectEdge.findMany({
+    where: { deletionId },
+    select: {
+      id: true,
+      hostNodeId: true,
+      foreignProjectId: true,
+      foreignNodeId: true,
+      interaction: true,
+    },
   });
 
   // Pre-check the Edge de-dupe invariant (ADR-0010): any active row occupying a
@@ -1733,6 +1796,33 @@ export async function restoreNode(
     }
   }
 
+  // Pre-check the CROSS-PROJECT de-dupe invariant (#123 / ADR-0010): a fresh
+  // active CrossProjectEdge may now occupy a `(hostNodeId, foreignProjectId,
+  // foreignNodeId, interaction)` slot a swept edge is about to revive. Same
+  // readable-error posture as the Edge / Spec cases, done BEFORE the update.
+  if (stampedCrossEdges.length > 0) {
+    const conflicts = await db.crossProjectEdge.findMany({
+      where: {
+        OR: stampedCrossEdges.map((e) =>
+          activeCrossProjectDuplicateWhere(
+            e.hostNodeId,
+            e.foreignProjectId,
+            e.foreignNodeId,
+            e.interaction,
+          ),
+        ),
+      },
+      select: { id: true },
+    });
+    if (conflicts.length > 0) {
+      const count = conflicts.length;
+      throw new ConflictError(
+        `Can't undo this delete: ${count} cross-project Connection${count === 1 ? "" : "s"} cannot be restored because a new Connection now occupies the same slot. Delete the conflicting Connection${count === 1 ? "" : "s"} and retry.`,
+        { conflictingEdgeIds: conflicts.map((e) => e.id) },
+      );
+    }
+  }
+
   await db.node.updateMany({
     where: { deletionId },
     data: { deletedAt: null, deletionId: null },
@@ -1760,10 +1850,21 @@ export async function restoreNode(
     data: { deletedAt: null, deletionId: null },
   });
 
+  // Revive the swept cross-project Connections last (after the host Nodes are
+  // back, so the host endpoint / portal exist again). The pre-check above ruled
+  // out a slot collision; the partial unique index would still abort the
+  // transaction on a concurrent racer, and correctness then rests on the
+  // rollback (same posture as the Edge revival above).
+  await db.crossProjectEdge.updateMany({
+    where: { deletionId },
+    data: { deletedAt: null, deletionId: null },
+  });
+
   return {
     deletionId,
     nodeIds: nodes.map((n) => n.id),
     edgeIds: edges.map((e) => e.id),
     specIds: stampedSpecs.map((s) => s.id),
+    crossProjectEdgeIds: stampedCrossEdges.map((e) => e.id),
   };
 }

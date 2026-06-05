@@ -9,9 +9,12 @@ import {
   getProjectAccess,
   getProjectBySlug,
   listProjects,
+  listProjectsForActor,
   listReferenceableProjects,
   setGuestAccess,
 } from "../project.service";
+import { connectCrossProject } from "../edge.service";
+import { createEmbeddedComponent, createNode } from "../node.service";
 import { resetDb, testDb } from "./helpers/test-db";
 
 beforeEach(async () => {
@@ -818,5 +821,55 @@ describe("deleteProject — non-disclosure on slug-keyed write (ADR-0040)", () =
       where: { id: project.id },
     });
     expect(persisted?.deletedAt).toBeNull();
+  });
+});
+
+describe("listProjectsForActor non-leak (#123)", () => {
+  it("excludes a foreign project merely REFERENCED (portal + cross-edge) by the actor's host, with no membership", async () => {
+    const owner = await makeUser("Host Owner");
+    const actor: Actor = { userId: owner.id, via: "session" };
+    const other = await makeUser("Foreign Owner");
+    const otherActor: Actor = { userId: other.id, via: "session" };
+
+    const host = await createProject(testDb, actor, { title: "Host" });
+    // The foreign project is owned by SOMEONE ELSE; the host owner holds no
+    // membership on it — only a portal + cross-project edge pointing into it.
+    const foreign = await createProject(
+      testDb,
+      otherActor,
+      { title: "Foreign" },
+    );
+
+    const hostNode = await createNode(testDb, actor, {
+      projectId: host.id,
+      title: "Host Component",
+    });
+    const foreignNode = await createNode(testDb, otherActor, {
+      projectId: foreign.id,
+      title: "Foreign Component",
+    });
+    // The foreign owner (granted host EDITOR) places the portal + draws the edge,
+    // then the host owner is left with only the reference — no grant on `foreign`.
+    await testDb.projectMembership.create({
+      data: { projectId: host.id, userId: other.id, role: "EDITOR" },
+    });
+    const portal = await createEmbeddedComponent(testDb, otherActor, {
+      projectId: host.id,
+      embeddedProjectId: foreign.id,
+      title: "Foreign",
+    });
+    await connectCrossProject(testDb, otherActor, {
+      hostProjectId: host.id,
+      hostNodeId: hostNode.id,
+      referenceNodeId: portal.id,
+      foreignNodeId: foreignNode.id,
+    });
+
+    const reachable = await listProjectsForActor(testDb, actor);
+    const ids = reachable.map((p) => p.id);
+    // The host (owned) is reachable; the merely-referenced foreign is NOT — the
+    // enumeration is owner-or-member only, never widened by a portal/cross-edge.
+    expect(ids).toContain(host.id);
+    expect(ids).not.toContain(foreign.id);
   });
 });

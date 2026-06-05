@@ -192,9 +192,43 @@ foreign end simply vanish, with no write. A **same-project or self link** is rej
 (`ValidationError`) — that is an ordinary Edge. Carries its own **Interaction** (ADR-0027); its
 `label` is untrusted-verbatim (the prompt-injection standing note). Renders its foreign end as a
 **foreign boundary proxy** (below). **Never an Edge, never written to the foreign graph, never a
-portal.** _(Create + render now; **delete/restore** (a `deletionId` column present but unwired),
-cross-project **dedup**, cross-boundary **"Go to"**, and **export markers** are the explicit seam
-to **#123**. #122, ADR-0043.)_
+portal.** Now **managed** end-to-end (ADR-0044): a **lone** `deleteCrossProjectEdge` is a lone
+soft-delete that mints **no** `deletionId` (the ADR-0014/0030 carve-out — a lone delete is not a
+cascade), and `restoreCrossProjectEdge` is its single-row inverse; deleting the **host Component or
+the portal** it routes through **sweeps** its incident rows into the **same host-node `deletionId`
+batch** (ADR-0008/0030), predicate `hostNodeId ∈ S ∨ referenceNodeId ∈ S`, **foreign columns
+excluded** — a host delete decides only host-graph fates. **Dedup** is a hand-authored
+**directional** partial-unique index `(hostNodeId, foreignProjectId, foreignNodeId, interaction)
+WHERE deletedAt IS NULL` (ADR-0010's **third adopter** — directional, **never** the Edge table's
+`LEAST`/`GREATEST` symmetry; `referenceNodeId` and `label` **out** of the key), service-primary with
+a `P2002 → ConflictError` backstop. Its foreign end carries a cross-boundary **"Go to"** that
+descends into the foreign endpoint's scope **under the host URL** via the **`?via=` crossing stack**
+(ADR-0041 §5/§6), re-gated per-actor at the crossing (`none → NotFound`). It serializes to
+markdown/MCP export as a **non-recursive reference marker** (below) that **never inlines foreign
+content**. _(Realized now: delete/restore, dedup, cross-boundary "Go to," export markers. #123,
+ADR-0044; builds on #122, ADR-0043.)_
+
+### Reference marker
+
+The **non-recursive, terminal** way a **portal** and a **cross-project connection** appear in the
+markdown / MCP **export**. It names the **foreign project title** and the **foreign endpoint
+title/kind**, and then **stops** — it **never inlines foreign content** (no foreign docs, no foreign
+interior, never follows the pointer into the foreign serialization). The non-recursion is the
+**per-actor firewall at the export boundary**, not a formatting choice: `serializeGraph` is **pure
+and actor-less** (ADR-0017 §3), so inlining the foreign subtree would emit foreign content past the
+per-actor re-gate — the ADR-0041 §3 leak at the one place the firewall is last enforceable. The
+marker's foreign end is therefore **re-gated per-actor** in `export.service.ts` (not pure
+`markdown.ts`): a marker whose foreign end is **unreadable for this actor, soft-deleted, or
+dangling** is **absent** from the output (ADR-0043 §5's "proxy absent," carried to the export
+boundary). It is **deterministic** under the ADR-0017 four-clause contract — sorted by a codepoint
+comparator over a **host-stable key** (never a foreign cuid or `Map`/`Set` order), with **no foreign
+`{#nodeId}` anchors** — and is a **strict additive insertion** (the three existing golden fixtures
+stay byte-untouched). A **reference is not a grant**: a marker adds **nothing** to
+`listProjectsForActor`, and an actor without their **own** grant on the foreign project can neither
+**enumerate** it nor **dereference** `architecture://project/{foreignId}` — the MCP `resources/list`
+surface stays own-grant gated (ADR-0022). Never "embedding" or "inlining" — it discloses the foreign
+**title**, never **read access**. _(#123, ADR-0044 / ADR-0017 amendment; builds on the portals of
+ADR-0041 and the cross-project connections of ADR-0043.)_
 
 ### Edge
 
@@ -461,9 +495,15 @@ cannot cross a project boundary, ADR-0041 §7). The foreign capability is **re-g
 every read** (`≥ view`); a denial, a soft-deleted foreign Node, or a **dangling reference** (the
 foreign columns are plain, not FKs) renders **"endpoint not live → proxy absent"** — never a broken
 node, never a disclosure (ADR-0031's soft-deleted-endpoint posture, carried across the seam). The
-`CrossProjectEdge` row **survives** the dangle; a GC/sweep is #123. Like every boundary proxy it is
-a **passive node** (read-only); this slice has **no** cross-boundary "Go to" affordance on it.
-_(#122, ADR-0043; reuses ADR-0031/0036.)_
+`CrossProjectEdge` row **survives** the dangle; deleting the **host Component or portal** sweeps the
+incident row into the **host-node `deletionId` batch** (ADR-0044, predicate `hostNodeId ∈ S ∨
+referenceNodeId ∈ S`). Like every boundary proxy it is a **passive node** (read-only) — **with the
+cross-project exception** that it carries a cross-boundary **"Go to"**: it descends into the foreign
+endpoint's scope **under the host URL** via the **`?via=` crossing stack** (ADR-0041 §5/§6),
+re-gated per-actor at the crossing (a revoked grant → `none → NotFound`, the same per-actor re-gate
+that already makes it render absent, now governing navigation). _(#122/ADR-0043 create + render;
+#123/ADR-0044 the host-delete sweep, the cross-boundary "Go to," and the export marker. Reuses
+ADR-0031/0036.)_
 
 ### Boundary endpoint
 
@@ -530,8 +570,11 @@ target's deletion. Never a "link" (that is a **Connection**) and never a "PORTAL
 "Embed a project" picker offers **any project the actor holds ≥ view on** (`listProjectsForActor`,
 excluding the current project) — owned **and** shared — since the create gate (host **edit**, then
 target **≥ view**) already permits embedding anything you can read; on the host read a portal
-resolves a **Portal access state** (enterable / read-only / locked) per-actor. _(Realized now: the
-per-actor re-gate and shared-target embedding both ship. #120, #119, ADR-0041.)_
+resolves a **Portal access state** (enterable / read-only / locked) per-actor. On **markdown / MCP
+export** a portal serializes as a **non-recursive reference marker** (the foreign title only, never
+the embedded interior, re-gated per-actor — see **Reference marker**). _(Realized now: the per-actor
+re-gate and shared-target embedding both ship (#120, #119, ADR-0041); the export reference marker
+ships at #123/ADR-0044, ADR-0017 amendment.)_
 
 ### Embedded project
 

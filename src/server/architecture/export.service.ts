@@ -1,6 +1,6 @@
 import type { Actor, Db } from "./actor";
 import { capabilityAtLeast, resolveCapability } from "./access";
-import { authorizeProjectRead } from "./access-db";
+import { authorizeProjectRead, resolveReadableProjectById } from "./access-db";
 import { NotFoundError } from "./errors";
 import {
   exportMarkdownInput,
@@ -12,8 +12,10 @@ import {
 import {
   serializeGraph,
   type SerializerBoundaryEdge,
+  type SerializerCrossProjectMarker,
   type SerializerEdge,
   type SerializerNode,
+  type SerializerPortalMarker,
 } from "./markdown";
 import {
   type Interaction as PrismaInteraction,
@@ -114,6 +116,7 @@ interface ResolvedProject {
  */
 async function serializeProjectScope(
   db: Db,
+  actor: Actor | null,
   project: ResolvedProject,
   opts: { canvasNodeId: string | null; mode: ExportMarkdownMode },
 ): Promise<{ markdown: string }> {
@@ -291,6 +294,19 @@ async function serializeProjectScope(
     }));
   }
 
+  // Non-recursive cross-project reference markers (#123 / ADR-0044): portals +
+  // cross-project Connections among the exported nodes, per-actor re-gated and
+  // resolved HERE (the pure serializer never resolves foreign content). An
+  // anonymous export (`actor === null`) holds no foreign grant, so every foreign
+  // project re-gate fails and zero markers are emitted (the firewall closes by
+  // construction).
+  const { portalMarkers, crossProjectMarkers } = await resolveCrossProjectMarkers(
+    db,
+    actor,
+    projectId,
+    nodes,
+  );
+
   const markdown = serializeGraph({
     project: { title: projectTitle },
     rootCanvasNodeId: canvasNodeId,
@@ -298,9 +314,154 @@ async function serializeProjectScope(
     edges,
     boundaryEdges,
     mode,
+    portalMarkers,
+    crossProjectMarkers,
   });
 
   return { markdown };
+}
+
+/**
+ * Resolves the NON-RECURSIVE cross-project reference markers for an exported
+ * scope (#123 / ADR-0044) — the SAME per-actor firewall pass `getCanvas` runs
+ * (ADR-0041), applied at the export boundary:
+ *
+ *  1. Read the PORTALS among the exported nodes (`embeddedProjectId != null`) and
+ *     the live CrossProjectEdge rows whose host endpoint (`hostNodeId`) is in the
+ *     exported set — both host-side reads, scoped to the host project.
+ *  2. Per-actor re-gate EACH distinct foreign project (`resolveReadableProjectById`,
+ *     DROP unreadable) and batch-read the surviving foreign project + foreign
+ *     endpoint TITLES. A foreign project the actor cannot read contributes NO
+ *     marker — its id/slug/title never reach the output.
+ *
+ * Returns already-resolved, already-filtered marker data; the pure serializer
+ * renders titles only, never inlining foreign documentation.
+ */
+async function resolveCrossProjectMarkers(
+  db: Db,
+  actor: Actor | null,
+  projectId: string,
+  exportedNodes: SerializerNode[],
+): Promise<{
+  portalMarkers: SerializerPortalMarker[];
+  crossProjectMarkers: SerializerCrossProjectMarker[];
+}> {
+  const exportedNodeIds = exportedNodes.map((n) => n.id);
+  const hostTitleById = new Map(exportedNodes.map((n) => [n.id, n.title]));
+  if (exportedNodeIds.length === 0) {
+    return { portalMarkers: [], crossProjectMarkers: [] };
+  }
+
+  // Host-side reads in parallel — both scoped to the host project + the exported
+  // node set, so a foreign node id can never smuggle in (set-membership posture).
+  const [portalNodes, crossEdges] = await Promise.all([
+    db.node.findMany({
+      where: {
+        id: { in: exportedNodeIds },
+        projectId,
+        deletedAt: null,
+        embeddedProjectId: { not: null },
+      },
+      select: { id: true, title: true, embeddedProjectId: true },
+    }),
+    db.crossProjectEdge.findMany({
+      where: {
+        deletedAt: null,
+        hostProjectId: projectId,
+        hostNodeId: { in: exportedNodeIds },
+      },
+      select: {
+        id: true,
+        hostNodeId: true,
+        foreignProjectId: true,
+        foreignNodeId: true,
+        interaction: true,
+        label: true,
+      },
+    }),
+  ]);
+
+  if (portalNodes.length === 0 && crossEdges.length === 0) {
+    return { portalMarkers: [], crossProjectMarkers: [] };
+  }
+
+  // Per-actor re-gate every distinct foreign project in PARALLEL (no waterfall),
+  // building a Map of readable foreign project id → title. An unreadable project
+  // is absent from the Map, so every marker keyed on it is dropped below.
+  const distinctForeignProjectIds = [
+    ...new Set([
+      ...portalNodes
+        .map((p) => p.embeddedProjectId)
+        .filter((id): id is string => id !== null),
+      ...crossEdges.map((e) => e.foreignProjectId),
+    ]),
+  ];
+  const readableForeignTitles = new Map<string, string>();
+  await Promise.all(
+    distinctForeignProjectIds.map(async (foreignProjectId) => {
+      try {
+        await resolveReadableProjectById(db, actor, foreignProjectId);
+      } catch {
+        return; // Unreadable → no marker; nothing reaches the output.
+      }
+      const row = await db.project.findUnique({
+        where: { id: foreignProjectId },
+        select: { title: true },
+      });
+      if (row) readableForeignTitles.set(foreignProjectId, row.title);
+    }),
+  );
+
+  const portalMarkers: SerializerPortalMarker[] = [];
+  for (const p of portalNodes) {
+    if (p.embeddedProjectId === null) continue;
+    const foreignProjectTitle = readableForeignTitles.get(p.embeddedProjectId);
+    if (foreignProjectTitle === undefined) continue; // unreadable → drop
+    portalMarkers.push({
+      hostNodeId: p.id,
+      hostTitle: p.title,
+      foreignProjectTitle,
+    });
+  }
+
+  // ONE batch read of the surviving foreign endpoints' titles across every
+  // readable foreign project — never a per-row follow-up.
+  const survivingEdges = crossEdges.filter((e) =>
+    readableForeignTitles.has(e.foreignProjectId),
+  );
+  const foreignTitleByNodeId = new Map<string, string>();
+  if (survivingEdges.length > 0) {
+    const foreignNodes = await db.node.findMany({
+      where: {
+        id: { in: survivingEdges.map((e) => e.foreignNodeId) },
+        projectId: { in: [...readableForeignTitles.keys()] },
+        deletedAt: null,
+      },
+      select: { id: true, title: true },
+    });
+    for (const n of foreignNodes) foreignTitleByNodeId.set(n.id, n.title);
+  }
+
+  const crossProjectMarkers: SerializerCrossProjectMarker[] = [];
+  for (const e of survivingEdges) {
+    const foreignProjectTitle = readableForeignTitles.get(e.foreignProjectId);
+    const foreignEndpointTitle = foreignTitleByNodeId.get(e.foreignNodeId);
+    // A dangling/soft-deleted foreign endpoint finds no title — drop the marker
+    // (the same posture getCanvas takes for an unresolvable foreign node).
+    if (foreignProjectTitle === undefined || foreignEndpointTitle === undefined) {
+      continue;
+    }
+    crossProjectMarkers.push({
+      hostNodeId: e.hostNodeId,
+      hostTitle: hostTitleById.get(e.hostNodeId) ?? e.hostNodeId,
+      foreignProjectTitle,
+      foreignEndpointTitle,
+      interaction: e.interaction,
+      label: e.label,
+    });
+  }
+
+  return { portalMarkers, crossProjectMarkers };
 }
 
 /**
@@ -324,6 +485,7 @@ export async function exportMarkdown(
 
   return serializeProjectScope(
     db,
+    actor,
     { projectId: project.id, projectTitle: project.title },
     { canvasNodeId, mode },
   );
@@ -384,6 +546,7 @@ export async function exportMarkdownForActor(
 
   return serializeProjectScope(
     db,
+    actor,
     { projectId: project.id, projectTitle: project.title },
     { canvasNodeId, mode },
   );

@@ -317,3 +317,55 @@ The three existing modes (`full` / `index`) and their three golden fixtures are
 **byte-untouched**. A 4th golden fixture (`export-trace-full.md`) plus a
 twice-equal determinism test and a `LANG`/`LC_ALL`/`LC_COLLATE` locale-mutation
 test lock the new mode, in the same harness (ADR-0003) as the existing modes.
+
+## Amendment — #123 (portal / cross-project reference markers)
+
+The serializer gains **reference markers** for **portals**
+([ADR-0041](0041-cross-project-embedding-per-actor-portal.md)) and **cross-project
+connections** ([ADR-0043](0043-cross-project-connections-host-anchored-crossprojectedge.md))
+as **strict additive insertions** — the three existing golden fixtures
+(`export-{project,subtree,index}-full.md`) stay **byte-untouched**; new
+marker-bearing fixtures are added rather than re-baselining what is here (the §6
+no-re-baseline disposition, honored). This amendment adds **form**, not new
+machinery: the four-clause **determinism contract** above (codepoint sort, no
+timestamps, AST heading-shift, pinned `remark-stringify`) is **unchanged**.
+
+### The marker is non-recursive and terminal
+
+A portal or cross-project link serializes as a **terminal** marker that names the
+**foreign project title** and the **foreign endpoint title/kind**, and then
+**stops**. It **never follows the pointer** into the foreign project's
+serialization — no foreign docs, no foreign interior, no foreign content inlined.
+The non-recursion is a **security boundary, not a formatting choice**: inlining the
+foreign subtree would bypass the per-actor re-gate, because `serializeGraph` is
+**pure and actor-less** (§3) and cannot re-gate a crossing — emitting foreign
+content here would breach the per-actor firewall at the **export boundary**, the
+ADR-0041 §3 leak. The marker stops at the seam precisely so the actor-less
+serializer never crosses it.
+
+### Derivation is per-actor re-gated, in `export.service`
+
+The marker's foreign endpoint is **re-gated per-actor** (`≥ view`,
+`resolveReadableProjectById`, ADR-0043 §3/§5) in **`export.service.ts`** (the
+`(db, actor, input)` shape that _can_ re-gate, §3) — **never** in pure
+`markdown.ts`. `export.service` hands `serializeGraph` only the markers that
+survived the gate; a marker whose foreign end is **unreadable for this actor,
+soft-deleted, or dangling** is **absent** from the output (the render-time "proxy
+absent" posture of ADR-0043 §5, carried to the export boundary).
+
+### Determinism contract unchanged; markers keyed host-stable
+
+The four-clause contract holds verbatim. Markers sort by the codepoint comparator
+`cmp` over a **host-stable key** (the host node / portal ordering — **never** a
+foreign cuid, **never** `Map`/`Set` iteration order), emit **no foreign
+`{#nodeId}` anchors** (the foreign project is addressable only inside its own
+export, never across this seam), carry no timestamps, and pull **no foreign
+documentation into the mdast walk** (the heading-shift AST pass touches only
+host-owned, gate-cleared docs). The `localeCompare`/`Intl` ban holds. New
+marker-bearing fixtures are locked by a **twice-equal** determinism test and a
+`LANG`/`LC_ALL`/`LC_COLLATE` **locale-mutation** test, in the same harness
+(ADR-0003) as the existing modes — the contract stays enforced format-agnostically.
+
+See [ADR-0044](0044-cross-project-connection-management.md) §4 for the export
+firewall in full (the marker-not-inlined invariant, the `export.service` re-gate,
+and the "a reference is not a grant" non-leak it pairs with).
