@@ -23,9 +23,12 @@ default.
 
 ## Decision
 
-1. **Tokens live in `src/styles/globals.css`.** `:root` holds the LIGHT raw oklch
-   values; `.dark` overrides them with the DARK variant. A single `@theme inline`
-   block maps every token into Tailwind's `--color-*` namespace so the utilities
+1. **Tokens live in `src/styles/globals.css`.** Because the app is **dark by
+   default**, the bare `:root` carries the DARK raw oklch values (so the classless
+   first paint the server emits is already dark — no light flash), and `:root.light`
+   (higher specificity than `:root`, so it wins regardless of source order) overrides
+   them with the LIGHT variant. A single `@theme inline` block maps every token into
+   Tailwind's `--color-*` namespace so the utilities
    (`bg-background`, `text-foreground`, `border-border`, `bg-primary`,
    `text-muted-foreground`, `bg-card`, `bg-popover`, `bg-destructive`, `ring-ring`,
    …) generate.
@@ -46,16 +49,28 @@ default.
    `border-portal` self-documenting and lets either move independently of the base
    palette. Both are defined for light and dark.
 
-3. **Light/dark via `next-themes`, class strategy, dark default, localStorage.**
-   `ThemeProvider` (a `"use client"` shim at `src/app/_components/theme-provider.tsx`,
-   so the server root layout never imports a client lib directly) wraps
-   `TRPCReactProvider` with `attribute="class" defaultTheme="dark"
-enableSystem={false}`. `<html>` carries `suppressHydrationWarning`; next-themes'
-   pre-paint inline script sets the `.dark` class before React hydrates, so there is
-   **no flash of the wrong theme**. Persistence is per-device localStorage. The
-   per-user-DB upgrade seam (a `User.themePreference` column read in the layout to
-   seed the provider) is deliberately left unbuilt — the token layer and class
-   strategy don't change, only the source of the initial class does.
+3. **Light/dark via a tiny in-house mechanism — no `next-themes`.** The app only
+   needs class-based light/dark with a dark default and localStorage persistence, so a
+   ~40-line bootstrap (`src/lib/theme.ts` + `ThemeToggle`) replaces the dependency and,
+   crucially, avoids the dependency's React-19 footgun: next-themes renders its
+   no-FOUC `<script>` from a **client** component, and React 19 warns on every
+   client-rendered inline `<script>` ("Scripts inside React components are never
+   executed when rendering on the client"). Instead:
+   - **`themeInitScript`** is a literal string in the plain (non-`"use client"`)
+     module `src/lib/theme.ts`, inlined by the **server** root layout as a `<script>`
+     at the top of `<body>`. It runs before first paint, reads `localStorage` (default
+     dark), and sets the theme class + `color-scheme` on `<html>` — so the first paint
+     is already correct (**no FOUC**) and the script is **server-rendered**, never
+     client-rendered (no React-19 warning). `<html>` keeps `suppressHydrationWarning`
+     for the class the script mutates.
+   - **`useTheme`** (in `theme-toggle.tsx`) reads the active theme via
+     `useSyncExternalStore` (a `MutationObserver` on the `<html>` class) — the
+     sanctioned escape hatch for external state, so there is no setState-in-effect and
+     no hydration error when the server snapshot (`"dark"`) differs from the client's
+     actual theme. `setTheme` swaps the class + `color-scheme` and writes localStorage.
+   - Persistence is per-device localStorage. The per-user-DB upgrade seam (a
+     `User.themePreference` column seeding the init script's default) is left unbuilt —
+     only the source of the initial value would change, not the class mechanism.
 
 4. **React Flow themed via `--xy-*` variables**, scoped under
    `[data-canvas-scope] .react-flow` in `globals.css` so they win over the

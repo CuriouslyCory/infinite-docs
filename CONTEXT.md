@@ -1178,13 +1178,17 @@ literal**. Use the Tailwind utilities that map to the tokens:
   (`border-portal`/`bg-portal`/`text-portal`) marks a Project Portal / embedded
   boundary (formerly sky). Both are first-class tokens defined for light and dark.
 
-**Light + dark** ship from one token set: `:root` is light, `.dark` overrides it, and
-`@theme inline` (not `@theme`) is what makes a class swap re-cascade at runtime. The
-toggle is `next-themes` (class strategy, **dark default**, localStorage); `<html>`
-carries `suppressHydrationWarning` and next-themes' pre-paint script prevents a
-flash. The **Oxanium** display font (`font-display`) is for **headings only**; body
-stays Geist. React Flow is themed via `--xy-*` vars scoped under
-`[data-canvas-scope] .react-flow`.
+**Light + dark** ship from one token set. The app is **dark by default**, so bare
+`:root` carries the dark values (the no-flash default) and `:root.light` overrides for
+light; `@theme inline` (not `@theme`) is what makes a class swap re-cascade at runtime.
+The toggle is a small in-house mechanism (no `next-themes`): a **server-rendered**
+init script (`themeInitScript` in `src/lib/theme.ts`, inlined by the root layout) sets
+the theme class on `<html>` before first paint (no FOUC, and no client-rendered
+`<script>` for React 19 to warn about), and `useTheme` (in `theme-toggle.tsx`) reads
+it via `useSyncExternalStore` + writes localStorage. `<html>` keeps
+`suppressHydrationWarning`. The **Oxanium** display font (`font-display`) is for
+**headings only**; body stays Geist. React Flow is themed via `--xy-*` vars scoped
+under `[data-canvas-scope] .react-flow`.
 
 **Verifying a theme change:** `pnpm check` and `pnpm test` are **color-blind** — they
 catch nothing visual. Always verify in-browser in **both** modes; **light mode is the

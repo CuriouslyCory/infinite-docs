@@ -3,7 +3,7 @@ import "~/styles/globals.css";
 import { type Metadata } from "next";
 import { Geist, Oxanium } from "next/font/google";
 
-import { ThemeProvider } from "~/app/_components/theme-provider";
+import { themeInitScript } from "~/lib/theme";
 import { TRPCReactProvider } from "~/trpc/react";
 
 export const metadata: Metadata = {
@@ -32,18 +32,12 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="bg-background text-foreground font-sans antialiased">
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="dark"
-          enableSystem={false}
-          disableTransitionOnChange
-          // Map each theme to an explicit class so next-themes ADDS `.light`
-          // (not just removes `.dark`). Required because `:root` carries the dark
-          // palette as the no-flash default, so light mode must apply its own class.
-          value={{ light: "light", dark: "dark" }}
-        >
-          <TRPCReactProvider>{children}</TRPCReactProvider>
-        </ThemeProvider>
+        {/* Applies the stored/default theme class before first paint (no FOUC).
+            Server-rendered, so React never client-renders a <script> (which it
+            warns about). suppressHydrationWarning on <html> covers the class it
+            mutates. */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <TRPCReactProvider>{children}</TRPCReactProvider>
         <div className="retro-overlay" aria-hidden />
       </body>
     </html>

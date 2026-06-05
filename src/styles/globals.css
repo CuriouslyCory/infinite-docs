@@ -3,13 +3,13 @@
 /*
  * Doom 64 design-token system (ADR-0045). Every color in the app resolves to one
  * of these semantic CSS variables, so re-theming is a one-file swap and the
- * light/dark toggle works by flipping the theme class on <html> (next-themes).
+ * light/dark toggle works by flipping the theme class on <html> (src/lib/theme.ts).
  *
  * The app is DARK by default, so the bare `:root` (the classless state the server
  * renders and the browser paints first) carries the DARK palette — `.light`
  * overrides it. This is deliberately inverted from the usual shadcn `:root`=light
  * convention: it means the first paint can never flash a light/wrong palette before
- * next-themes resolves (no FOUC), because the default IS the default theme. The
+ * the toggle resolves (no FOUC), because the default IS the default theme. The
  * `@theme inline` block below maps each var into Tailwind's `--color-*` namespace —
  * it MUST be `inline` so utilities emit `var(--card)` (which re-cascades on a class
  * swap) rather than baking the literal oklch value (which would freeze the theme).

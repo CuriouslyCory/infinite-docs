@@ -1,20 +1,51 @@
 "use client";
 
 import { Moon, Sun } from "lucide-react";
-import { useTheme } from "next-themes";
+import { useCallback, useSyncExternalStore } from "react";
 
-/**
- * Light/dark toggle. next-themes leaves `resolvedTheme` undefined on the server and
- * the first client render (it resolves the active theme only after mount), so we
- * render a neutral placeholder in that window — matching markup on both sides avoids
- * a hydration mismatch on the icon without needing a mounted flag. The
- * FOUC-prevention script has already set the correct `.dark` class on <html> before
- * paint, so the page itself never flashes.
- */
+import { THEME_STORAGE_KEY, type Theme } from "~/lib/theme";
+
+// The theme lives on <html> as a class (`light`/`dark`), set before paint by the
+// server-rendered init script. We read it through useSyncExternalStore — the
+// sanctioned escape hatch for external (non-React) state — so there is no
+// setState-in-effect and no hydration error when the server snapshot ("dark", the
+// default the server can't see past) differs from the client's actual theme.
+function subscribe(onChange: () => void) {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+  return () => observer.disconnect();
+}
+function getSnapshot(): Theme {
+  return document.documentElement.classList.contains("light")
+    ? "light"
+    : "dark";
+}
+function getServerSnapshot(): Theme {
+  return "dark";
+}
+
+function useTheme() {
+  const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const setTheme = useCallback((next: Theme) => {
+    const el = document.documentElement;
+    el.classList.remove("light", "dark");
+    el.classList.add(next);
+    el.style.colorScheme = next;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // localStorage can throw in private mode; the in-tab class swap still works.
+    }
+  }, []);
+  return { theme, setTheme };
+}
+
 export function ThemeToggle() {
-  const { resolvedTheme, setTheme } = useTheme();
-  const isDark = resolvedTheme === "dark";
-
+  const { theme, setTheme } = useTheme();
+  const isDark = theme === "dark";
   return (
     <button
       type="button"
@@ -23,13 +54,7 @@ export function ThemeToggle() {
       onClick={() => setTheme(isDark ? "light" : "dark")}
       className="border-border bg-muted text-muted-foreground hover:text-foreground flex h-7 w-7 items-center justify-center rounded-full border transition"
     >
-      {resolvedTheme === undefined ? (
-        <span className="h-[13px] w-[13px]" />
-      ) : isDark ? (
-        <Moon size={13} aria-hidden />
-      ) : (
-        <Sun size={13} aria-hidden />
-      )}
+      {isDark ? <Moon size={13} aria-hidden /> : <Sun size={13} aria-hidden />}
     </button>
   );
 }
