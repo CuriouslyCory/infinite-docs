@@ -228,6 +228,30 @@
 }
 
 /*
+ * Terminal boot-log block caret (#135). Blinks by default; the blink is motion, so
+ * it's disabled under prefers-reduced-motion (the solid block stays visible).
+ */
+@keyframes terminal-caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.terminal-caret {
+  animation: terminal-caret-blink 1s step-end infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-caret {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/*
  * Markdown rendering for the Component docs editor (Plate; issues #11/#12).
  * Tailwind's preflight strips heading sizes and list markers, so the rendered
  * markdown needs explicit element styling. Scoped to `.plate-doc` so it only

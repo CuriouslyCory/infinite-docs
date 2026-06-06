@@ -1,6 +1,7 @@
 import { LandingFooter } from "~/app/_components/landing/landing-footer";
 import { LandingHero } from "~/app/_components/landing/landing-hero";
 import { LandingNav } from "~/app/_components/landing/landing-nav";
+import { LandingTerminal } from "~/app/_components/landing/landing-terminal";
 
 export function LandingPage() {
   return (
@@ -8,6 +9,7 @@ export function LandingPage() {
       <div className="border-border bg-card flex w-full max-w-5xl flex-col border">
         <LandingNav />
         <LandingHero />
+        <LandingTerminal />
         <LandingFooter />
       </div>
     </main>
