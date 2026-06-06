@@ -40,7 +40,7 @@ import {
   type BoundaryProxyNode,
 } from "./boundary-proxy";
 import { type ConnectTarget } from "./connect-to-palette";
-import { CopyMarkdownToolbar } from "./copy-markdown";
+import { CopyMenu } from "./copy-menu";
 import {
   ComponentDetailPanel,
   prefetchDocsEditor,
@@ -2582,10 +2582,14 @@ function CanvasInner({
                           />
                         )}
                         {/* Slug-readable: visible to any viewer, not gated on
-                      edit. Always exports the whole project (ADR-0017 /
-                      #15) — the scope-specific export lives on the
-                      breadcrumb bar. */}
-                        <CopyMarkdownToolbar slug={slug} />
+                      edit. The Copy menu leads with the whole project here
+                      (ADR-0017 / #15) and, once descended, also offers the
+                      current view; the breadcrumb bar leads with current. */}
+                        <CopyMenu
+                          slug={slug}
+                          canvasNodeId={canvasNodeId}
+                          defaultScope="project"
+                        />
                       </Panel>
                       {selectedNodeId !== null &&
                         (effectiveCanEdit ? (

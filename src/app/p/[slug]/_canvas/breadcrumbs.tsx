@@ -5,7 +5,7 @@ import Link from "next/link";
 
 import { api } from "~/trpc/react";
 
-import { CopyCurrentScopeButton } from "./copy-markdown";
+import { CopyMenu } from "./copy-menu";
 
 /**
  * The breadcrumb bar — the rendered navigation UI for a Canvas scope's ancestor
@@ -157,7 +157,12 @@ export function Breadcrumbs({
       {/* Scope-anchored markdown copy (#15 / ADR-0017). At the root scope
           this exports the whole project; descended, it exports the current
           subtree with its self-describing Boundary context. */}
-      <CopyCurrentScopeButton slug={slug} canvasNodeId={canvasNodeId} />
+      <CopyMenu
+        slug={slug}
+        canvasNodeId={canvasNodeId}
+        defaultScope="current"
+        compact
+      />
     </nav>
   );
 }

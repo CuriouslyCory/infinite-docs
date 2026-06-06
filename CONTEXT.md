@@ -1101,8 +1101,8 @@ spec→Component generator in #64. See ADR-0011, ADR-0025.)_
 
 ### Markdown export
 
-The byte-stable serialization of a **Project** — or one of its subtrees — to markdown for human
-"Copy as markdown" use and the **MCP resources** (realized now via #18). Slug-readable on the web
+The byte-stable serialization of a **Project** — or one of its subtrees — to markdown for the web
+**Copy menu** use and the **MCP resources** (realized now via #18). Slug-readable on the web
 path (ADR-0002, the same posture **getCanvas** uses) and member-gated on the MCP path (owner or
 member, `view` on the capability ladder; ADR-0022 / ADR-0040 #109), with three modes:
 
@@ -1145,8 +1145,39 @@ ADR-0017): each Connection serializes exactly once with its `interaction` glyph,
 ordered; the subtree Boundary section lists one row per crossing Connection (no `direct/inherited`
 partition — ADR-0031 per-edge posture extended to the export consumer); generated Components
 serialize as ordinary Nodes with stable anchors; the goldens were re-baselined once, locale-
-invariance and heading-shift tests stayed green. The "Copy as markdown" toolbar action and the
-breadcrumb-bar scope-anchored copy ship the client-side surface. See ADR-0017.)_
+invariance and heading-shift tests stayed green. The single **Copy menu** (#130) ships the
+client-side surface: one **scope × mode** chooser mounted in the canvas toolbar
+(`defaultScope="project"`) and, compact, in the breadcrumb bar (`defaultScope="current"`),
+replacing the three former affordances ("Copy as markdown", "Copy index", the breadcrumb scope
+copy). See ADR-0017.)_
+
+### Copy menu
+
+The single web affordance for copying **Markdown export** output to the clipboard — one popover
+exposing **scope** (whole **Project** vs **current view**, the subtree the viewer has descended
+into) × **mode** (**full** markdown, authored docs included, vs **index** — titles + **Component
+kind**s, no doc bodies). At the **Project** root the two scopes coincide, so the menu collapses to
+two rows (Full / Index, both whole-project); descended it shows four (a Full group and an Index
+group, each pairing a whole-project and a current-view row), with `defaultScope` deciding only the
+row **order** within each group, never which rows appear. Every row reuses
+`exportMarkdown.fetch({ slug, canvasNodeId, mode })` — the unchanged slug-readable web fetch (no
+backend change). Slug-readable (ADR-0002), so shown to every viewer and **never edit-gated**, it is
+mounted twice: the canvas toolbar (`defaultScope="project"`) leads with the whole-project rows, the
+breadcrumb bar (`defaultScope="current"`, compact) with the current-view rows. The word is **Copy
+menu** — never "export menu" or "copy dropdown". Built on the Base UI **Popover** wrapper (the same
+surface as the header Share menu) with hand-applied menu semantics: a native
+`<button aria-haspopup="menu">` trigger, a `role="menu"` panel, native `<button role="menuitem">`
+rows, ArrowDown/ArrowUp roving focus on top of the wrapper's Escape-close / outside-press / focus
+restore / portal / collision handling. _(Realized now via #130, replacing the toolbar
+"Copy as markdown" / "Copy index" pair and the breadcrumb scope copy with one `CopyMenu`. No new
+ADR — UI consolidation over the unchanged ADR-0017 export.)_
+
+### ~~Copy as markdown / Copy index / breadcrumb scope copy~~ (retired → Copy menu)
+
+The three former clipboard affordances — the canvas-toolbar "Copy as markdown" and "Copy index"
+buttons and the breadcrumb-bar scope-anchored "Copy" — folded into the single **Copy menu** at #130.
+The names are retired; use **Copy menu** (scope × mode). The underlying **Markdown export** fetch is
+unchanged.
 
 ### Trace
 
