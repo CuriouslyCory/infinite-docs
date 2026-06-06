@@ -17,10 +17,11 @@ import { KIND_ICON, KIND_LABEL, suggestedKinds } from "~/lib/node-kinds";
 import { type NodeKind } from "~/lib/schemas";
 
 /**
- * The **kind palette** (CONTEXT.md "Kind palette"; ADR-0020): the searchable,
- * keyboard-navigable Command surface for picking a Component **kind**. Used both
- * when adding a Component (`AddComponent`) and when changing one's kind from the
- * Component-detail panel — the single kind-selection surface in the canvas.
+ * The **kind palette** (CONTEXT.md "Add palette"): the searchable,
+ * keyboard-navigable Command surface for picking a Component **kind**. Reused by
+ * the unified **Add palette** (`AddPalette`) and, behind `KindPickerPopover`, by
+ * the Component-detail panel's change-kind row — the single kind-selection
+ * surface in the canvas.
  *
  * `parentKind` keys the **kind affinity** ranking (`null` => the Project root):
  * affined kinds render under a "Suggested" group above a separator, every other
@@ -84,7 +85,7 @@ export function KindPalette({
   );
 }
 
-function KindItem({
+export function KindItem({
   kind,
   active,
   onSelect,
@@ -115,8 +116,9 @@ function KindItem({
 
 /**
  * The reusable popover that hosts the **kind palette** behind a caller-supplied
- * trigger — shared by the "Add Component" control and the Component-detail
- * panel's change-kind row. cmdk owns in-list arrow/Enter navigation; this
+ * trigger — the Component-detail panel's change-kind row mounts it to re-kind a
+ * Component (the add flow now lives in the unified **Add palette**, which composes
+ * `KindPalette` directly). cmdk owns in-list arrow/Enter navigation; this
  * wrapper owns only the surrounding open/dismiss. Selecting a kind closes the
  * popover and forwards to `onSelect`.
  */

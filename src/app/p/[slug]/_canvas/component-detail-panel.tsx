@@ -301,7 +301,7 @@ function KindSection({
       <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         Kind
       </h3>
-      {/* Opens the SAME kind palette the Add control uses (ADR-0020), keyed by
+      {/* Opens the kinds-only half of the unified Add palette (#129), keyed by
           the PARENT's kind for affinity and marking the current kind. */}
       <KindPickerPopover
         parentKind={parentKind}

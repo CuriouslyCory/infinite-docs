@@ -118,28 +118,42 @@ suggestions" (names the UI output, not the relation), "kind ranking" (names the
 mechanism), or "nesting rules" / "parent-child constraints" (actively wrong — no
 constraint exists). _(Realized now alongside the **kind palette**. See ADR-0019.)_
 
-### Kind palette
+### Add palette
 
-The Command-palette UX surface for picking a **Component kind** — a searchable,
-keyboard-navigable list (built on the shadcn/`cmdk` `Command` primitive) that
-replaced the original `<select>` dropdown. Renders the full `NodeKind` set with
-the **kind-affine** entries grouped under a "Suggested" heading above a separator
-and the remainder under "All kinds" below, preserving the invariant that every
-kind is always reachable (search spans both groups). It is the only
-kind-selection surface in the canvas: the "Add Component" control opens it, and —
-since Slice 2 — the **Component-detail panel** reopens the same palette to change
-a Component's kind. That control and the **Connect-to** palette both mount their
-popover through the shared Base UI wrapper at `src/components/ui/popover.tsx`,
-which portals out of the panel's `overflow` clip with collision-aware
-positioning (#89) — the canonical popover host, mirroring the `dialog.tsx` /
-`command.tsx` vendor-a-minimal-subset convention. Follows the _palette_
-convention — the word names the
-surface, not the library (cf. the **Command-palette** primitive it is built on).
-Never "kind picker" (too generic —
+The single edit-gated **Command-palette** surface for adding to a **Canvas** —
+one searchable, keyboard-navigable list (built on the shadcn/`cmdk` `Command`
+primitive) that merges what were two separate canvas-island controls (#129).
+Under one search box it carries two kinds of group: the **kind** groups
+(`NodeKind` set split into a **kind-affine** "Suggested" group above a separator
+and the remainder under "All kinds", every kind always reachable since search
+spans both) and a trailing "Embed a project" group. Selecting a kind adds a new
+**Component** of that kind; selecting a project embeds it as a **Project portal**
+(the create gate is unchanged — host edit → target ≥ view). The embeddable-project
+list is lazy: the host popover (mirroring **Connect-to**) fetches
+`listReferenceableProjects` (server-side `listProjectsForActor`) only once the
+palette is opened, so opening costs nothing until used (performance philosophy
+#1). The `KindItem` row is shared with the re-kind path: the **Component-detail
+panel** reopens JUST the kinds half (`KindPickerPopover` → `KindPalette`) to
+change a Component's kind. The palette and the **Connect-to** palette both mount
+their popover through the shared Base UI wrapper at
+`src/components/ui/popover.tsx`, which portals out of the panel's `overflow` clip
+with collision-aware positioning (#89) — the canonical popover host, mirroring the
+`dialog.tsx` / `command.tsx` vendor-a-minimal-subset convention. Follows the
+_palette_ convention — the word names the surface, not the library (cf. the
+**Command-palette** primitive it is built on). Never "kind picker" (too generic —
 it could name a `<select>`), "command palette" (collides with the library term),
-or "kind selector". _(Realized now; the `<select>` it replaces is retired. The
+or "kind selector". _(Realized now; the `<select>` and the standalone
+`add-component.tsx` / `embed-project.tsx` controls it replaces are retired. The
 canonical-command-palette ADR is deferred until a second palette adopter, per
 docs-travel-with-code-slices.)_
+
+### Kind palette
+
+The **kinds-only** half of the **Add palette** — the Suggested/All-kinds groups
+plus the shared `KindItem` row. The name survives only for the re-kind use: the
+**Component-detail panel** reopens this half (`KindPickerPopover`) to change a
+Component's kind. See **Add palette** for the unified add surface. _(Realized
+now.)_
 
 ### Connection
 
@@ -567,7 +581,7 @@ proxy** / **Trace**). Creating one requires **edit** on the host **and** **≥ v
 is depth-capped at `ANCESTRY_DEPTH_CAP` (256). Deleting the **target** nulls the FK and the portal
 **neutralizes** to a plain Component — degrade, never cascade into the host, never block the
 target's deletion. Never a "link" (that is a **Connection**) and never a "PORTAL kind". The
-"Embed a project" picker offers **any project the actor holds ≥ view on** (`listProjectsForActor`,
+**Add palette**'s "Embed a project" group offers **any project the actor holds ≥ view on** (`listProjectsForActor`,
 excluding the current project) — owned **and** shared — since the create gate (host **edit**, then
 target **≥ view**) already permits embedding anything you can read; on the host read a portal
 resolves a **Portal access state** (enterable / read-only / locked) per-actor. On **markdown / MCP

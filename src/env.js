@@ -13,6 +13,8 @@ export const env = createEnv({
         : z.string().optional(),
     AUTH_DISCORD_ID: z.string(),
     AUTH_DISCORD_SECRET: z.string(),
+    AUTH_GITHUB_ID: z.string(),
+    AUTH_GITHUB_SECRET: z.string(),
     DATABASE_URL: z.url(),
     // Server-side pepper mixed into every API-token HMAC (see ADR-0020). Like
     // AUTH_SECRET, required in production but optional in dev so `pnpm check` /
@@ -46,6 +48,8 @@ export const env = createEnv({
     AUTH_SECRET: process.env.AUTH_SECRET,
     AUTH_DISCORD_ID: process.env.AUTH_DISCORD_ID,
     AUTH_DISCORD_SECRET: process.env.AUTH_DISCORD_SECRET,
+    AUTH_GITHUB_ID: process.env.AUTH_GITHUB_ID,
+    AUTH_GITHUB_SECRET: process.env.AUTH_GITHUB_SECRET,
     DATABASE_URL: process.env.DATABASE_URL,
     API_TOKEN_PEPPER: process.env.API_TOKEN_PEPPER,
     NODE_ENV: process.env.NODE_ENV,
