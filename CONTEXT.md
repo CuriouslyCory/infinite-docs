@@ -142,7 +142,9 @@ with collision-aware positioning (#89) — the canonical popover host, mirroring
 _palette_ convention — the word names the surface, not the library (cf. the
 **Command-palette** primitive it is built on). Never "kind picker" (too generic —
 it could name a `<select>`), "command palette" (collides with the library term),
-or "kind selector". _(Realized now; the `<select>` and the standalone
+or "kind selector". Its trigger is the primary affordance in the **Canvas
+toolbar** — the `bg-primary`-filled (red) button that shows a pressed-while-open
+state and sits paired with the secondary **Copy menu** trigger (#131). _(Realized now; the `<select>` and the standalone
 `add-component.tsx` / `embed-project.tsx` controls it replaces are retired. The
 canonical-command-palette ADR is deferred until a second palette adopter, per
 docs-travel-with-code-slices.)_
@@ -154,6 +156,30 @@ plus the shared `KindItem` row. The name survives only for the re-kind use: the
 **Component-detail panel** reopens this half (`KindPickerPopover`) to change a
 Component's kind. See **Add palette** for the unified add surface. _(Realized
 now.)_
+
+### Canvas toolbar
+
+The single floating top-left **Panel** shell on a **Canvas** that groups the
+canvas's create/copy triggers under one surface and one nested radius scale
+(#131). It holds two triggers: the edit-gated **Add palette** trigger — the
+`bg-primary` (red) **primary** fill, the canvas's main affordance — and the
+always-present **Copy menu** trigger — a `bg-muted` **secondary** ghost. The
+shell itself is unconditional, so a **viewer** (who lacks `effectiveCanEdit`)
+sees a **Copy-only** toolbar: the single remaining trigger renders cleanly under
+the shell's `flex gap`. The radius scale nests one step at each level — shell
+`rounded-xl` → triggers `rounded-lg` → menu/command rows `rounded-md` — and every
+surface resolves to a design **token**, never a literal: the shell is
+`bg-card/85 backdrop-blur` (theme-aware, so it flips with light/dark — never the
+banned `bg-black/40`), and both popout panels reuse the header **Share menu**
+surface (`bg-popover` + `rounded-xl` + `shadow-xl`). Each trigger shows its
+pressed-while-open state through the Base UI `data-popup-open` attribute
+(`data-[popup-open]:…`). The **breadcrumb** Copy mount stays OUTSIDE this shell —
+it keeps its own `compact` ghost styling on the breadcrumb bar. Here `primary`
+(the Doom blood-red) is the canvas's brand accent — the retired "purple". The
+word is **Canvas toolbar** — never "toolbar island", "control bar", "button bar",
+or "action bar". _(Realized now via #131, grouping the #129 Add palette and #130
+Copy menu triggers into one shell. No new ADR — UI consolidation over the
+ADR-0045 design tokens + ADR-0017, per the #129/#130 precedent.)_
 
 ### Connection
 
@@ -1168,7 +1194,9 @@ menu** — never "export menu" or "copy dropdown". Built on the Base UI **Popove
 surface as the header Share menu) with hand-applied menu semantics: a native
 `<button aria-haspopup="menu">` trigger, a `role="menu"` panel, native `<button role="menuitem">`
 rows, ArrowDown/ArrowUp roving focus on top of the wrapper's Escape-close / outside-press / focus
-restore / portal / collision handling. _(Realized now via #130, replacing the toolbar
+restore / portal / collision handling. Its canvas instance is the secondary ghost
+trigger inside the **Canvas toolbar** shell (`bg-muted`, pressed-while-open); the
+breadcrumb instance stays standalone and compact (#131). _(Realized now via #130, replacing the toolbar
 "Copy as markdown" / "Copy index" pair and the breadcrumb scope copy with one `CopyMenu`. No new
 ADR — UI consolidation over the unchanged ADR-0017 export.)_
 
@@ -1213,6 +1241,9 @@ literal**. Use the Tailwind utilities that map to the tokens:
   map the _role_, not the old opacity number; `…/70` for tertiary).
 - **Accent:** `bg-primary` / `text-primary` / `border-primary` (the blood-red accent;
   this is the **old purple accent's replacement**). `primary-foreground` for text on it.
+  `bg-primary` is used as a fill in many places app-wide; within the **Canvas
+  toolbar** specifically it marks the primary action (the Add palette trigger) against
+  the secondary `bg-muted` ghost (the Copy menu trigger).
 - **Borders:** `border-border`. Key surfaces use `border-2` for the chunky Doom panel.
 - **Destructive:** `text-destructive` / `bg-destructive` (orange) — **reserved for
   destructive actions only**; never put `bg-primary` on a delete control. Primary

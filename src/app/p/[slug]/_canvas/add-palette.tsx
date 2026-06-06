@@ -71,7 +71,7 @@ export function AddPalette({
             type="button"
             aria-haspopup="listbox"
             disabled={addPending || embedPending}
-            className="bg-primary text-primary-foreground hover:bg-primary flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold backdrop-blur transition disabled:cursor-not-allowed disabled:opacity-50"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 data-[popup-open]:bg-primary/80 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 data-[popup-open]:shadow-inner"
           >
             <Plus size={14} aria-hidden />
             {embedPending
@@ -88,7 +88,7 @@ export function AddPalette({
           // carries its id so a project titled "Service" can't collide with the
           // SERVICE kind row.
           label="Add to canvas"
-          className="border-border w-72 border shadow-2xl"
+          className="border-border w-72 rounded-xl border shadow-xl"
         >
           <CommandInput placeholder="Search kinds or projects…" autoFocus />
           <CommandList>

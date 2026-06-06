@@ -2566,7 +2566,10 @@ function CanvasInner({
                         color="color-mix(in oklab, var(--border) 28%, transparent)"
                       />
                       <Controls />
-                      <Panel position="top-left" className="flex gap-2">
+                      <Panel
+                        position="top-left"
+                        className="flex items-center gap-1.5 rounded-xl border border-border bg-card/85 p-1.5 shadow-xl backdrop-blur"
+                      >
                         {/* Unified Add palette (#129): one searchable popover for
                             picking a Component kind or embedding a Project Portal.
                             Edit-gated; the island owns the create + optimistic

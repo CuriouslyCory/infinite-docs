@@ -69,7 +69,7 @@ async function copyToClipboard(
 }
 
 const TOOLBAR_BUTTON_CLASSES =
-  "flex items-center gap-1 rounded-md bg-muted px-2 py-1.5 text-sm text-foreground transition hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "flex items-center gap-1 rounded-lg bg-muted px-2 py-1.5 text-sm text-foreground transition hover:bg-muted/70 data-[popup-open]:bg-muted/80 data-[popup-open]:shadow-inner focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 const COMPACT_BUTTON_CLASSES =
   "ml-2 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
