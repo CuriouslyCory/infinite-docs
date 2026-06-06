@@ -1,3 +1,4 @@
+import { LandingFeatures } from "~/app/_components/landing/landing-features";
 import { LandingFooter } from "~/app/_components/landing/landing-footer";
 import { LandingHero } from "~/app/_components/landing/landing-hero";
 import { LandingNav } from "~/app/_components/landing/landing-nav";
@@ -10,6 +11,7 @@ export function LandingPage() {
         <LandingNav />
         <LandingHero />
         <LandingTerminal />
+        <LandingFeatures />
         <LandingFooter />
       </div>
     </main>
