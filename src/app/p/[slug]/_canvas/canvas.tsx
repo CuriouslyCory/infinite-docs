@@ -34,8 +34,7 @@ import {
 } from "~/lib/types";
 import { api, type RouterOutputs } from "~/trpc/react";
 
-import { AddComponent } from "./add-component";
-import { EmbedProject } from "./embed-project";
+import { AddPalette } from "./add-palette";
 import {
   BoundaryProxyNodeView,
   type BoundaryProxyNode,
@@ -2568,21 +2567,18 @@ function CanvasInner({
                       />
                       <Controls />
                       <Panel position="top-left" className="flex gap-2">
+                        {/* Unified Add palette (#129): one searchable popover for
+                            picking a Component kind or embedding a Project Portal.
+                            Edit-gated; the island owns the create + optimistic
+                            writes (host-edit + target-read gated for embeds, #119). */}
                         {effectiveCanEdit && (
-                          <AddComponent
-                            onAdd={addComponent}
+                          <AddPalette
                             parentKind={parentKind}
-                            pending={createNode.isPending}
-                          />
-                        )}
-                        {/* Embed a Project Portal (#119). Edit-gated; the picker
-                            lists the actor's other projects and the island commits
-                            the host-edit + target-read gated create. */}
-                        {effectiveCanEdit && (
-                          <EmbedProject
                             excludeProjectId={activeProject.id}
+                            onAddKind={addComponent}
                             onEmbed={addEmbed}
-                            pending={createEmbeddedComponent.isPending}
+                            addPending={createNode.isPending}
+                            embedPending={createEmbeddedComponent.isPending}
                           />
                         )}
                         {/* Slug-readable: visible to any viewer, not gated on
