@@ -1263,7 +1263,9 @@ the theme class on `<html>` before first paint (no FOUC, and no client-rendered
 `<script>` for React 19 to warn about), and `useTheme` (in `theme-toggle.tsx`) reads
 it via `useSyncExternalStore` + writes localStorage. `<html>` keeps
 `suppressHydrationWarning`. The **Oxanium** display font (`font-display`) is for
-**headings only**; body stays Geist. React Flow is themed via `--xy-*` vars scoped
+**headings only**; body stays Geist; **IBM Plex Mono** (`font-mono`, `--font-mono` in
+the plain `@theme` block) carries the brutalist landing / terminal type. React Flow is
+themed via `--xy-*` vars scoped
 under `[data-canvas-scope] .react-flow`.
 
 **Verifying a theme change:** `pnpm check` and `pnpm test` are **color-blind** — they

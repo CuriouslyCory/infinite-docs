@@ -161,6 +161,9 @@
   --font-sans:
     var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono:
+    var(--font-ibm-plex-mono), ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
 }
 
 /*
@@ -210,6 +213,18 @@
   .retro-overlay {
     opacity: 0.4;
   }
+}
+
+/*
+ * Brutalist landing dot-grid (issue #134). color-mix against --foreground so the grid
+ * re-cascades on a theme swap (same pattern as .retro-overlay above).
+ */
+.dot-grid {
+  background-image: radial-gradient(
+    color-mix(in oklab, var(--foreground) 12%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 16px 16px;
 }
 
 /*

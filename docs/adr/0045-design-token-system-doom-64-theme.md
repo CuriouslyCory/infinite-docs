@@ -103,3 +103,19 @@ default.
 - The text ramp collapsed from six white-opacity literals to **two semantic tokens
   plus opacity** (`text-foreground`, `text-muted-foreground[/70]`) — map the role,
   not the old opacity number.
+
+## Amendment (issue #134): IBM Plex Mono `--font-mono`
+
+The brutalist landing surface needs a terminal-style monospace, so this slice adds a
+third app font. **IBM Plex Mono** is loaded via `next/font/google` as
+`--font-ibm-plex-mono` (weights 400/500/600/700 — it is not a variable font, so the
+weights are mandatory or the build throws) and registered on `<html>` alongside Geist
+and Oxanium. The `--font-mono` token (Tailwind's `font-mono` utility) points at it,
+with the usual `ui-monospace`/system-mono fallbacks. Unlike the color tokens, this
+lives in the **plain `@theme`** block next to `--font-sans` (not `@theme inline`):
+fonts don't runtime-switch with the theme class, so there's nothing to re-cascade. The
+change is **purely additive** — no existing token moves — but because `font-mono`
+previously fell back to the Tailwind-default `ui-monospace` stack, existing `font-mono`
+callsites (e.g. the connect-agent / MCP-instructions surfaces) now render in IBM Plex
+Mono. That restyle is intended. The token is consumed by the brutalist landing
+components in `src/app/_components/landing/`.
