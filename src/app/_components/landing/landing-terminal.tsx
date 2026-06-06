@@ -68,17 +68,24 @@ export function LandingTerminal() {
   return (
     <section className="border-border flex flex-col gap-6 border-b px-6 py-20 sm:px-12 sm:py-28">
       <SectionLabel name="BOOT LOG" index={2} />
-      <div className="border-border bg-card border font-mono text-xs sm:text-sm">
+      <p className="sr-only">
+        A boot-sequence animation: Infinite Docs mounts the root Canvas,
+        registers the Component graph and Connections, resolves boundary proxies,
+        descends into interior Canvases, serializes the graph to deterministic
+        markdown, and starts an authenticated MCP server — making the
+        architecture legible to both humans and AI agents.
+      </p>
+      <div
+        className="border-border bg-card border font-mono text-xs sm:text-sm"
+        aria-hidden="true"
+      >
         <div className="border-border flex items-center gap-2 border-b px-4 py-2">
           <span className="bg-primary h-3 w-3 rounded-full" aria-hidden="true" />
           <span className="text-muted-foreground tracking-widest lowercase">
             ~/infinite-docs — boot
           </span>
         </div>
-        <pre
-          className="text-foreground overflow-x-auto px-4 py-4 leading-relaxed whitespace-pre"
-          aria-hidden="true"
-        >
+        <pre className="text-foreground overflow-x-auto px-4 py-4 leading-relaxed whitespace-pre">
           {shown.map((line, i) => {
             const isLast = i === lastIndex;
             const isPayoff = i === LINES.length - 1;
