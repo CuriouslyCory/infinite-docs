@@ -131,8 +131,8 @@ spans both) and a trailing "Embed a project" group. Selecting a kind adds a new
 (the create gate is unchanged — host edit → target ≥ view). The embeddable-project
 list is lazy: the host popover (mirroring **Connect-to**) fetches
 `listReferenceableProjects` (server-side `listProjectsForActor`) only once the
-palette is opened, so opening costs nothing until used (performance philosophy
-#1). The `KindItem` row is shared with the re-kind path: the **Component-detail
+palette is opened, so opening costs nothing until used (performance philosophy #1).
+The `KindItem` row is shared with the re-kind path: the **Component-detail
 panel** reopens JUST the kinds half (`KindPickerPopover` → `KindPalette`) to
 change a Component's kind. The palette and the **Connect-to** palette both mount
 their popover through the shared Base UI wrapper at

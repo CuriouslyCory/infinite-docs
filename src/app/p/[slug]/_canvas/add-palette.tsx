@@ -52,11 +52,14 @@ export function AddPalette({
   const [open, setOpen] = useState(false);
 
   // Lazy: only fetch the embeddable-project list once the palette is opened.
-  const { data: projects, isLoading } =
-    api.architecture.listReferenceableProjects.useQuery(
-      { excludeProjectId },
-      { enabled: open },
-    );
+  const {
+    data: projects,
+    isLoading,
+    isError,
+  } = api.architecture.listReferenceableProjects.useQuery(
+    { excludeProjectId },
+    { enabled: open },
+  );
 
   const { suggested, rest } = suggestedKinds(parentKind);
 
@@ -134,6 +137,10 @@ export function AddPalette({
                 // selects it.
                 <p className="text-muted-foreground px-2 py-1.5 text-sm">
                   Loading…
+                </p>
+              ) : isError ? (
+                <p className="text-muted-foreground px-2 py-1.5 text-sm">
+                  Couldn’t load projects.
                 </p>
               ) : !projects || projects.length === 0 ? (
                 <p className="text-muted-foreground px-2 py-1.5 text-sm">
