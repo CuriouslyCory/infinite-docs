@@ -1,6 +1,6 @@
 "use client";
 
-import { Dialog as DialogPrimitive } from "@base-ui-components/react/dialog";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { type ComponentProps } from "react";
 
 /**
