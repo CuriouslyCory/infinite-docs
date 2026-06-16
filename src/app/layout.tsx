@@ -7,6 +7,13 @@ import { themeInitScript } from "~/lib/theme";
 import { TRPCReactProvider } from "~/trpc/react";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : "http://localhost:3000",
+  ),
   title: "Infinite Docs — Document your architecture as an infinite graph",
   description:
     "A drag-and-drop tool for documenting software architecture as an infinitely-nestable graph. Place Components on a Canvas, descend into any Component's interior, and serialize the whole graph to deterministic markdown — with an authenticated MCP server for AI agents.",
