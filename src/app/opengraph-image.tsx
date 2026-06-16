@@ -3,7 +3,7 @@ import {
   OG_CONTENT_TYPE,
   OG_SIZE,
   renderOgImage,
-} from "./_og/og-image";
+} from "~/app/_og/og-image";
 
 export const runtime = "nodejs"; // fs.readFile (font loading) is unavailable on edge
 
