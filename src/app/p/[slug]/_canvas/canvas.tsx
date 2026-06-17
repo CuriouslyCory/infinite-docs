@@ -36,6 +36,10 @@ import { api, type RouterOutputs } from "~/trpc/react";
 
 import { AddPalette } from "./add-palette";
 import {
+  rollbackIfStillOptimistic,
+  runOptimisticWrite,
+} from "./optimistic-write";
+import {
   BoundaryProxyNodeView,
   type BoundaryProxyNode,
 } from "./boundary-proxy";
@@ -84,6 +88,13 @@ import {
  * same model — one mutation per gesture — writing the store and the cache mirror
  * together (via `patchCanvas`, which preserves sibling keys) and rolling both
  * back with a toast on failure.
+ *
+ * Field edits (rename, kind, label, interaction, documentation) route their
+ * optimistic-write lifecycle through the shared `runOptimisticWrite` seam
+ * (`./optimistic-write`), so snapshot/apply/conditional-rollback live in one
+ * tested place. Add/drag/connect keep their bespoke temp-id → real-id reconcile
+ * inline — the seam's success branch is the #148 extension point those will
+ * adopt when reconcile lands there.
  *
  * The cross-scope read shape (`boundaryProxies`, per-edge `sourceRepr` /
  * `targetRepr`) is derived by `getCanvas` as of #63 (ADR-0031). This island
@@ -881,44 +892,47 @@ function CanvasInner({
   // patch. Same fix lives in `commitDocumentation` for the autosave path.
   const commitRename = useCallback(
     (id: string, title: string): void => {
-      const prevTitle = utils.architecture.getCanvas
-        .getData(canvasInput)
-        ?.interiorNodes.find((n) => n.id === id)?.title;
-
-      setNodes((ns) =>
-        ns.map((n) =>
-          n.id === id && n.type === "component"
-            ? { ...n, data: { ...n.data, title } }
-            : n,
-        ),
-      );
-      patchCanvas((c) => ({
-        interiorNodes: c.interiorNodes.map((n) =>
-          n.id === id ? { ...n, title } : n,
-        ),
-      }));
-
-      void renameNode({ id, title }).catch(() => {
-        const currentTitle = utils.architecture.getCanvas
+      const titleOf = () =>
+        utils.architecture.getCanvas
           .getData(canvasInput)
           ?.interiorNodes.find((n) => n.id === id)?.title;
-        // Only restore if the cache still shows what THIS rename optimistically
-        // wrote — a newer rename's optimistic patch must not be undone.
-        if (currentTitle === title && prevTitle !== undefined) {
+      void runOptimisticWrite<string | undefined>({
+        snapshot: titleOf,
+        apply: () => {
           setNodes((ns) =>
             ns.map((n) =>
               n.id === id && n.type === "component"
-                ? { ...n, data: { ...n.data, title: prevTitle } }
+                ? { ...n, data: { ...n.data, title } }
                 : n,
             ),
           );
           patchCanvas((c) => ({
             interiorNodes: c.interiorNodes.map((n) =>
-              n.id === id ? { ...n, title: prevTitle } : n,
+              n.id === id ? { ...n, title } : n,
             ),
           }));
-        }
-        toast.error("Couldn’t rename the component. Please try again.");
+        },
+        mutate: () => renameNode({ id, title }),
+        // Roll back only if the cache still shows what THIS rename wrote — a
+        // newer rename's optimistic patch must not be undone.
+        stillOptimistic: () => titleOf() === title,
+        rollback: (prev) => {
+          if (prev === undefined) return;
+          setNodes((ns) =>
+            ns.map((n) =>
+              n.id === id && n.type === "component"
+                ? { ...n, data: { ...n.data, title: prev } }
+                : n,
+            ),
+          );
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.map((n) =>
+              n.id === id ? { ...n, title: prev } : n,
+            ),
+          }));
+        },
+        onError: () =>
+          toast.error("Couldn’t rename the component. Please try again."),
       });
     },
     [setNodes, utils, canvasInput, patchCanvas, renameNode],
@@ -931,42 +945,45 @@ function CanvasInner({
   // cosmetic, so no edge state is touched (ADR-0018).
   const commitNodeKind = useCallback(
     (id: string, kind: NodeKind): void => {
-      const prevKind = utils.architecture.getCanvas
-        .getData(canvasInput)
-        ?.interiorNodes.find((n) => n.id === id)?.kind;
-
-      setNodes((ns) =>
-        ns.map((n) =>
-          n.id === id && n.type === "component"
-            ? { ...n, data: { ...n.data, kind } }
-            : n,
-        ),
-      );
-      patchCanvas((c) => ({
-        interiorNodes: c.interiorNodes.map((n) =>
-          n.id === id ? { ...n, kind } : n,
-        ),
-      }));
-
-      void changeNodeKind({ id, kind }).catch(() => {
-        const currentKind = utils.architecture.getCanvas
+      const kindOf = () =>
+        utils.architecture.getCanvas
           .getData(canvasInput)
           ?.interiorNodes.find((n) => n.id === id)?.kind;
-        if (currentKind === kind && prevKind !== undefined) {
+      void runOptimisticWrite<NodeKind | undefined>({
+        snapshot: kindOf,
+        apply: () => {
           setNodes((ns) =>
             ns.map((n) =>
               n.id === id && n.type === "component"
-                ? { ...n, data: { ...n.data, kind: prevKind } }
+                ? { ...n, data: { ...n.data, kind } }
                 : n,
             ),
           );
           patchCanvas((c) => ({
             interiorNodes: c.interiorNodes.map((n) =>
-              n.id === id ? { ...n, kind: prevKind } : n,
+              n.id === id ? { ...n, kind } : n,
             ),
           }));
-        }
-        toast.error("Couldn’t change the kind. Please try again.");
+        },
+        mutate: () => changeNodeKind({ id, kind }),
+        stillOptimistic: () => kindOf() === kind,
+        rollback: (prev) => {
+          if (prev === undefined) return;
+          setNodes((ns) =>
+            ns.map((n) =>
+              n.id === id && n.type === "component"
+                ? { ...n, data: { ...n.data, kind: prev } }
+                : n,
+            ),
+          );
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.map((n) =>
+              n.id === id ? { ...n, kind: prev } : n,
+            ),
+          }));
+        },
+        onError: () =>
+          toast.error("Couldn’t change the kind. Please try again."),
       });
     },
     [setNodes, utils, canvasInput, patchCanvas, changeNodeKind],
@@ -1009,17 +1026,26 @@ function CanvasInner({
         .then(() => editDocumentation({ id, documentation }))
         .then(() => undefined)
         .catch((error: unknown) => {
-          const currentDoc = utils.architecture.getCanvas
-            .getData(canvasInput)
-            ?.interiorNodes.find((n) => n.id === id)?.documentation;
-          if (currentDoc === documentation && prevDoc !== undefined) {
-            patchCanvas((c) => ({
-              interiorNodes: c.interiorNodes.map((n) =>
-                n.id === id ? { ...n, documentation: prevDoc } : n,
-              ),
-            }));
-          }
-          toast.error(messageForDocsSaveFailure(error));
+          rollbackIfStillOptimistic<string | undefined>(
+            {
+              stillOptimistic: () =>
+                utils.architecture.getCanvas
+                  .getData(canvasInput)
+                  ?.interiorNodes.find((n) => n.id === id)?.documentation ===
+                documentation,
+              rollback: (prev) => {
+                if (prev === undefined) return;
+                patchCanvas((c) => ({
+                  interiorNodes: c.interiorNodes.map((n) =>
+                    n.id === id ? { ...n, documentation: prev } : n,
+                  ),
+                }));
+              },
+              onError: (e) => toast.error(messageForDocsSaveFailure(e)),
+            },
+            prevDoc,
+            error,
+          );
         })
         .finally(() => {
           // Only release the slot if this save is still the chain head; a
@@ -2248,33 +2274,41 @@ function CanvasInner({
         ?.interiorEdges.find((e) => e.id === id);
       if (!prev) return;
 
-      const next: CanvasEdge = { ...prev, label };
-      setEdges((es) =>
-        es.map((e) => (e.id === id ? restyledRFEdge(e, next) : e)),
-      );
-      patchCanvas((c) => ({
-        interiorEdges: c.interiorEdges.map((e) => (e.id === id ? next : e)),
-      }));
-
-      void editEdge({ id, label }).catch(() => {
-        toast.error("Couldn’t save the connection. Please try again.");
-        const current = utils.architecture.getCanvas
-          .getData(canvasInput)
-          ?.interiorEdges.find((e) => e.id === id);
-        // Roll back ONLY the label, and only if the cache still shows what this
-        // edit wrote — restore against the CURRENT row (not the captured `prev`)
-        // so a concurrent interaction change that succeeded in the interim is
-        // preserved rather than clobbered by a stale full-object restore.
-        if (current?.label !== label) return;
-        const reverted: CanvasEdge = { ...current, label: prev.label };
-        setEdges((es) =>
-          es.map((e) => (e.id === id ? restyledRFEdge(e, reverted) : e)),
-        );
-        patchCanvas((c) => ({
-          interiorEdges: c.interiorEdges.map((e) =>
-            e.id === id ? reverted : e,
-          ),
-        }));
+      void runOptimisticWrite<string | null>({
+        snapshot: () => prev.label,
+        apply: () => {
+          const next: CanvasEdge = { ...prev, label };
+          setEdges((es) =>
+            es.map((e) => (e.id === id ? restyledRFEdge(e, next) : e)),
+          );
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.map((e) => (e.id === id ? next : e)),
+          }));
+        },
+        mutate: () => editEdge({ id, label }),
+        // Field-scoped against the CURRENT row, not the captured `prev`, so a
+        // concurrent interaction change that succeeded in the interim survives.
+        stillOptimistic: () =>
+          utils.architecture.getCanvas
+            .getData(canvasInput)
+            ?.interiorEdges.find((e) => e.id === id)?.label === label,
+        rollback: (prevLabel) => {
+          const current = utils.architecture.getCanvas
+            .getData(canvasInput)
+            ?.interiorEdges.find((e) => e.id === id);
+          if (!current) return;
+          const reverted: CanvasEdge = { ...current, label: prevLabel };
+          setEdges((es) =>
+            es.map((e) => (e.id === id ? restyledRFEdge(e, reverted) : e)),
+          );
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.map((e) =>
+              e.id === id ? reverted : e,
+            ),
+          }));
+        },
+        onError: () =>
+          toast.error("Couldn’t save the connection. Please try again."),
       });
     },
     [utils, canvasInput, setEdges, patchCanvas, editEdge],
@@ -2296,36 +2330,44 @@ function CanvasInner({
         ?.interiorEdges.find((e) => e.id === id);
       if (!prev || prev.interaction === interaction) return;
 
-      const next: CanvasEdge = { ...prev, interaction };
-      setEdges((es) =>
-        es.map((e) => (e.id === id ? restyledRFEdge(e, next) : e)),
-      );
-      patchCanvas((c) => ({
-        interiorEdges: c.interiorEdges.map((e) => (e.id === id ? next : e)),
-      }));
-
-      void setEdgeInteraction({ id, interaction }).catch((error: unknown) => {
-        toast.error(messageForInteractionFailure(error));
-        const current = utils.architecture.getCanvas
-          .getData(canvasInput)
-          ?.interiorEdges.find((e) => e.id === id);
-        // Roll back ONLY the interaction, and only if the cache still shows what
-        // THIS change wrote — restore against the CURRENT row so a concurrent
-        // label edit that succeeded in the interim survives (the field-scoped
-        // analogue of `commitEdgeEdit`'s rollback).
-        if (current?.interaction !== interaction) return;
-        const reverted: CanvasEdge = {
-          ...current,
-          interaction: prev.interaction,
-        };
-        setEdges((es) =>
-          es.map((e) => (e.id === id ? restyledRFEdge(e, reverted) : e)),
-        );
-        patchCanvas((c) => ({
-          interiorEdges: c.interiorEdges.map((e) =>
-            e.id === id ? reverted : e,
-          ),
-        }));
+      void runOptimisticWrite<Interaction>({
+        snapshot: () => prev.interaction,
+        apply: () => {
+          const next: CanvasEdge = { ...prev, interaction };
+          setEdges((es) =>
+            es.map((e) => (e.id === id ? restyledRFEdge(e, next) : e)),
+          );
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.map((e) => (e.id === id ? next : e)),
+          }));
+        },
+        mutate: () => setEdgeInteraction({ id, interaction }),
+        // Field-scoped against the CURRENT row so a concurrent label edit that
+        // succeeded in the interim survives (analogue of `commitEdgeEdit`).
+        stillOptimistic: () =>
+          utils.architecture.getCanvas
+            .getData(canvasInput)
+            ?.interiorEdges.find((e) => e.id === id)?.interaction ===
+          interaction,
+        rollback: (prevInteraction) => {
+          const current = utils.architecture.getCanvas
+            .getData(canvasInput)
+            ?.interiorEdges.find((e) => e.id === id);
+          if (!current) return;
+          const reverted: CanvasEdge = {
+            ...current,
+            interaction: prevInteraction,
+          };
+          setEdges((es) =>
+            es.map((e) => (e.id === id ? restyledRFEdge(e, reverted) : e)),
+          );
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.map((e) =>
+              e.id === id ? reverted : e,
+            ),
+          }));
+        },
+        onError: (error) => toast.error(messageForInteractionFailure(error)),
       });
     },
     [utils, canvasInput, setEdges, patchCanvas, setEdgeInteraction],
