@@ -530,6 +530,10 @@ persist its per-scope placement (the one passive-drag exception, #91 / ADR-0036)
 Component-detail panel, no Descent, no hover-prefetch, never selectable/connectable/deletable. The
 drag/seed/persist key is always `realEndpointId`, never the per-edge `proxy_<edgeId>` view id. The
 code term is **boundary-proxy**.
+The pure view-side rules — `repOnScope`'s `rep(N,S)` walk, per-`realEndpointId` render coalescing,
+the rail-vs-placement layout, and `survivingProxies` (which off-scope endpoints still have a retained
+crossing edge) — live in the framework-free, DOM-free `boundary-proxy-view.ts` (mirroring the
+`optimistic-write.ts` precedent above), unit-tested off-screen (#145).
 Never frame it as an "external" or "inherited" node — the system has no external Nodes, only
 off-scope ones. *(The cross-scope read is realized now via **getCanvas** (#63 / ADR-0031); client
 rendering of the proxy — as a passive node with a *go to real endpoint* affordance (navigating to
