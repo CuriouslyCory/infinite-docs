@@ -665,7 +665,7 @@ function CanvasInner({
     [setEdges],
   );
 
-  const { screenToFlowPosition, getNodes } = useReactFlow<
+  const { screenToFlowPosition, getNodes, getEdges } = useReactFlow<
     CanvasRFNode,
     ConnectionEdge
   >();
@@ -732,63 +732,76 @@ function CanvasInner({
         y: window.innerHeight / 2,
       });
 
-      // Optimistic: show the Component this frame — in the RF store (pixels) and
-      // the query cache (the re-seed mirror), so both stay consistent.
-      setNodes((ns) => [
-        ...ns,
-        {
-          id: tempId,
-          type: "component",
-          position,
-          deletable: false,
-          data: { title: "Untitled", kind, optimistic: true },
+      await runOptimisticWrite({
+        // A create has nothing prior to restore — its rollback filters the minted
+        // temp id — so the snapshot carries only whether reconcile already ran.
+        snapshot: () => ({ reconciled: false }),
+        // Optimistic: show the Component this frame — in the RF store (pixels) and
+        // the query cache (the re-seed mirror), so both stay consistent.
+        apply: () => {
+          setNodes((ns) => [
+            ...ns,
+            {
+              id: tempId,
+              type: "component",
+              position,
+              deletable: false,
+              data: { title: "Untitled", kind, optimistic: true },
+            },
+          ]);
+          patchCanvas((c) => ({
+            interiorNodes: [
+              ...c.interiorNodes,
+              optimisticCanvasNode(
+                tempId,
+                writeProjectId,
+                canvasNodeId,
+                kind,
+                position,
+              ),
+            ],
+          }));
         },
-      ]);
-      patchCanvas((c) => ({
-        interiorNodes: [
-          ...c.interiorNodes,
-          optimisticCanvasNode(
-            tempId,
-            writeProjectId,
-            canvasNodeId,
+        mutate: () =>
+          createNode.mutateAsync({
+            projectId: writeProjectId,
+            parentId: canvasNodeId,
             kind,
-            position,
-          ),
-        ],
-      }));
-
-      try {
-        const real = await createNode.mutateAsync({
-          projectId: writeProjectId,
-          parentId: canvasNodeId,
-          kind,
-          posX: position.x,
-          posY: position.y,
-        });
-        // Reconcile temp → real id in both stores, atomically by id.
-        const canvasNode = toCanvasNode(real);
-        setNodes((ns) =>
-          ns.map((n) => (n.id === tempId ? toRFNode(canvasNode) : n)),
-        );
-        patchCanvas((c) => ({
-          interiorNodes: c.interiorNodes.map((n) =>
-            n.id === tempId ? canvasNode : n,
-          ),
-        }));
-      } catch {
-        // Roll back both stores and tell the user (PRD: "rolls back with a toast").
-        setNodes((ns) => ns.filter((n) => n.id !== tempId));
-        patchCanvas((c) => ({
-          interiorNodes: c.interiorNodes.filter((n) => n.id !== tempId),
-        }));
-        toast.error("Couldn’t add the component. Please try again.");
-      }
+            posX: position.x,
+            posY: position.y,
+          }),
+        reconcile: (real) => {
+          // Reconcile temp → real id in both stores, atomically by id.
+          const canvasNode = toCanvasNode(real);
+          setNodes((ns) =>
+            ns.map((n) => (n.id === tempId ? toRFNode(canvasNode) : n)),
+          );
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.map((n) =>
+              n.id === tempId ? canvasNode : n,
+            ),
+          }));
+        },
+        // The temp node is still optimistic iff it is present (reconcile rewrites
+        // it to the real id, removing the temp id; a concurrent insert never wears
+        // it). On failure the seam reaches this before any reconcile ran.
+        stillOptimistic: () => getNodes().some((n) => n.id === tempId),
+        rollback: () => {
+          setNodes((ns) => ns.filter((n) => n.id !== tempId));
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.filter((n) => n.id !== tempId),
+          }));
+        },
+        onError: () =>
+          toast.error("Couldn’t add the component. Please try again."),
+      });
     },
     [
       screenToFlowPosition,
       writeProjectId,
       canvasNodeId,
       setNodes,
+      getNodes,
       patchCanvas,
       createNode,
     ],
@@ -807,75 +820,84 @@ function CanvasInner({
         y: window.innerHeight / 2,
       });
 
-      setNodes((ns) => [
-        ...ns,
-        {
-          id: tempId,
-          type: "component",
-          position,
-          deletable: false,
-          data: {
-            title: target.title,
-            kind: "GENERIC",
-            optimistic: true,
-            isPortal: true,
-            // Optimistically `enterable`; a viewer-on-target creator settles to
-            // `readOnly` on the next authoritative getCanvas read (#120).
-            embedAccess: "enterable",
-          },
-        },
-      ]);
-      patchCanvas((c) => ({
-        interiorNodes: [
-          ...c.interiorNodes,
-          {
-            ...optimisticCanvasNode(
-              tempId,
-              writeProjectId,
-              canvasNodeId,
-              "GENERIC",
+      await runOptimisticWrite({
+        snapshot: () => ({ reconciled: false }),
+        apply: () => {
+          setNodes((ns) => [
+            ...ns,
+            {
+              id: tempId,
+              type: "component",
               position,
-            ),
+              deletable: false,
+              data: {
+                title: target.title,
+                kind: "GENERIC",
+                optimistic: true,
+                isPortal: true,
+                // Optimistically `enterable`; a viewer-on-target creator settles
+                // to `readOnly` on the next authoritative getCanvas read (#120).
+                embedAccess: "enterable",
+              },
+            },
+          ]);
+          patchCanvas((c) => ({
+            interiorNodes: [
+              ...c.interiorNodes,
+              {
+                ...optimisticCanvasNode(
+                  tempId,
+                  writeProjectId,
+                  canvasNodeId,
+                  "GENERIC",
+                  position,
+                ),
+                title: target.title,
+                isPortal: true,
+                // Optimistically `enterable`; a viewer-on-target creator settles
+                // to `readOnly` on the next authoritative getCanvas read (#120).
+                embedAccess: "enterable",
+              },
+            ],
+          }));
+        },
+        mutate: () =>
+          createEmbeddedComponent.mutateAsync({
+            projectId: writeProjectId,
+            embeddedProjectId: target.id,
+            parentId: canvasNodeId,
             title: target.title,
-            isPortal: true,
-            // Optimistically `enterable`; a viewer-on-target creator settles to
-            // `readOnly` on the next authoritative getCanvas read (#120).
-            embedAccess: "enterable",
-          },
-        ],
-      }));
-
-      try {
-        const real = await createEmbeddedComponent.mutateAsync({
-          projectId: writeProjectId,
-          embeddedProjectId: target.id,
-          parentId: canvasNodeId,
-          title: target.title,
-          posX: position.x,
-          posY: position.y,
-        });
-        const canvasNode = toCanvasNode(real);
-        setNodes((ns) =>
-          ns.map((n) => (n.id === tempId ? toRFNode(canvasNode) : n)),
-        );
-        patchCanvas((c) => ({
-          interiorNodes: c.interiorNodes.map((n) =>
-            n.id === tempId ? canvasNode : n,
-          ),
-        }));
-      } catch {
-        setNodes((ns) => ns.filter((n) => n.id !== tempId));
-        patchCanvas((c) => ({
-          interiorNodes: c.interiorNodes.filter((n) => n.id !== tempId),
-        }));
-        toast.error("Couldn’t embed the project. Please try again.");
-      }
+            posX: position.x,
+            posY: position.y,
+          }),
+        reconcile: (real) => {
+          const canvasNode = toCanvasNode(real);
+          setNodes((ns) =>
+            ns.map((n) => (n.id === tempId ? toRFNode(canvasNode) : n)),
+          );
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.map((n) =>
+              n.id === tempId ? canvasNode : n,
+            ),
+          }));
+        },
+        stillOptimistic: () => getNodes().some((n) => n.id === tempId),
+        rollback: () => {
+          setNodes((ns) => ns.filter((n) => n.id !== tempId));
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.filter((n) => n.id !== tempId),
+          }));
+        },
+        onError: () =>
+          toast.error("Couldn’t embed the project. Please try again."),
+      });
     },
     [
       screenToFlowPosition,
       writeProjectId,
       canvasNodeId,
       setNodes,
+      getNodes,
       patchCanvas,
       createEmbeddedComponent,
     ],
@@ -1095,35 +1117,51 @@ function CanvasInner({
         posY,
       }));
 
-      // The RF store already shows the final position; mirror it into the cache.
-      patchCanvas((c) => ({
-        interiorNodes: c.interiorNodes.map((n) => {
-          const x = changed.find((ch) => ch.id === n.id);
-          return x ? { ...n, posX: x.posX, posY: x.posY } : n;
-        }),
-      }));
-
-      try {
-        await updatePositions.mutateAsync({ projectId: writeProjectId, positions });
-      } catch {
-        setNodes((ns) =>
-          ns.map((n) => {
-            const x = changed.find((ch) => ch.id === n.id);
-            return x
-              ? { ...n, position: { x: x.prev.posX, y: x.prev.posY } }
-              : n;
-          }),
-        );
-        patchCanvas((c) => ({
-          interiorNodes: c.interiorNodes.map((n) => {
-            const x = changed.find((ch) => ch.id === n.id);
-            return x ? { ...n, posX: x.prev.posX, posY: x.prev.posY } : n;
-          }),
-        }));
-        toast.error("Couldn’t save the new position. Please try again.");
-      }
+      await runOptimisticWrite({
+        // The captured prior coordinates per moved node — the field-restore shape.
+        snapshot: () => changed,
+        // The RF store already shows the final position; mirror it into the cache.
+        apply: () => {
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.map((n) => {
+              const x = changed.find((ch) => ch.id === n.id);
+              return x ? { ...n, posX: x.posX, posY: x.posY } : n;
+            }),
+          }));
+        },
+        mutate: () =>
+          updatePositions.mutateAsync({ projectId: writeProjectId, positions }),
+        // A batched position write has no concurrent-edit gate to consult — the
+        // failure simply restores the captured prior coordinates.
+        stillOptimistic: () => true,
+        rollback: (prevChanged) => {
+          setNodes((ns) =>
+            ns.map((n) => {
+              const x = prevChanged.find((ch) => ch.id === n.id);
+              return x
+                ? { ...n, position: { x: x.prev.posX, y: x.prev.posY } }
+                : n;
+            }),
+          );
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.map((n) => {
+              const x = prevChanged.find((ch) => ch.id === n.id);
+              return x ? { ...n, posX: x.prev.posX, posY: x.prev.posY } : n;
+            }),
+          }));
+        },
+        onError: () =>
+          toast.error("Couldn’t save the new position. Please try again."),
+      });
     },
-    [utils, canvasInput, writeProjectId, updatePositions, setNodes, patchCanvas],
+    [
+      utils,
+      canvasInput,
+      writeProjectId,
+      updatePositions,
+      setNodes,
+      patchCanvas,
+    ],
   );
 
   // Persist a boundary proxy's placement on this scope when its drag stops (#91 /
@@ -1153,51 +1191,58 @@ function CanvasInner({
       const posY = proxyNode.position.y;
       if (prevPosX === posX && prevPosY === posY) return;
 
-      // Mirror the new coordinate onto EVERY per-edge row for this endpoint so a
-      // remount re-seeds the coalesced node to the dropped spot (#90/#91).
-      patchCanvas((c) => ({
-        boundaryProxies: c.boundaryProxies.map((p) =>
-          p.realEndpointId === realEndpointId ? { ...p, posX, posY } : p,
-        ),
-      }));
-
-      try {
-        await upsertProxyPlacement.mutateAsync({
-          projectId: writeProjectId,
-          containerNodeId: canvasNodeId,
-          realEndpointId,
-          posX,
-          posY,
-        });
-      } catch {
-        // Snap the dragged node back and restore the mirror's prior coordinate on
-        // every row for this endpoint. A proxy that had a prior placement returns
-        // to it; one that had none (was on the rail) returns to the next rail slot
-        // among the OTHER proxies, the same fallback the seed would pick.
-        setNodes((ns) =>
-          ns.map((n) =>
-            n.id === proxyNode.id
-              ? {
-                  ...n,
-                  position:
-                    prevPosX !== null && prevPosY !== null
-                      ? { x: prevPosX, y: prevPosY }
-                      : railPosition(
-                          railOccupants(ns.filter((o) => o.id !== n.id)),
-                        ),
-                }
-              : n,
-          ),
-        );
-        patchCanvas((c) => ({
-          boundaryProxies: c.boundaryProxies.map((p) =>
-            p.realEndpointId === realEndpointId
-              ? { ...p, posX: prevPosX, posY: prevPosY }
-              : p,
-          ),
-        }));
-        toast.error("Couldn’t save the position. Please try again.");
-      }
+      await runOptimisticWrite({
+        // The prior coordinate for this endpoint (null/null = was on the rail).
+        snapshot: () => ({ prevPosX, prevPosY }),
+        // Mirror the new coordinate onto EVERY per-edge row for this endpoint so a
+        // remount re-seeds the coalesced node to the dropped spot (#90/#91).
+        apply: () => {
+          patchCanvas((c) => ({
+            boundaryProxies: c.boundaryProxies.map((p) =>
+              p.realEndpointId === realEndpointId ? { ...p, posX, posY } : p,
+            ),
+          }));
+        },
+        mutate: () =>
+          upsertProxyPlacement.mutateAsync({
+            projectId: writeProjectId,
+            containerNodeId: canvasNodeId,
+            realEndpointId,
+            posX,
+            posY,
+          }),
+        stillOptimistic: () => true,
+        rollback: (prev) => {
+          // Snap the dragged node back and restore the mirror's prior coordinate on
+          // every row for this endpoint. A proxy that had a prior placement returns
+          // to it; one that had none (was on the rail) returns to the next rail slot
+          // among the OTHER proxies, the same fallback the seed would pick.
+          setNodes((ns) =>
+            ns.map((n) =>
+              n.id === proxyNode.id
+                ? {
+                    ...n,
+                    position:
+                      prev.prevPosX !== null && prev.prevPosY !== null
+                        ? { x: prev.prevPosX, y: prev.prevPosY }
+                        : railPosition(
+                            railOccupants(ns.filter((o) => o.id !== n.id)),
+                          ),
+                  }
+                : n,
+            ),
+          );
+          patchCanvas((c) => ({
+            boundaryProxies: c.boundaryProxies.map((p) =>
+              p.realEndpointId === realEndpointId
+                ? { ...p, posX: prev.prevPosX, posY: prev.prevPosY }
+                : p,
+            ),
+          }));
+        },
+        onError: () =>
+          toast.error("Couldn’t save the position. Please try again."),
+      });
     },
     [
       utils,
@@ -1242,42 +1287,60 @@ function CanvasInner({
       }
 
       const tempId = `temp_${crypto.randomUUID()}`;
-      // Build the optimistic RF edge through `toRFEdge` so its markers + data
-      // (interaction ASSOCIATION → no arrows) match the reconciled shape exactly,
-      // and a same-Canvas draw's reprs equal its endpoint ids (ADR-0031).
-      setEdges((es) =>
-        addEdge(toRFEdge(optimisticCanvasEdge(tempId, source, target)), es),
-      );
-      patchCanvas((c) => ({
-        interiorEdges: [
-          ...c.interiorEdges,
-          optimisticCanvasEdge(tempId, source, target),
-        ],
-      }));
 
-      try {
-        const real = reconciledCanvasEdge(
-          await connectNodes.mutateAsync({
+      await runOptimisticWrite({
+        snapshot: () => ({ reconciled: false }),
+        // Build the optimistic RF edge through `toRFEdge` so its markers + data
+        // (interaction ASSOCIATION → no arrows) match the reconciled shape exactly,
+        // and a same-Canvas draw's reprs equal its endpoint ids (ADR-0031).
+        apply: () => {
+          setEdges((es) =>
+            addEdge(toRFEdge(optimisticCanvasEdge(tempId, source, target)), es),
+          );
+          patchCanvas((c) => ({
+            interiorEdges: [
+              ...c.interiorEdges,
+              optimisticCanvasEdge(tempId, source, target),
+            ],
+          }));
+        },
+        mutate: () =>
+          connectNodes.mutateAsync({
             projectId: writeProjectId,
             sourceId: source,
             targetId: target,
           }),
-        );
-        setEdges((es) => es.map((e) => (e.id === tempId ? toRFEdge(real) : e)));
-        patchCanvas((c) => ({
-          interiorEdges: c.interiorEdges.map((e) =>
-            e.id === tempId ? real : e,
-          ),
-        }));
-      } catch {
-        setEdges((es) => es.filter((e) => e.id !== tempId));
-        patchCanvas((c) => ({
-          interiorEdges: c.interiorEdges.filter((e) => e.id !== tempId),
-        }));
-        toast.error("Couldn’t add the connection. Please try again.");
-      }
+        reconcile: (created) => {
+          const real = reconciledCanvasEdge(created);
+          setEdges((es) =>
+            es.map((e) => (e.id === tempId ? toRFEdge(real) : e)),
+          );
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.map((e) =>
+              e.id === tempId ? real : e,
+            ),
+          }));
+        },
+        stillOptimistic: () => getEdges().some((e) => e.id === tempId),
+        rollback: () => {
+          setEdges((es) => es.filter((e) => e.id !== tempId));
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.filter((e) => e.id !== tempId),
+          }));
+        },
+        onError: () =>
+          toast.error("Couldn’t add the connection. Please try again."),
+      });
     },
-    [utils, canvasInput, setEdges, patchCanvas, writeProjectId, connectNodes],
+    [
+      utils,
+      canvasInput,
+      getEdges,
+      setEdges,
+      patchCanvas,
+      writeProjectId,
+      connectNodes,
+    ],
   );
 
   // The "Connect to…" gesture (#66): wire the selected Component to ANY other
@@ -1345,72 +1408,87 @@ function CanvasInner({
         foreignParentScopeId: null,
       };
 
-      setEdges((es) => addEdge(toRFEdge(optimisticEdge), es));
-      patchCanvas((c) => ({
-        interiorEdges: [...c.interiorEdges, optimisticEdge],
-        boundaryProxies: [...c.boundaryProxies, optimisticProxy],
-      }));
-      setNodes((ns) => [
-        ...ns,
-        ...placedProxyNodes([optimisticProxy], breadcrumbIds, railOccupants(ns)),
-      ]);
-
-      try {
-        const real = await connectCrossProject.mutateAsync({
-          hostProjectId: writeProjectId,
-          hostNodeId: sourceNodeId,
-          referenceNodeId: foreign.referenceNodeId,
-          foreignNodeId: target.id,
-        });
-
-        // Reconcile temp → real ids. The real proxy id is `xproxy_<realRowId>`,
-        // matching what getCanvas emits, so a later remount reconciles cleanly.
-        const realProxyNodeId = `xproxy_${real.id}`;
-        const reconciledEdge: CanvasEdge = {
-          ...optimisticEdge,
-          id: real.id,
-          targetRepr: realProxyNodeId,
-        };
-        const reconciledProxy: CanvasBoundaryProxy = {
-          ...optimisticProxy,
-          nodeId: realProxyNodeId,
-          edgeId: real.id,
-        };
-        setEdges((es) =>
-          es.map((e) => (e.id === tempId ? toRFEdge(reconciledEdge) : e)),
-        );
-        setNodes((ns) =>
-          ns.map((n) =>
-            n.id === proxyNodeId
-              ? toProxyRFNode(reconciledProxy, breadcrumbIds, n.position)
-              : n,
-          ),
-        );
-        patchCanvas((c) => ({
-          interiorEdges: c.interiorEdges.map((e) =>
-            e.id === tempId ? reconciledEdge : e,
-          ),
-          boundaryProxies: c.boundaryProxies.map((p) =>
-            p.nodeId === proxyNodeId ? reconciledProxy : p,
-          ),
-        }));
-        void utils.architecture.getCanvas.invalidate(canvasInput);
-      } catch (error) {
-        setEdges((es) => es.filter((e) => e.id !== tempId));
-        setNodes((ns) => ns.filter((n) => n.id !== proxyNodeId));
-        patchCanvas((c) => ({
-          interiorEdges: c.interiorEdges.filter((e) => e.id !== tempId),
-          boundaryProxies: c.boundaryProxies.filter(
-            (p) => p.nodeId !== proxyNodeId,
-          ),
-        }));
-        toast.error(messageForConnectFailure(error));
-      }
+      await runOptimisticWrite({
+        snapshot: () => ({ reconciled: false }),
+        apply: () => {
+          setEdges((es) => addEdge(toRFEdge(optimisticEdge), es));
+          patchCanvas((c) => ({
+            interiorEdges: [...c.interiorEdges, optimisticEdge],
+            boundaryProxies: [...c.boundaryProxies, optimisticProxy],
+          }));
+          setNodes((ns) => [
+            ...ns,
+            ...placedProxyNodes(
+              [optimisticProxy],
+              breadcrumbIds,
+              railOccupants(ns),
+            ),
+          ]);
+        },
+        mutate: () =>
+          connectCrossProject.mutateAsync({
+            hostProjectId: writeProjectId,
+            hostNodeId: sourceNodeId,
+            referenceNodeId: foreign.referenceNodeId,
+            foreignNodeId: target.id,
+          }),
+        reconcile: (real) => {
+          // Reconcile temp → real ids. The real proxy id is `xproxy_<realRowId>`,
+          // matching what getCanvas emits, so a later remount reconciles cleanly.
+          const realProxyNodeId = `xproxy_${real.id}`;
+          const reconciledEdge: CanvasEdge = {
+            ...optimisticEdge,
+            id: real.id,
+            targetRepr: realProxyNodeId,
+          };
+          const reconciledProxy: CanvasBoundaryProxy = {
+            ...optimisticProxy,
+            nodeId: realProxyNodeId,
+            edgeId: real.id,
+          };
+          setEdges((es) =>
+            es.map((e) => (e.id === tempId ? toRFEdge(reconciledEdge) : e)),
+          );
+          // Rebuild the proxy node at its LIVE position (`n.position`), never
+          // snapping it back to the rail (ADR-0036).
+          setNodes((ns) =>
+            ns.map((n) =>
+              n.id === proxyNodeId
+                ? toProxyRFNode(reconciledProxy, breadcrumbIds, n.position)
+                : n,
+            ),
+          );
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.map((e) =>
+              e.id === tempId ? reconciledEdge : e,
+            ),
+            boundaryProxies: c.boundaryProxies.map((p) =>
+              p.nodeId === proxyNodeId ? reconciledProxy : p,
+            ),
+          }));
+          void utils.architecture.getCanvas.invalidate(canvasInput);
+        },
+        // On failure nothing reconciled, so the temp edge still carries its minted
+        // id; reconcile rewrites it to the real id, clearing this flag.
+        stillOptimistic: () => getEdges().some((e) => e.id === tempId),
+        rollback: () => {
+          setEdges((es) => es.filter((e) => e.id !== tempId));
+          setNodes((ns) => ns.filter((n) => n.id !== proxyNodeId));
+          patchCanvas((c) => ({
+            interiorEdges: c.interiorEdges.filter((e) => e.id !== tempId),
+            boundaryProxies: c.boundaryProxies.filter(
+              (p) => p.nodeId !== proxyNodeId,
+            ),
+          }));
+        },
+        onError: (error) => toast.error(messageForConnectFailure(error)),
+      });
     },
     [
       utils,
       canvasInput,
       breadcrumbIds,
+      getEdges,
       setEdges,
       setNodes,
       patchCanvas,
@@ -1425,11 +1503,7 @@ function CanvasInner({
       // (#122) — the foreign endpoint has no on-scope rep, so the same-project
       // rep partition below does not apply.
       if (target.foreign) {
-        await commitCrossProjectConnect(
-          sourceNodeId,
-          target,
-          target.foreign,
-        );
+        await commitCrossProjectConnect(sourceNodeId, target, target.foreign);
         return;
       }
 
@@ -1482,10 +1556,6 @@ function CanvasInner({
         sourceIsSelf: true,
         other: { id: target.id, title: target.title, kind: target.kind },
       };
-      utils.architecture.listNodeConnections.setData(
-        { slug, nodeId: sourceNodeId },
-        (old) => [...(old ?? []), optimisticListRow],
-      );
 
       // A lineal Connection to our own descendant collapses on this scope — it is
       // real and listed, but getCanvas draws nothing here, so neither do we.
@@ -1525,145 +1595,174 @@ function CanvasInner({
       if (offScope)
         viewRemap.set(proxyNodeId, existingRepNodeId ?? proxyNodeId);
 
-      if (optimisticEdge) {
-        setEdges((es) => addEdge(toRFEdge(optimisticEdge, viewRemap), es));
-        patchCanvas((c) => ({
-          interiorEdges: [...c.interiorEdges, optimisticEdge],
-        }));
-      }
-      if (optimisticProxy) {
-        // Cache mirror: the per-edge proxy row, ALWAYS (faithful to getCanvas,
-        // ADR-0031). RF node: only when no coalesced node yet stands in for this
-        // endpoint — otherwise the edge above already routed to the existing one,
-        // so adding a node would be the transient duplicate #90 forbids.
-        patchCanvas((c) => ({
-          boundaryProxies: [...c.boundaryProxies, optimisticProxy],
-        }));
-        if (existingRepNodeId === null) {
-          // Seed the far-end stand-in at its stored placement when one exists for
-          // this endpoint on this scope (#91), else onto the left rail below any
-          // already there — the same placement the delete-undo path uses (ADR-0031).
-          setNodes((ns) => [
-            ...ns,
-            ...placedProxyNodes(
-              [optimisticProxy],
-              breadcrumbIds,
-              railOccupants(ns),
-            ),
-          ]);
-        }
-      }
+      // Whether THIS gesture owns the coalesced rep node (no node yet stood in
+      // for the off-scope endpoint): the #90 "remove/restore the rep node only
+      // when I added it" signal, captured into TPrev so rollback replays it
+      // identically rather than re-deriving against a since-changed store.
+      const addedRepNode = optimisticProxy !== null && existingRepNodeId === null;
 
-      try {
-        const real = await connectNodes.mutateAsync({
-          projectId: writeProjectId,
-          sourceId: sourceNodeId,
-          targetId: target.id,
-        });
-
-        // Reconcile temp → real ids in the RF store AND the cache mirror (the
-        // store is not re-seeded by a refetch). The real proxy id is
-        // `proxy_<realEdgeId>`, matching what getCanvas emits, so a later remount
-        // reconciles without a flicker.
-        const realProxyNodeId = `proxy_${real.id}`;
-        const reconciledEdge: CanvasEdge | null = optimisticEdge
-          ? {
-              ...optimisticEdge,
-              id: real.id,
-              targetRepr: offScope
-                ? realProxyNodeId
-                : optimisticEdge.targetRepr,
+      await runOptimisticWrite({
+        snapshot: () => ({ addedRepNode }),
+        apply: () => {
+          if (optimisticEdge) {
+            setEdges((es) => addEdge(toRFEdge(optimisticEdge, viewRemap), es));
+            patchCanvas((c) => ({
+              interiorEdges: [...c.interiorEdges, optimisticEdge],
+            }));
+          }
+          if (optimisticProxy) {
+            // Cache mirror: the per-edge proxy row, ALWAYS (faithful to getCanvas,
+            // ADR-0031). RF node: only when no coalesced node yet stands in for
+            // this endpoint — otherwise the edge above already routed to the
+            // existing one, so adding a node would be the transient duplicate #90
+            // forbids.
+            patchCanvas((c) => ({
+              boundaryProxies: [...c.boundaryProxies, optimisticProxy],
+            }));
+            if (addedRepNode) {
+              // Seed the far-end stand-in at its stored placement when one exists
+              // for this endpoint on this scope (#91), else onto the left rail
+              // below any already there — the same placement the delete-undo path
+              // uses (ADR-0031).
+              setNodes((ns) => [
+                ...ns,
+                ...placedProxyNodes(
+                  [optimisticProxy],
+                  breadcrumbIds,
+                  railOccupants(ns),
+                ),
+              ]);
             }
-          : null;
-        const reconciledProxy: CanvasBoundaryProxy | null = optimisticProxy
-          ? { ...optimisticProxy, nodeId: realProxyNodeId, edgeId: real.id }
-          : null;
-
-        // Keep the edge on its coalesced node across reconcile (#90): if this edge
-        // owns the rep, the rep's id moves temp → real with it (identity remap);
-        // if it joined an existing rep, route the reconciled own-proxy id back onto
-        // that rep so the edge stays attached.
-        const reconcileRemap = new Map<string, string>();
-        if (offScope) {
-          reconcileRemap.set(
-            realProxyNodeId,
-            existingRepNodeId ?? realProxyNodeId,
+          }
+          utils.architecture.listNodeConnections.setData(
+            { slug, nodeId: sourceNodeId },
+            (old) => [...(old ?? []), optimisticListRow],
           );
-        }
+        },
+        mutate: () =>
+          connectNodes.mutateAsync({
+            projectId: writeProjectId,
+            sourceId: sourceNodeId,
+            targetId: target.id,
+          }),
+        reconcile: (real) => {
+          // Reconcile temp → real ids in the RF store AND the cache mirror (the
+          // store is not re-seeded by a refetch). The real proxy id is
+          // `proxy_<realEdgeId>`, matching what getCanvas emits, so a later remount
+          // reconciles without a flicker.
+          const realProxyNodeId = `proxy_${real.id}`;
+          const reconciledEdge: CanvasEdge | null = optimisticEdge
+            ? {
+                ...optimisticEdge,
+                id: real.id,
+                targetRepr: offScope
+                  ? realProxyNodeId
+                  : optimisticEdge.targetRepr,
+              }
+            : null;
+          const reconciledProxy: CanvasBoundaryProxy | null = optimisticProxy
+            ? { ...optimisticProxy, nodeId: realProxyNodeId, edgeId: real.id }
+            : null;
 
-        if (reconciledEdge) {
-          setEdges((es) =>
-            es.map((e) =>
-              e.id === tempId ? toRFEdge(reconciledEdge, reconcileRemap) : e,
-            ),
-          );
-          patchCanvas((c) => ({
-            interiorEdges: c.interiorEdges.map((e) =>
-              e.id === tempId ? reconciledEdge : e,
-            ),
-          }));
-        }
-        if (reconciledProxy) {
-          // Cache mirror reconciles the per-edge row always; the RF rep node is
-          // renamed temp → real only when THIS edge owns it (no pre-existing rep).
-          patchCanvas((c) => ({
-            boundaryProxies: c.boundaryProxies.map((p) =>
-              p.nodeId === proxyNodeId ? reconciledProxy : p,
-            ),
-          }));
-          if (existingRepNodeId === null) {
-            setNodes((ns) =>
-              ns.map((n) =>
-                n.id === proxyNodeId
-                  ? toProxyRFNode(reconciledProxy, breadcrumbIds, n.position)
-                  : n,
-              ),
+          // Keep the edge on its coalesced node across reconcile (#90): if this
+          // edge owns the rep, the rep's id moves temp → real with it (identity
+          // remap); if it joined an existing rep, route the reconciled own-proxy id
+          // back onto that rep so the edge stays attached.
+          const reconcileRemap = new Map<string, string>();
+          if (offScope) {
+            reconcileRemap.set(
+              realProxyNodeId,
+              existingRepNodeId ?? realProxyNodeId,
             );
           }
-        }
-        utils.architecture.listNodeConnections.setData(
-          { slug, nodeId: sourceNodeId },
-          (old) =>
-            (old ?? []).map((c) =>
-              c.id === tempId ? { ...c, id: real.id } : c,
-            ),
-        );
 
-        // Belt-and-suspenders against a target reparented (e.g. via the MCP
-        // `move_component` tool) between the palette load and this success: the
-        // RF store keeps its already-correct reconciled state, but a background
-        // refetch of `getCanvas` (and the project-wide map the next palette open
-        // reads) ensures the next remount re-seeds from authoritative ancestry.
-        // In the common (no-reparent) case the refetch is a no-op; in the edge
-        // case it self-heals without a flicker (ADR-0032).
-        void utils.architecture.getCanvas.invalidate(canvasInput);
-        void utils.architecture.listProjectComponents.invalidate({ slug });
-      } catch (error) {
-        // Roll the optimistic edge, proxy, and list row back out of every store.
-        if (optimisticEdge) {
-          setEdges((es) => es.filter((e) => e.id !== tempId));
-          patchCanvas((c) => ({
-            interiorEdges: c.interiorEdges.filter((e) => e.id !== tempId),
-          }));
-        }
-        if (optimisticProxy) {
-          // Mirror: drop the per-edge row always. RF node: remove it only if THIS
-          // edge added it (a joined edge shares another edge's rep node — leave it).
-          patchCanvas((c) => ({
-            boundaryProxies: c.boundaryProxies.filter(
-              (p) => p.nodeId !== proxyNodeId,
-            ),
-          }));
-          if (existingRepNodeId === null) {
-            setNodes((ns) => ns.filter((n) => n.id !== proxyNodeId));
+          if (reconciledEdge) {
+            setEdges((es) =>
+              es.map((e) =>
+                e.id === tempId ? toRFEdge(reconciledEdge, reconcileRemap) : e,
+              ),
+            );
+            patchCanvas((c) => ({
+              interiorEdges: c.interiorEdges.map((e) =>
+                e.id === tempId ? reconciledEdge : e,
+              ),
+            }));
           }
-        }
-        utils.architecture.listNodeConnections.setData(
-          { slug, nodeId: sourceNodeId },
-          (old) => (old ?? []).filter((c) => c.id !== tempId),
-        );
-        toast.error(messageForConnectFailure(error));
-      }
+          if (reconciledProxy) {
+            // Cache mirror reconciles the per-edge row always; the RF rep node is
+            // renamed temp → real only when THIS edge owns it (no pre-existing rep).
+            patchCanvas((c) => ({
+              boundaryProxies: c.boundaryProxies.map((p) =>
+                p.nodeId === proxyNodeId ? reconciledProxy : p,
+              ),
+            }));
+            if (addedRepNode) {
+              // Rebuild at the LIVE position (`n.position`), never snapping back to
+              // the rail (ADR-0036).
+              setNodes((ns) =>
+                ns.map((n) =>
+                  n.id === proxyNodeId
+                    ? toProxyRFNode(reconciledProxy, breadcrumbIds, n.position)
+                    : n,
+                ),
+              );
+            }
+          }
+          utils.architecture.listNodeConnections.setData(
+            { slug, nodeId: sourceNodeId },
+            (old) =>
+              (old ?? []).map((c) =>
+                c.id === tempId ? { ...c, id: real.id } : c,
+              ),
+          );
+
+          // Belt-and-suspenders against a target reparented (e.g. via the MCP
+          // `move_component` tool) between the palette load and this success: the
+          // RF store keeps its already-correct reconciled state, but a background
+          // refetch of `getCanvas` (and the project-wide map the next palette open
+          // reads) ensures the next remount re-seeds from authoritative ancestry.
+          // In the common (no-reparent) case the refetch is a no-op; in the edge
+          // case it self-heals without a flicker (ADR-0032).
+          void utils.architecture.getCanvas.invalidate(canvasInput);
+          void utils.architecture.listProjectComponents.invalidate({ slug });
+        },
+        // On failure nothing reconciled. A drawn edge still wears its temp id; a
+        // COLLAPSED (lineal) connection has no edge, so gate on the list row, which
+        // is always present until reconcile rewrites it.
+        stillOptimistic: () =>
+          optimisticEdge
+            ? getEdges().some((e) => e.id === tempId)
+            : (utils.architecture.listNodeConnections
+                .getData({ slug, nodeId: sourceNodeId })
+                ?.some((c) => c.id === tempId) ?? false),
+        rollback: (prev) => {
+          // Roll the optimistic edge, proxy, and list row back out of every store.
+          if (optimisticEdge) {
+            setEdges((es) => es.filter((e) => e.id !== tempId));
+            patchCanvas((c) => ({
+              interiorEdges: c.interiorEdges.filter((e) => e.id !== tempId),
+            }));
+          }
+          if (optimisticProxy) {
+            // Mirror: drop the per-edge row always. RF node: remove it only if THIS
+            // edge added it (a joined edge shares another edge's rep node — leave
+            // it). Replays the captured `addedRepNode`, never a re-derivation.
+            patchCanvas((c) => ({
+              boundaryProxies: c.boundaryProxies.filter(
+                (p) => p.nodeId !== proxyNodeId,
+              ),
+            }));
+            if (prev.addedRepNode) {
+              setNodes((ns) => ns.filter((n) => n.id !== proxyNodeId));
+            }
+          }
+          utils.architecture.listNodeConnections.setData(
+            { slug, nodeId: sourceNodeId },
+            (old) => (old ?? []).filter((c) => c.id !== tempId),
+          );
+        },
+        onError: (error) => toast.error(messageForConnectFailure(error)),
+      });
     },
     [
       utils,
@@ -1672,6 +1771,7 @@ function CanvasInner({
       canvasNodeId,
       breadcrumbIds,
       getNodes,
+      getEdges,
       setEdges,
       setNodes,
       patchCanvas,
@@ -1692,22 +1792,38 @@ function CanvasInner({
       for (const edge of deleted) {
         if (edge.id.startsWith("temp_")) continue;
         const prev = cached?.interiorEdges.find((e) => e.id === edge.id);
-        patchCanvas((c) => ({
-          interiorEdges: c.interiorEdges.filter((e) => e.id !== edge.id),
-        }));
-        void removeEdge({ id: edge.id }).catch((error: unknown) => {
-          // A NOT_FOUND means the Edge was already deleted (concurrent/multi-tab)
-          // — the removal already holds, so leave it dropped instead of re-adding.
-          if (isNotFoundError(error)) return;
-          setEdges((es) =>
-            es.some((e) => e.id === edge.id) ? es : [...es, edge],
-          );
-          if (prev) {
+        void runOptimisticWrite({
+          // The cache row to restore on a genuine failure (the RF store removal
+          // already happened in `onEdgesChange`).
+          snapshot: () => prev,
+          apply: () => {
             patchCanvas((c) => ({
-              interiorEdges: [...c.interiorEdges, prev],
+              interiorEdges: c.interiorEdges.filter((e) => e.id !== edge.id),
             }));
-          }
-          toast.error("Couldn’t remove the connection. Please try again.");
+          },
+          // A NOT_FOUND means the Edge was already deleted (concurrent/multi-tab):
+          // the desired "deleted" state already holds, so absorb it here as success
+          // — the seam then skips rollback and keeps the optimistic removal, never
+          // resurrecting a stale row.
+          mutate: () =>
+            removeEdge({ id: edge.id }).catch((error: unknown) => {
+              if (isNotFoundError(error)) return;
+              throw error;
+            }),
+          // A delete has no temp id to track; a genuine failure always restores.
+          stillOptimistic: () => true,
+          rollback: (prevEdge) => {
+            setEdges((es) =>
+              es.some((e) => e.id === edge.id) ? es : [...es, edge],
+            );
+            if (prevEdge) {
+              patchCanvas((c) => ({
+                interiorEdges: [...c.interiorEdges, prevEdge],
+              }));
+            }
+          },
+          onError: () =>
+            toast.error("Couldn’t remove the connection. Please try again."),
         });
       }
     },
@@ -1733,116 +1849,139 @@ function CanvasInner({
       const prevProxy = cached?.boundaryProxies.find(
         (p) => p.edgeId === connectionId,
       );
-
-      utils.architecture.listNodeConnections.setData(
-        { slug, nodeId: ownerNodeId },
-        (old) => (old ?? []).filter((c) => c.id !== connectionId),
-      );
-      if (prevEdge) {
-        setEdges((es) => es.filter((e) => e.id !== connectionId));
-        patchCanvas((c) => ({
-          interiorEdges: c.interiorEdges.filter((e) => e.id !== connectionId),
-        }));
-      }
-      if (prevProxy) {
-        // Mirror: drop this edge's per-edge row always. RF node: remove the
-        // coalesced stand-in only if NO other crossing edge still reaches the same
-        // off-scope Component (#90) — else surviving edges would orphan.
-        const survivesElsewhere = (cached?.boundaryProxies ?? []).some(
+      // Coalesced survival (#90/ADR-0016): whether ANOTHER crossing edge still
+      // reaches the same off-scope Component. Captured into TPrev so apply and
+      // rollback agree on whether this delete owns the rep node — never re-derived
+      // against a since-changed store.
+      const survivesElsewhere =
+        prevProxy != null &&
+        (cached?.boundaryProxies ?? []).some(
           (p) =>
             p.edgeId !== connectionId &&
             p.realEndpointId === prevProxy.realEndpointId,
         );
-        patchCanvas((c) => ({
-          boundaryProxies: c.boundaryProxies.filter(
-            (p) => p.edgeId !== connectionId,
-          ),
-        }));
-        if (!survivesElsewhere) {
-          const repNodeId = existingProxyNodeIdFor(
-            getNodes(),
-            prevProxy.realEndpointId,
-          );
-          if (repNodeId) {
-            setNodes((ns) => ns.filter((n) => n.id !== repNodeId));
-          }
-        }
-      }
 
-      try {
-        await removeEdge({ id: connectionId });
-        void utils.architecture.getCanvas.invalidate(canvasInput);
-        void utils.architecture.listProjectComponents.invalidate({ slug });
-      } catch (error: unknown) {
-        // A NOT_FOUND means the Connection was already deleted (a concurrent or
-        // multi-tab delete) — the desired "deleted" state already holds, so keep
-        // the optimistic removal rather than resurrecting a stale row/edge/proxy.
-        if (isNotFoundError(error)) return;
-        if (prevRow) {
+      await runOptimisticWrite({
+        snapshot: () => ({ survivesElsewhere }),
+        apply: () => {
           utils.architecture.listNodeConnections.setData(
             { slug, nodeId: ownerNodeId },
-            (old) =>
-              (old ?? []).some((c) => c.id === connectionId)
-                ? (old ?? [])
-                : [...(old ?? []), prevRow],
+            (old) => (old ?? []).filter((c) => c.id !== connectionId),
           );
-        }
-        // Restore the proxy BEFORE the edge so the edge can route to the coalesced
-        // node it must re-attach to (#90). Mirror row re-adds always (if absent);
-        // the RF node re-adds only when no node yet stands in for this endpoint —
-        // otherwise the restored edge folds onto the existing coalesced node.
-        let repForEdge: string | null = null;
-        if (prevProxy) {
-          patchCanvas((c) => ({
-            boundaryProxies: c.boundaryProxies.some(
-              (p) => p.edgeId === connectionId,
-            )
-              ? c.boundaryProxies
-              : [...c.boundaryProxies, prevProxy],
-          }));
-          const existing = existingProxyNodeIdFor(
-            getNodes(),
-            prevProxy.realEndpointId,
-          );
-          if (existing) {
-            repForEdge = existing;
-          } else {
-            repForEdge = prevProxy.nodeId;
-            setNodes((ns) => {
-              if (ns.some((n) => n.id === prevProxy.nodeId)) return ns;
-              // Re-seed at the proxy's stored placement when it had one (#91), else
-              // onto the left rail below any already there.
-              return [
-                ...ns,
-                ...placedProxyNodes(
-                  [prevProxy],
-                  breadcrumbIds,
-                  railOccupants(ns),
-                ),
-              ];
-            });
+          if (prevEdge) {
+            setEdges((es) => es.filter((e) => e.id !== connectionId));
+            patchCanvas((c) => ({
+              interiorEdges: c.interiorEdges.filter(
+                (e) => e.id !== connectionId,
+              ),
+            }));
           }
-        }
-        if (prevEdge) {
-          // Fold this edge's per-edge proxy repr onto the coalesced node; a
-          // same-Canvas edge has no proxy end, so the map is then never consulted.
-          const remap =
-            prevProxy && repForEdge
-              ? new Map([[prevProxy.nodeId, repForEdge]])
-              : undefined;
-          setEdges((es) =>
-            es.some((e) => e.id === connectionId)
-              ? es
-              : addEdge(toRFEdge(prevEdge, remap), es),
-          );
-          patchCanvas((c) => ({
-            interiorEdges: c.interiorEdges.some((e) => e.id === connectionId)
-              ? c.interiorEdges
-              : [...c.interiorEdges, prevEdge],
-          }));
-        }
-        toast.error("Couldn’t remove the connection. Please try again.");
-      }
+          if (prevProxy) {
+            // Mirror: drop this edge's per-edge row always. RF node: remove the
+            // coalesced stand-in only if NO other crossing edge still reaches the
+            // same off-scope Component (#90) — else surviving edges would orphan.
+            patchCanvas((c) => ({
+              boundaryProxies: c.boundaryProxies.filter(
+                (p) => p.edgeId !== connectionId,
+              ),
+            }));
+            if (!survivesElsewhere) {
+              const repNodeId = existingProxyNodeIdFor(
+                getNodes(),
+                prevProxy.realEndpointId,
+              );
+              if (repNodeId) {
+                setNodes((ns) => ns.filter((n) => n.id !== repNodeId));
+              }
+            }
+          }
+        },
+        // A NOT_FOUND means the Connection was already deleted (a concurrent or
+        // multi-tab delete) — the desired "deleted" state already holds, so absorb
+        // it here as success: the seam skips rollback (keeping the optimistic
+        // removal) and still runs the reconcile invalidate.
+        mutate: () =>
+          removeEdge({ id: connectionId }).catch((error: unknown) => {
+            if (isNotFoundError(error)) return;
+            throw error;
+          }),
+        reconcile: () => {
+          void utils.architecture.getCanvas.invalidate(canvasInput);
+          void utils.architecture.listProjectComponents.invalidate({ slug });
+        },
+        stillOptimistic: () => true,
+        rollback: () => {
+          if (prevRow) {
+            utils.architecture.listNodeConnections.setData(
+              { slug, nodeId: ownerNodeId },
+              (old) =>
+                (old ?? []).some((c) => c.id === connectionId)
+                  ? (old ?? [])
+                  : [...(old ?? []), prevRow],
+            );
+          }
+          // Restore the proxy BEFORE the edge so the edge can route to the
+          // coalesced node it must re-attach to (#90). Mirror row re-adds always
+          // (if absent); the RF node re-adds only when no node yet stands in for
+          // this endpoint — otherwise the restored edge folds onto the existing
+          // coalesced node. The LIVE-node lookup below is the authoritative
+          // re-attach: it subsumes `prev.survivesElsewhere` (a surviving sibling's
+          // edge always leaves a live rep node, so `existing` is non-null exactly
+          // when the proxy still survives elsewhere).
+          let repForEdge: string | null = null;
+          if (prevProxy) {
+            patchCanvas((c) => ({
+              boundaryProxies: c.boundaryProxies.some(
+                (p) => p.edgeId === connectionId,
+              )
+                ? c.boundaryProxies
+                : [...c.boundaryProxies, prevProxy],
+            }));
+            const existing = existingProxyNodeIdFor(
+              getNodes(),
+              prevProxy.realEndpointId,
+            );
+            if (existing) {
+              repForEdge = existing;
+            } else {
+              repForEdge = prevProxy.nodeId;
+              setNodes((ns) => {
+                if (ns.some((n) => n.id === prevProxy.nodeId)) return ns;
+                // Re-seed at the proxy's stored placement when it had one (#91),
+                // else onto the left rail below any already there.
+                return [
+                  ...ns,
+                  ...placedProxyNodes(
+                    [prevProxy],
+                    breadcrumbIds,
+                    railOccupants(ns),
+                  ),
+                ];
+              });
+            }
+          }
+          if (prevEdge) {
+            // Fold this edge's per-edge proxy repr onto the coalesced node; a
+            // same-Canvas edge has no proxy end, so the map is then never consulted.
+            const remap =
+              prevProxy && repForEdge
+                ? new Map([[prevProxy.nodeId, repForEdge]])
+                : undefined;
+            setEdges((es) =>
+              es.some((e) => e.id === connectionId)
+                ? es
+                : addEdge(toRFEdge(prevEdge, remap), es),
+            );
+            patchCanvas((c) => ({
+              interiorEdges: c.interiorEdges.some((e) => e.id === connectionId)
+                ? c.interiorEdges
+                : [...c.interiorEdges, prevEdge],
+            }));
+          }
+        },
+        onError: () =>
+          toast.error("Couldn’t remove the connection. Please try again."),
+      });
     },
     [
       utils,
@@ -1936,21 +2075,32 @@ function CanvasInner({
       incidentEdges: CanvasEdge[],
       incidentProxies: CanvasBoundaryProxy[],
     ): void => {
-      if (node) {
-        setNodes((ns) =>
-          ns.some((n) => n.id === node.id) ? ns : [...ns, toRFNode(node)],
-        );
-        patchCanvas((c) => ({
-          interiorNodes: c.interiorNodes.some((n) => n.id === node.id)
-            ? c.interiorNodes
-            : [...c.interiorNodes, node],
-        }));
-      }
-      const addedProxyIds = readdCrossScope(incidentEdges, incidentProxies);
-
-      void restoreComponent({ deletionId })
-        .then(() => void utils.architecture.getCanvas.invalidate())
-        .catch(() => {
+      // `readdCrossScope` (in `apply`) reports the rep node ids THIS undo added;
+      // rollback removes only those — never a reused survivor node other live edges
+      // still need (#90). This holder threads that set from apply into the snapshot
+      // TPrev that rollback receives (composite TPrev, ADR-0046).
+      const added: { addedProxyIds: ReadonlySet<string> } = {
+        addedProxyIds: new Set<string>(),
+      };
+      void runOptimisticWrite({
+        snapshot: () => added,
+        apply: () => {
+          if (node) {
+            setNodes((ns) =>
+              ns.some((n) => n.id === node.id) ? ns : [...ns, toRFNode(node)],
+            );
+            patchCanvas((c) => ({
+              interiorNodes: c.interiorNodes.some((n) => n.id === node.id)
+                ? c.interiorNodes
+                : [...c.interiorNodes, node],
+            }));
+          }
+          added.addedProxyIds = readdCrossScope(incidentEdges, incidentProxies);
+        },
+        mutate: () => restoreComponent({ deletionId }),
+        reconcile: () => void utils.architecture.getCanvas.invalidate(),
+        stillOptimistic: () => true,
+        rollback: (prev) => {
           if (node) {
             setNodes((ns) => ns.filter((n) => n.id !== node.id));
             patchCanvas((c) => ({
@@ -1962,7 +2112,7 @@ function CanvasInner({
           // Remove only the rep nodes THIS undo added (a reused survivor node must
           // stay — other live edges still attach to it, #90); the mirror drops all
           // per-edge rows the undo re-added.
-          setNodes((ns) => ns.filter((n) => !addedProxyIds.has(n.id)));
+          setNodes((ns) => ns.filter((n) => !prev.addedProxyIds.has(n.id)));
           setEdges((es) => es.filter((e) => !ids.has(e.id)));
           patchCanvas((c) => ({
             interiorEdges: c.interiorEdges.filter((e) => !ids.has(e.id)),
@@ -1970,8 +2120,9 @@ function CanvasInner({
               (p) => !proxyIds.has(p.nodeId),
             ),
           }));
-          toast.error("Couldn’t undo. Please try again.");
-        });
+        },
+        onError: () => toast.error("Couldn’t undo. Please try again."),
+      });
     },
     [setNodes, setEdges, patchCanvas, restoreComponent, utils, readdCrossScope],
   );
@@ -2196,29 +2347,36 @@ function CanvasInner({
 
       if (selectedNodeId === id) closeDetailPanel();
 
-      setNodes((ns) =>
-        ns.filter(
-          (n) =>
-            n.id !== id &&
-            !(
-              n.type === "boundary-proxy" &&
-              !survivingEndpoints.has(n.data.realEndpointId)
+      void runOptimisticWrite({
+        snapshot: () => ({ removed: true }),
+        apply: () => {
+          setNodes((ns) =>
+            ns.filter(
+              (n) =>
+                n.id !== id &&
+                !(
+                  n.type === "boundary-proxy" &&
+                  !survivingEndpoints.has(n.data.realEndpointId)
+                ),
             ),
-        ),
-      );
-      setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
-      patchCanvas((c) => ({
-        interiorNodes: c.interiorNodes.filter((n) => n.id !== id),
-        interiorEdges: c.interiorEdges.filter(
-          (e) => e.sourceRepr !== id && e.targetRepr !== id,
-        ),
-        boundaryProxies: c.boundaryProxies.filter(
-          (p) => !incidentEdgeIds.has(p.edgeId),
-        ),
-      }));
-
-      void deleteComponent({ id })
-        .then(({ deletionId }) => {
+          );
+          setEdges((es) =>
+            es.filter((e) => e.source !== id && e.target !== id),
+          );
+          patchCanvas((c) => ({
+            interiorNodes: c.interiorNodes.filter((n) => n.id !== id),
+            interiorEdges: c.interiorEdges.filter(
+              (e) => e.sourceRepr !== id && e.targetRepr !== id,
+            ),
+            boundaryProxies: c.boundaryProxies.filter(
+              (p) => !incidentEdgeIds.has(p.edgeId),
+            ),
+          }));
+        },
+        mutate: () => deleteComponent({ id }),
+        // Post-success: invalidate, then raise the Undo toast keyed by the returned
+        // deletionId (the undo path replays the removed on-canvas rows).
+        reconcile: ({ deletionId }) => {
           void utils.architecture.getCanvas.invalidate();
           toast("Component deleted", {
             action: {
@@ -2232,8 +2390,9 @@ function CanvasInner({
                 ),
             },
           });
-        })
-        .catch(() => {
+        },
+        stillOptimistic: () => true,
+        rollback: () => {
           if (node) {
             setNodes((ns) =>
               ns.some((n) => n.id === id) ? ns : [...ns, toRFNode(node)],
@@ -2245,8 +2404,10 @@ function CanvasInner({
             }));
           }
           readdCrossScope(incidentEdges, incidentProxies);
-          toast.error("Couldn’t delete the component. Please try again.");
-        });
+        },
+        onError: () =>
+          toast.error("Couldn’t delete the component. Please try again."),
+      });
     },
     [
       utils,

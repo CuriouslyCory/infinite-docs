@@ -406,6 +406,30 @@ client island, ADR-0006 for the recursive-CTE / raw-SQL discipline both derived
 reads share, and ADR-0031 for the cross-scope derivation. Client rendering of the
 cross-scope Edges, the proxies, and the interaction-derived arrows is realized now (#65).)_
 
+### Optimistic write
+
+The single owner of the canvas's **two-store** write lifecycle — the seam
+(`optimistic-write.ts`) every gesture that mutates the **Canvas** runs through.
+The two stores are the **React Flow store** (the **source of truth during
+interaction** — what the user sees and drags, seeded once per scope and never
+re-seeded by a refetch, ADR-0004) and the **getCanvas query cache** (the
+**persistence mirror** a scope remount re-seeds from). A gesture writes both
+together via `patchCanvas` (sibling-key-preserving, so a field write never clobbers
+an unrelated row) and rolls both back together — but the rollback is **conditional
+and field-scoped**: it restores only when the cache still holds the optimistic value
+(never clobbering a newer concurrent edit) and merges the one captured field back
+into the current row (never replaying a stale full object). The seam runs
+snapshot → apply → mutate → optional **reconcile** (post-success store work:
+the `temp_ → real` id remap, a cache invalidate, or an undo-toast consuming the
+mutation result) → conditional rollback; the caller owns each store's patch shape.
+The word is **optimistic write** for the lifecycle and **the seam** for its single
+owner — never "optimistic update" loosely (this names the _owned_ path, not any ad
+hoc store poke). _(Realized now: the seam owns the five field-level handlers (#144 /
+ADR-0046) and, with the `reconcile?` success slot, every heavy cross-scope write —
+add/embed, same- and cross-scope connect, cross-project connect, delete, positions,
+proxy placement, and component remove/undo-remove (#148). See ADR-0046; the
+two-store model formalizes the posture of ADR-0004 and ADR-0032.)_
+
 ### Canvas scope
 
 Which **Canvas** an operation is acting on. A Canvas has **no id of its own** (it

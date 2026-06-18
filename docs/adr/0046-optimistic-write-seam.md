@@ -52,9 +52,10 @@ boundary (ADR-0004) — callers supply concrete types through closures.
 The seam boundary is deliberate:
 
 - **Inside the seam:** snapshot, dual-store write, mutate, the conditional
-  rollback, and the success-branch slot where `temp_ → real` reconcile of store +
-  cache will land (deferred to #148; the success branch is the named extension
-  point now).
+  rollback, and the optional success-branch `reconcile?(result)` slot where
+  post-success store work lands — the `temp_ → real` id remap of store + cache,
+  or a cache invalidate, or the undo-toast that consumes the mutation result
+  (realized in #148; see below).
 - **Caller-owned:** the snapshot-read closure; each store's patch shape — in
   particular the edge write must rebuild via `restyledRFEdge`, because arrowheads
   live on the React Flow edge object, not in `data` (ADR-0027); the failure
@@ -82,12 +83,17 @@ The seam is designed to grow without a rewrite:
   id remap of store + cache attaches where the comment now marks the slot, when
   the first real reconciling caller (create/add/embed/drag/connect writes)
   arrives in #148. No existing field-level caller reconciles, so no reconcile
-  parameter exists yet (narrow-required inputs).
-- **The conditional-rollback predicate generalizes** from today's scalar
-  field-equality check to a caller-supplied per-entity `matches` predicate, so
-  multi-entity cross-scope writes (#149) can ask "does each touched row still hold
-  what we wrote?" with the same gating logic. This is an additive generalization
-  of the existing predicate, not a new mechanism.
+  parameter exists yet (narrow-required inputs). _(Realized in #148; see below.)_
+- **Multi-entity gating is realized via a composite `TPrev`**, not a new
+  per-entity `matches` field. A cross-scope write that touches several rows folds
+  its per-entity "does this row still hold what we wrote?" checks into a single
+  caller-composed `stillOptimistic(prev)` closure over a composite snapshot — the
+  existing predicate, unchanged in shape. This ADR earlier sketched a separate
+  `matches` predicate as the generalization; #148 chose the composite-snapshot
+  route instead, because a second predicate field would be a second gating
+  mechanism (two ways to express the same "still ours?" question), and the seam's
+  one reviewable rollback invariant is easier to hold with one gate. _(Realized in
+  #148; see below.)_
 
 ### Scope of this slice
 
@@ -95,7 +101,8 @@ The seam is designed to grow without a rewrite:
 documentation, edge label, and edge interaction — which already share the
 conditional-rollback shape. The add, embed, drag, and connect handlers keep their
 own bespoke `temp_ → real` reconcile until #148; routing them through the seam is
-gated on the reconcile extension point existing.
+gated on the reconcile extension point existing. _(#148 lands that extension point
+and migrates those handlers — see "Realized in #148" below.)_
 
 ## Consequences
 
@@ -119,5 +126,84 @@ gated on the reconcile extension point existing.
   preserves a sibling's newer value, and the doc-path rollback parity. The five
   migrated handlers delete their inline rollback blocks; the running-app check
   (dev-browser) verifies one optimistic edit and a forced-failure rollback toast.
-- #148 lands reconcile on the success branch and #149 generalizes the predicate —
-  both additive. This ADR fixes the interface those slices build against.
+- #148 lands reconcile on the success branch and routes every heavy cross-scope
+  write through the seam — additive, no rewrite (see "Realized in #148"). This ADR
+  fixes the interface those slices build against.
+
+## Realized in #148
+
+The additive-growth contract this ADR pre-committed is now executed. The
+success-branch slot named above became a real, **optional** field, and every heavy
+cross-scope write handler now runs through the one seam — the five-step pattern
+(snapshot → apply → mutate → reconcile → conditional rollback) lives in **exactly
+one place**, and the hand-copied blocks are deleted.
+
+### The interface, finalized
+
+`OptimisticWrite<TPrev, TResult = unknown>` gains `mutate: () => Promise<TResult>`
+and an **optional** `reconcile?: (result: TResult) => void`, invoked on the success
+branch (inside the `try`, after `mutate` resolves). `reconcile` means **post-success
+store work** — not strictly an id remap: it is the `temp_ → real` remap of store +
+cache (coalescing remap, list-row rewrite, background invalidate), _or_ a plain
+cache invalidate, _or_ the undo-toast that consumes the mutation result (e.g.
+`removeComponent` reading `result.deletionId`). `stillOptimistic` keeps its
+`(prev) => boolean` signature unchanged. The five #144 field-level handlers omit
+`reconcile` and infer `TResult = unknown`, so they compile untouched — the
+additivity regression guarantee this ADR promised.
+
+### Two sub-decisions resolved
+
+- **NOT_FOUND on delete is absorbed inside the caller's `mutate`** (it resolves
+  rather than rejects when the row is already gone), so the seam sees **success**
+  and runs `reconcile` (the invalidate) — it is **not** routed through
+  `stillOptimistic`. This keeps the seam's success/failure semantics pure: rollback
+  gating answers only "did a concurrent edit move the cache out from under us?",
+  and conflating that with "the row was already deleted" would let a benign
+  already-gone delete look like a lost optimistic write (or vice-versa). The "did
+  the entity survive?" question and the "was it already gone?" question stay in
+  different places.
+- **Multi-entity writes gate on a composite `TPrev` + a caller-composed
+  `stillOptimistic`, not a new `matches` seam field.** A handler that mints several
+  temp ids (e.g. `commitConnect`, `commitCrossProjectConnect`) folds every
+  per-entity "is my temp entity still present and unreconciled?" check into one
+  closure over a composite snapshot. No `matches` predicate was added to the seam.
+  A second predicate field would be a second gating mechanism — two ways to ask the
+  same "still ours?" question — and the seam holds exactly one reviewable rollback
+  invariant more easily with one gate.
+
+### Handlers migrated, primitives kept caller-side
+
+Routed through the seam: `addComponent` / `addEmbed`, `handleConnect` (same-scope),
+`commitConnect` + `commitCrossProjectConnect` (multi-entity creates),
+`commitCrossProjectConnect`'s cross-project write, `handleEdgesDelete` /
+`commitDeleteConnection` (delete + coalesced survival + NOT_FOUND-in-`mutate`),
+`persistPositions` / `persistProxyPlacement` (field-restore, no reconcile), and
+`removeComponent` / `undoRemoveComponent` (so no hand-written optimistic block
+survives). `readdCrossScope` and `reseedCrossScope` stay **caller-side coalescing
+primitives the seam composes** — they hold the temp-id minting, the coalescing
+bookkeeping (`survivesElsewhere`, `addedRepNode`, rail logic), and the
+`restyledRFEdge`/`toRFEdge` choice — left in place so #149 can lift them into a
+`survivingProxies` helper.
+
+### Invariants the migration preserves
+
+Two named invariants from sibling ADRs ride through unchanged and stay reviewable:
+
+- **Coalesced-proxy survival** ([ADR-0016](0016-passive-nodes-and-boundary-group-n1-stability.md)
+  lineage, carried by [ADR-0031](0031-cross-scope-read-derivation-and-per-edge-boundary-proxy.md)/#90):
+  deleting one of two crossing Connections to the same off-scope Component must
+  leave the coalesced proxy standing. The `survivesElsewhere` / `addedRepNode`
+  bookkeeping is captured into `TPrev` and replayed identically in `rollback` —
+  never simplified to "always remove the rep node," and the restore-proxy-before-edge
+  ordering stays inside the single `rollback` closure.
+- **Placement survives reconcile** ([ADR-0036](0036-boundary-proxy-placement-persistence.md)):
+  `reconcile` rebuilds the proxy node from the **live `n.position`**, never snapping
+  it back to the off-scope rail — a dragged proxy keeps its placement across the
+  `temp_ → real` remap.
+
+The pure core keeps its **direct unit tests** (ADR-0003): the five field-level
+cases stay green as the additivity proof, joined by reconcile-runs-once-on-success,
+reconcile-skipped-on-failure, `TResult` threading, create-rollback-removes-exactly-
+the-temp-entity, rollback-skipped-when-already-reconciled (no clobber of a
+concurrent success), multi-entity apply+rollback with the rep node removed only when
+`addedRepNode`, and coalesced-survival.
