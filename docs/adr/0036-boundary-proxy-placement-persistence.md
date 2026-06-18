@@ -203,3 +203,11 @@ The placed-vs-rail layout this ADR defines (`placedProxyNodes`, `railPosition`,
 the canvas island into the pure, framework-free `boundaryProxyView`
 (`boundary-proxy-view.ts`), where it is unit-tested off-screen; no rendered behavior
 changed.
+
+## Realized in #149
+
+The inline "does any surviving edge still reach this off-scope Component?" survival
+re-derivations in the delete/undo paths (`commitDeleteConnection`'s `survivesElsewhere`
+and `removeComponent`'s `survivingEndpoints`) now route through
+`boundaryProxyView.survivingProxies`, the same pure module the layout helpers live in;
+no behavior changed.
