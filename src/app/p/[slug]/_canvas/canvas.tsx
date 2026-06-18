@@ -19,7 +19,14 @@ import {
 } from "@xyflow/react";
 import { Eye, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { Suspense, useCallback, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { Toaster, toast } from "sonner";
 
 import { arrowEnds } from "~/lib/connection-direction";
@@ -62,6 +69,11 @@ import {
   SpecConflictModal,
   type SpecApplyDecisions,
 } from "./spec-conflict-modal";
+import {
+  dismissModal,
+  openPreview,
+  specModalReducer,
+} from "./spec-modal-state";
 import {
   CanEditContext,
   ComponentNodeView,
@@ -1971,28 +1983,19 @@ function CanvasInner({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const closeDetailPanel = useCallback(() => setSelectedNodeId(null), []);
 
-  // Spec attach / merge state (#64 / ADR-0029). `specPreviewError` and
-  // `activePreviewOwnerId` are each scoped to the node that STARTED the preview
-  // (an `ownerNodeId`): the panel renders for whatever node is currently
+  // Spec attach / merge state (#64 / ADR-0029, ADR-0047). One pure state machine
+  // (`spec-modal-state.ts`) replaces the four interdependent flags this used to
+  // carry. Every non-closed state is scoped to the node that STARTED the preview
+  // (its `ownerNodeId`): the panel renders for whatever node is currently
   // selected, so a preview for A resolving after the user clicks B must not leak
-  // A's error/spinner into B's panel. `pendingPreview` carries the source the
-  // user pasted so the modal's confirm can re-apply it without re-pasting, and
-  // `specPreview` is the diff classification the modal renders.
-  const [specPreviewError, setSpecPreviewError] = useState<{
-    ownerNodeId: string;
-    message: string;
-  } | null>(null);
-  const [activePreviewOwnerId, setActivePreviewOwnerId] = useState<
-    string | null
-  >(null);
-  const [pendingPreview, setPendingPreview] = useState<{
-    ownerNodeId: string;
-    kind: SpecKind;
-    source: string;
-  } | null>(null);
-  const [specPreview, setSpecPreview] = useState<
-    RouterOutputs["architecture"]["previewSpec"] | null
-  >(null);
+  // A's error/spinner/modal into B's panel. That race is now unrepresentable —
+  // `resolve`'s owner-guard drops a result whose owner is no longer the one being
+  // previewed. The reducer is PURE; all side effects (previewSpec/applySpec
+  // mutate, toast, reseedCrossScope, invalidate) stay below in the handlers.
+  const [specModal, dispatchSpecModal] = useReducer(
+    specModalReducer<RouterOutputs["architecture"]["previewSpec"]>,
+    { status: "closed" },
+  );
 
   // Re-seed the cross-scope VIEW (boundary proxies + edges) from a refetched
   // canvas after a spec apply — coalesced per #90 — without touching component
@@ -2015,15 +2018,17 @@ function CanvasInner({
 
   const handlePreviewSpec = useCallback(
     (ownerNodeId: string, input: { kind: SpecKind; source: string }) => {
-      setSpecPreviewError(null);
-      setActivePreviewOwnerId(ownerNodeId);
+      dispatchSpecModal(openPreview(ownerNodeId));
       previewSpec.mutate(
         { ownerNodeId, kind: input.kind, source: input.source },
         {
           onSuccess: (result) => {
             if (result.parseError !== null) {
-              setSpecPreviewError({ ownerNodeId, message: result.parseError });
-              setActivePreviewOwnerId(null);
+              dispatchSpecModal({
+                type: "resolve",
+                ownerNodeId,
+                result: { kind: "error", message: result.parseError },
+              });
               return;
             }
             // First-attach with only NEW (no existing spec) skips the modal —
@@ -2033,6 +2038,11 @@ function CanvasInner({
               result.changed.length === 0 &&
               result.dropped.length === 0;
             if (firstAttach) {
+              dispatchSpecModal({
+                type: "resolve",
+                ownerNodeId,
+                result: { kind: "firstAttach" },
+              });
               applySpec.mutate(
                 {
                   ownerNodeId,
@@ -2068,28 +2078,37 @@ function CanvasInner({
                         "Couldn’t attach the spec. Please try again.",
                     );
                   },
-                  onSettled: () => setActivePreviewOwnerId(null),
+                  onSettled: () =>
+                    dispatchSpecModal({
+                      type: "appliedFirstAttach",
+                      ownerNodeId,
+                    }),
                 },
               );
               return;
             }
             // The modal takes over the pending/error surface from here.
-            setActivePreviewOwnerId(null);
-            setSpecPreview(result);
-            setPendingPreview({
+            dispatchSpecModal({
+              type: "resolve",
               ownerNodeId,
-              kind: input.kind,
-              source: input.source,
+              result: {
+                kind: "modal",
+                preview: result,
+                pending: { kind: input.kind, source: input.source },
+              },
             });
           },
           onError: (error) => {
-            setSpecPreviewError({
+            dispatchSpecModal({
+              type: "resolve",
               ownerNodeId,
-              message:
-                error.message ||
-                "Couldn’t preview this spec. Please try again.",
+              result: {
+                kind: "error",
+                message:
+                  error.message ||
+                  "Couldn’t preview this spec. Please try again.",
+              },
             });
-            setActivePreviewOwnerId(null);
           },
         },
       );
@@ -2098,18 +2117,17 @@ function CanvasInner({
   );
 
   const closeSpecModal = useCallback(() => {
-    setSpecPreview(null);
-    setPendingPreview(null);
+    dispatchSpecModal(dismissModal());
   }, []);
 
   const handleApplySpec = useCallback(
     (decisions: SpecApplyDecisions) => {
-      if (!pendingPreview) return;
+      if (specModal.status !== "modal") return;
       applySpec.mutate(
         {
-          ownerNodeId: pendingPreview.ownerNodeId,
-          kind: pendingPreview.kind,
-          source: pendingPreview.source,
+          ownerNodeId: specModal.ownerNodeId,
+          kind: specModal.pending.kind,
+          source: specModal.pending.source,
           changed: decisions.changed,
           dropped: decisions.dropped,
         },
@@ -2137,7 +2155,7 @@ function CanvasInner({
       );
     },
     [
-      pendingPreview,
+      specModal,
       applySpec,
       utils,
       closeSpecModal,
@@ -2664,11 +2682,14 @@ function CanvasInner({
                               onCommitDocumentation={commitDocumentation}
                               onPreviewSpec={handlePreviewSpec}
                               specPreviewPending={
-                                activePreviewOwnerId === selectedNodeId
+                                (specModal.status === "previewing" ||
+                                  specModal.status === "applying") &&
+                                specModal.ownerNodeId === selectedNodeId
                               }
                               specPreviewError={
-                                specPreviewError?.ownerNodeId === selectedNodeId
-                                  ? specPreviewError.message
+                                specModal.status === "error" &&
+                                specModal.ownerNodeId === selectedNodeId
+                                  ? specModal.message
                                   : null
                               }
                             />
@@ -2746,10 +2767,10 @@ function CanvasInner({
       {/* Spec attach/merge modal (#64 / ADR-0029). Portaled by Base UI, so it
           sits outside React Flow's coordinate space. Mounted only while a
           preview is staged so its initial state seeds from the current diff. */}
-      {specPreview !== null && (
+      {specModal.status === "modal" && (
         <SpecConflictModal
           open
-          preview={specPreview}
+          preview={specModal.preview}
           pending={applySpec.isPending}
           onCancel={closeSpecModal}
           onConfirm={handleApplySpec}
