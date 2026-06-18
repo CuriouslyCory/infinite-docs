@@ -11,10 +11,10 @@ across the `verbatimModuleSyntax` boundary of [ADR-0004](0004-canvas-ssr-disable
 with all side effects kept caller-side. `optimistic-write.ts` is the structural
 template for `spec-modal-state.ts`.
 
-**Relates to** [ADR-0029](0029-spec-attach-merge-preview-and-convenience-first-attach.md):
+**Relates to** [ADR-0029](0029-specs-generate-components-recursive-parse-diff-merge.md):
 this ADR models the lifecycle that ADR defines (preview → first-attach convenience
 path or merge modal → apply) as an explicit state machine. It **amends neither**
-ADR-0029 nor [ADR-0025](0025-spec-as-component-attachment.md) — no parse, diff,
+ADR-0029 nor [ADR-0025](0025-flowspec-parser-registry-and-spec-kind-affinity.md) — no parse, diff,
 classification, or apply behavior changes; the convenience first-attach path is
 preserved exactly. This slice is purely a state-shape refactor.
 
@@ -51,7 +51,7 @@ type `P`, so it imports no `RouterOutputs`) with five states:
 - `{ error; ownerNodeId; message }`
 - `{ modal; ownerNodeId; preview: P; pending: { kind; source } }` — the merge modal
 
-A pure `specModalReducer<P>(state, action)` drives it via three caller intents:
+A pure `specModalReducer<P>(state, action)` drives it via four caller intents:
 `open` (→ `previewing`, superseding any prior preview/error), `resolve`
 (error → `error`, firstAttach → `applying`, modal → `modal`), `appliedFirstAttach`
 (→ `closed` once the no-modal apply settles), and `dismiss` (→ `closed`). Thin
