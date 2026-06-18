@@ -195,3 +195,11 @@ id `proxy_<edgeId>`.
 
 Markdown export / MCP serialization is position-independent (ADR-0017): a placement is
 a pure view coordinate, so no golden re-baseline, no tool-catalog or `llms.txt` change.
+
+## Realized in #145
+
+The placed-vs-rail layout this ADR defines (`placedProxyNodes`, `railPosition`,
+`railOccupants`, `toProxyRFNode`, all keyed on `realEndpointId`) moved verbatim out of
+the canvas island into the pure, framework-free `boundaryProxyView`
+(`boundary-proxy-view.ts`), where it is unit-tested off-screen; no rendered behavior
+changed.

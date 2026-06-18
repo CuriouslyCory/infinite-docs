@@ -217,3 +217,9 @@ service still emits one row per crossing edge, the `{ nodeId, title, kind,
 realEndpointId, edgeId }` shape and `proxy_<edgeId>` id are unchanged, and the
 query-cache mirror stays strictly per-edge so a remount re-seeds from authoritative
 per-edge data and the ADR-0032 `temp_ → real` reconcile still keys on `proxy_<edgeId>`.
+
+**Realized in #145:** the client-side view logic this ADR defines — `repOnScope`'s
+`rep(N,S)` walk and the per-`realEndpointId` render coalescing — moved verbatim out
+of the canvas island into the pure, framework-free `boundaryProxyView`
+(`boundary-proxy-view.ts`), where it is unit-tested off-screen; no rendered behavior
+changed.
