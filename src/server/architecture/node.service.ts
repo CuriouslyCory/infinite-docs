@@ -8,6 +8,7 @@ import {
 import { capabilityAtLeast } from "./access";
 import {
   authorizeProjectWrite,
+  batchRegateReadable,
   resolveReadableProject,
   resolveReadableProjectById,
 } from "./access-db";
@@ -884,41 +885,40 @@ export async function getCanvas(
   // `title` is the foreign project's title (captured at embed time), so we REPLACE it
   // with `LOCKED_PORTAL_TITLE` — a locked portal carries neither foreign id nor
   // foreign title, only the host node's acknowledged existence.
-  const annotatedInteriorNodes = await Promise.all(
-    interiorNodes.map(
-      async (
-        node,
-      ): Promise<
-        Omit<Node, "embeddedProjectId"> & {
-          isPortal: boolean;
-          embedAccess?: "enterable" | "readOnly" | "locked";
-        }
-      > => {
-        const { embeddedProjectId, ...rest } = node;
-        if (embeddedProjectId === null) return { ...rest, isPortal: false };
-        try {
-          const { viewerCapability } = await resolveReadableProjectById(
-            db,
-            actor,
-            embeddedProjectId,
-          );
-          return {
-            ...rest,
-            isPortal: true,
-            embedAccess: capabilityAtLeast(viewerCapability, "edit")
-              ? "enterable"
-              : "readOnly",
-          };
-        } catch {
-          return {
-            ...rest,
-            title: LOCKED_PORTAL_TITLE,
-            isPortal: true,
-            embedAccess: "locked",
-          };
-        }
-      },
-    ),
+  const distinctEmbeddedIds = interiorNodes
+    .map((n) => n.embeddedProjectId)
+    .filter((id): id is string => id !== null);
+  const { readable: readableEmbedded } = await batchRegateReadable(
+    db,
+    actor,
+    distinctEmbeddedIds,
+  );
+  const annotatedInteriorNodes = interiorNodes.map(
+    (
+      node,
+    ): Omit<Node, "embeddedProjectId"> & {
+      isPortal: boolean;
+      embedAccess?: "enterable" | "readOnly" | "locked";
+    } => {
+      const { embeddedProjectId, ...rest } = node;
+      if (embeddedProjectId === null) return { ...rest, isPortal: false };
+      const cap = readableEmbedded.get(embeddedProjectId);
+      if (cap === undefined) {
+        return {
+          ...rest,
+          title: LOCKED_PORTAL_TITLE,
+          isPortal: true,
+          embedAccess: "locked" as const,
+        };
+      }
+      return {
+        ...rest,
+        isPortal: true,
+        embedAccess: capabilityAtLeast(cap, "edit")
+          ? ("enterable" as const)
+          : ("readOnly" as const),
+      };
+    },
   );
 
   // Cross-project render pass (#122): each surviving CrossProjectEdge whose
@@ -934,17 +934,14 @@ export async function getCanvas(
   // PARALLEL fan-out, not a per-row awaited waterfall: resolve all distinct foreign
   // projects in parallel, then ONE batch read of the surviving foreign node titles.
   if (crossProjectRows.length > 0) {
-    const distinctForeignProjectIds = [
-      ...new Set(crossProjectRows.map((r) => r.foreignProjectId)),
-    ];
+    const { readable: readableForeign } = await batchRegateReadable(
+      db,
+      actor,
+      crossProjectRows.map((r) => r.foreignProjectId),
+    );
     const readableForeignProjectTitles = new Map<string, string>();
     await Promise.all(
-      distinctForeignProjectIds.map(async (foreignProjectId) => {
-        try {
-          await resolveReadableProjectById(db, actor, foreignProjectId);
-        } catch {
-          return; // Unreadable → drop every row for it; nothing on the wire.
-        }
+      [...readableForeign.keys()].map(async (foreignProjectId) => {
         const row = await db.project.findUnique({
           where: { id: foreignProjectId },
           select: { title: true },

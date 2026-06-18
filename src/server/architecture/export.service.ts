@@ -1,6 +1,6 @@
 import type { Actor, Db } from "./actor";
 import { capabilityAtLeast, resolveCapability } from "./access";
-import { authorizeProjectRead, resolveReadableProjectById } from "./access-db";
+import { authorizeProjectRead, batchRegateReadable } from "./access-db";
 import { NotFoundError } from "./errors";
 import {
   exportMarkdownInput,
@@ -396,14 +396,14 @@ async function resolveCrossProjectMarkers(
       ...crossEdges.map((e) => e.foreignProjectId),
     ]),
   ];
+  const { readable: readableForeign } = await batchRegateReadable(
+    db,
+    actor,
+    distinctForeignProjectIds,
+  );
   const readableForeignTitles = new Map<string, string>();
   await Promise.all(
-    distinctForeignProjectIds.map(async (foreignProjectId) => {
-      try {
-        await resolveReadableProjectById(db, actor, foreignProjectId);
-      } catch {
-        return; // Unreadable → no marker; nothing reaches the output.
-      }
+    [...readableForeign.keys()].map(async (foreignProjectId) => {
       const row = await db.project.findUnique({
         where: { id: foreignProjectId },
         select: { title: true },

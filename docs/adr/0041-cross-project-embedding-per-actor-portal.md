@@ -230,3 +230,13 @@ one.
   golden file is byte-stable. A reviewer should not flag the export's
   portal-blindness as an ADR-0041 gap; it is the explicit seam between this slice
   and #123.
+- **Realized in #147 — the per-actor foreign re-gate is the `batchRegateReadable`
+  seam.** The try/collect re-gate fold over `resolveReadableProjectById` is now one
+  adapter in `access-db.ts` returning `{ readable: Map<id, Capability>, withheld:
+Set<id> }`; all three batch callers (`getCanvas` portal annotation + cross-project
+  pass, `connectCrossProject`, and the markdown export re-gate) route through it,
+  each deriving its own non-disclosing follow-up (locked portal, dropped row,
+  `NotFoundError`, dropped marker) from the bare split. The `catch → withheld`
+  collapse is reason-blind: deny/missing/soft-deleted/dangling are indistinguishable,
+  never surfacing WHY. The ADR-0031 recursive-CTE ancestry derivations are
+  explicitly **NOT** consolidated — only the re-gate fold and its `Promise.all`.
