@@ -279,6 +279,26 @@ describe("survivingProxies", () => {
       survivingProxies(single, retainedAfterDeletingOnly).has("host"),
     ).toBe(false);
   });
+
+  it("survives an endpoint with a sibling edge when several incident edges drop at once", () => {
+    // Mirrors removeComponent: a node's incident edges {i1, i2, i3} are removed
+    // together. `host` also has a non-incident sibling edge (s1) → host survives;
+    // `gone` is reached only by incident edges → it orphans.
+    const proxies = [
+      proxy({ nodeId: "proxy_i1", edgeId: "i1", realEndpointId: "host" }),
+      proxy({ nodeId: "proxy_i2", edgeId: "i2", realEndpointId: "gone" }),
+      proxy({ nodeId: "proxy_i3", edgeId: "i3", realEndpointId: "gone" }),
+      proxy({ nodeId: "proxy_s1", edgeId: "s1", realEndpointId: "host" }),
+    ];
+    const incidentEdgeIds = new Set(["i1", "i2", "i3"]);
+    const retained = new Set(
+      proxies.map((p) => p.edgeId).filter((id) => !incidentEdgeIds.has(id)),
+    );
+
+    const surviving = survivingProxies(proxies, retained);
+    expect(surviving.has("host")).toBe(true);
+    expect(surviving.has("gone")).toBe(false);
+  });
 });
 
 describe("repOnScope", () => {

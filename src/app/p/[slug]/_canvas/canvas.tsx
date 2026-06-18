@@ -49,6 +49,7 @@ import {
   railOccupants,
   railPosition,
   repOnScope,
+  survivingProxies,
   toProxyRFNode,
 } from "./boundary-proxy-view";
 import { type ConnectTarget } from "./connect-to-palette";
@@ -1686,12 +1687,14 @@ function CanvasInner({
       // reaches the same off-scope Component. Captured into TPrev so apply and
       // rollback agree on whether this delete owns the rep node — never re-derived
       // against a since-changed store.
+      const allProxies = cached?.boundaryProxies ?? [];
+      const retainedEdgeIds = new Set(
+        allProxies.map((p) => p.edgeId).filter((id) => id !== connectionId),
+      );
       const survivesElsewhere =
         prevProxy != null &&
-        (cached?.boundaryProxies ?? []).some(
-          (p) =>
-            p.edgeId !== connectionId &&
-            p.realEndpointId === prevProxy.realEndpointId,
+        survivingProxies(allProxies, retainedEdgeIds).has(
+          prevProxy.realEndpointId,
         );
 
       await runOptimisticWrite({
@@ -2172,10 +2175,14 @@ function CanvasInner({
       // An off-scope endpoint still reached by a NON-incident crossing edge keeps
       // its coalesced node; only a fully-orphaned endpoint loses it (#90) — else a
       // surviving sibling's edge would dangle off a removed stand-in.
-      const survivingEndpoints = new Set(
-        (cached?.boundaryProxies ?? [])
-          .filter((p) => !incidentEdgeIds.has(p.edgeId))
-          .map((p) => p.realEndpointId),
+      const allProxies = cached?.boundaryProxies ?? [];
+      const survivingEndpoints = survivingProxies(
+        allProxies,
+        new Set(
+          allProxies
+            .map((p) => p.edgeId)
+            .filter((id) => !incidentEdgeIds.has(id)),
+        ),
       );
 
       if (selectedNodeId === id) closeDetailPanel();
