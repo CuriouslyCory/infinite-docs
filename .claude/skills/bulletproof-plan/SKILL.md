@@ -1,6 +1,6 @@
 ---
 name: bulletproof-plan
-description: Produces a bulletproof implementation plan for a GitHub issue by collaborating with three specialist subagents — senior engineer, application architect, and technical writer — in parallel, validating every claim against CONTEXT.md and the ADRs, then presenting the plan in plan mode for approval before any code is written. Every plan carries the full standard SDLC envelope (branch → implement → commit → CodeRabbit review + self-review → autofix → commit → PR) so it lands a PR for sign-off. Use when the user wants to plan or spec out a GitHub issue, runs /bulletproof-plan with an issue number or URL, or asks for a rigorous multi-specialist implementation plan.
+description: Produces a bulletproof implementation plan for a GitHub issue by collaborating with three specialist subagents — senior engineer, application architect, and technical writer — in parallel, validating every claim against CONTEXT.md and the ADRs, then presenting the plan in plan mode for approval before any code is written. Every plan carries the full standard SDLC envelope (branch → implement → commit → CodeRabbit review + self-review → autofix → commit → PR → retro) so it lands a PR for sign-off and a concrete process improvement. Use when the user wants to plan or spec out a GitHub issue, runs /bulletproof-plan with an issue number or URL, or asks for a rigorous multi-specialist implementation plan.
 ---
 
 # Bulletproof Plan
@@ -65,13 +65,15 @@ Structure the plan: **goal · the vertical slice · ordered steps (each naming i
 4. **Self-review in parallel with CodeRabbit.** Do not block on CodeRabbit — run your own review concurrently. All work must pass `pnpm check` (lint + types) and `pnpm build`, and any tests, unless the user specifically overrides a check. Never disable a rule to make it pass (philosophy #6).
 5. **After both reviews complete — apply fixes with `/autofix`.** Use `/autofix` to triage and apply the CodeRabbit review-thread feedback (with per-change approval), alongside anything surfaced by the self-review.
 6. **After fixes — commit, push, and open the PR.** Commit the fixes, push, and open the pull request for the user's final sign-off.
+7. **Last step — reflect and improve the process.** Before considering the work done, run a short retrospective on the slice just shipped and turn it into a durable process improvement. Answer concretely, grounded in what actually happened (not hypotheticals): _What did the plan miss? Which bugs had to be solved that the plan didn't anticipate? Which assumptions turned out invalid? Where did the SDLC itself slow us down or let an error through?_ Then **land at least one concrete improvement** so the next plan is better — e.g. tighten this skill's briefs/steps, correct or extend `CONTEXT.md`/an ADR, add a `pnpm check`/test guard that would have caught the bug, or save a `feedback`/`project` memory. A retro that names no invalid assumption and changes nothing is a failed retro — push until you find the real lesson. Surface the findings and the change made to the user.
 
-State these as real, numbered steps in the plan (not a footnote), so the implementing agent treats branch/commit/review/fix/PR as first-class deliverables.
+State these as real, numbered steps in the plan (not a footnote), so the implementing agent treats branch/commit/review/fix/PR/retro as first-class deliverables.
 
 ## Quality bar
 
 - **Plan ends in a PR.** The ordered steps open with feature-branch creation and close with the commit → review → autofix → commit → PR envelope. Running this skill against an issue should produce everything needed to land a PR for the user's sign-off, with no manual scaffolding left implicit.
 - **Reviews run in parallel.** Self-review never blocks on the CodeRabbit review; the plan runs them concurrently. All work passes `pnpm check` and `pnpm build` (and any tests) unless the user explicitly overrides — and a rule is never disabled to make a check pass (philosophy #6).
+- **Plan ends with a retro that changes something.** The final step reflects on what the plan missed, which bugs and invalid assumptions surfaced, and where the SDLC fell short — then lands at least one concrete improvement (skill/doc/ADR/test-guard/memory). A retro that surfaces no lesson and edits nothing has failed.
 - **Plan scope is explicitly bounded.** Related work in other issues is called out by name; if overlap exists, the plan states what it excludes and why.
 - Every step respects the service-layer contract and routes authz through the `access` module (ADR-0001).
 - Honors `CLAUDE.md` — especially performance (optimistic updates, no waterfalls) and never disabling a lint/test rule to make it pass.

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "agents": [],
+  "skills": {
+    "neon-postgres": {
+      "source": "neondatabase/agent-skills",
+      "sourceType": "github",
+      "computedHash": "3c53df29c959dc0a7f724ff8620063b20fabd2b1fa702ec97e3f17e6a23d5a1c",
+      "installedAt": "2026-06-20T01:28:18.034Z"
+    },
+    "ship-it": {
+      "source": "CuriouslyCory/skills",
+      "sourceType": "github",
+      "computedHash": "1969594ccdb865875d950ef4ef5ee38919b159707abd617ceb9e9b4d0e61dce0",
+      "installedAt": "2026-06-20T01:28:18.728Z",
+      "agents": [
+        "claude-code"
+      ]
+    }
+  }
+}
