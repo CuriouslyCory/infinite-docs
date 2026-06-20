@@ -51,3 +51,4 @@ yarn-error.log*
 
 # agent/orchestrator scratch (plans, progress notes) — never committed; also prettier-ignored
 .claude/
+.agents/plans/
