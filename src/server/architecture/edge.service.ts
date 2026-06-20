@@ -5,8 +5,8 @@ import {
 } from "../../../generated/prisma/client";
 import {
   authorizeProjectWrite,
+  batchRegateReadable,
   resolveReadableProject,
-  resolveReadableProjectById,
 } from "./access-db";
 import type { Actor, Db } from "./actor";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
@@ -292,7 +292,8 @@ export async function connectCrossProject(
 
   // (4) Foreign read gate — NotFound on deny (non-disclosure; "link to what you
   // can read"). Re-resolved per-actor: the host's grant never governs the foreign.
-  await resolveReadableProjectById(db, actor, foreignProjectId);
+  const { withheld } = await batchRegateReadable(db, actor, [foreignProjectId]);
+  if (withheld.has(foreignProjectId)) throw new NotFoundError();
 
   // (5) The foreign endpoint must be a live Node in that foreign Project —
   // set-membership, never disclosing whether the id exists elsewhere.

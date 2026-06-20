@@ -211,6 +211,48 @@ export async function resolveReadableProjectById(
 }
 
 /**
+ * Per-actor BATCH foreign re-gate (ADR-0041): fold a set of foreign Project ids
+ * through {@link resolveReadableProjectById}, partitioning them into the actor's
+ * readable set (keyed to its resolved {@link Capability}, so a portal loop keeps
+ * its enterable-vs-readOnly tier) and an opaque `withheld` set.
+ *
+ * The `catch → withheld` is REASON-BLIND BY DESIGN: deny (`guestAccess=NONE`),
+ * missing, soft-deleted, and dangling ids all collapse into `withheld`
+ * indistinguishably — this seam NEVER surfaces WHY an id was withheld, so a
+ * caller cannot turn it into an existence/access oracle for projects the actor
+ * cannot read. This non-disclosure collapse is THE reviewable invariant; every
+ * caller derives its own non-disclosing follow-up (locked portal, dropped row,
+ * NotFoundError) from the bare readable/withheld split, never from a reason.
+ *
+ * Dedupes internally and fans the per-id re-gates out in a bounded-parallel
+ * `Promise.all` (not a per-id awaited waterfall — perf philosophy #1).
+ */
+export async function batchRegateReadable(
+  db: Db,
+  actor: Actor | null,
+  ids: Iterable<string>,
+): Promise<{ readable: Map<string, Capability>; withheld: Set<string> }> {
+  const distinct = [...new Set(ids)];
+  const readable = new Map<string, Capability>();
+  const withheld = new Set<string>();
+  await Promise.all(
+    distinct.map(async (id) => {
+      try {
+        const { viewerCapability } = await resolveReadableProjectById(
+          db,
+          actor,
+          id,
+        );
+        readable.set(id, viewerCapability);
+      } catch {
+        withheld.add(id);
+      }
+    }),
+  );
+  return { readable, withheld };
+}
+
+/**
  * Id-keyed WRITE seam: load a Project by internal id, resolve the actor's
  * capability (owner identity + membership; guest access still applies but is
  * moot for a write minimum), and `requireCapability(cap, min)` — which throws
